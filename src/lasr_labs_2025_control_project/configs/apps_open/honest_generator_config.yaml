@@ -1,0 +1,21 @@
+experiment_folder: experiments/self_rec_train
+
+experiment_name: self_rec_train
+
+results_folder: results/
+
+defaults:
+  data_split: train
+
+runs:
+  honest:
+    eval_mode: honest
+    system_prompt: honest_policy_prompt
+    save_path: generator/honest.eval
+    model: tinker/zai-org/GLM-5.3:peft:262144
+  honeypots:
+    eval_mode: honest
+    system_prompt: honest_policy_prompt
+    save_path: generator/honeypots.eval
+    model: tinker/moonshotai/Kimi-K2.6
+

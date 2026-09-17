@@ -50,7 +50,7 @@ CLAUDE.md
 # below permanently un-addable once it is untracked.
 src/lasr_labs_2025_control_project/configs/apps/**/*.yaml
 src/lasr_labs_2025_control_project/configs/bigcodebench/**/*.yaml
-src/lasr_labs_2025_control_project/configs/apps_open/**/*.yaml
+# src/lasr_labs_2025_control_project/configs/apps_open/**/*.yaml
 src/lasr_labs_2025_control_project/configs/bigcodebench_open/**/*.yaml
 # plot_everything.sh is hand-written and stays checked in under bigcodebench/;
 # the copy mirrored into the open tree by the generator is an artifact.
