@@ -33,6 +33,12 @@ notebooks/
 # experiments/open_models holds tracked code (the config-generator spec).
 /experiments/*
 !/experiments/open_models/
+
+# exceptions added for the SFT input data
+!/experiments/self_rec_train/generator/train/honest.eval
+!/experiments/self_rec_train/prepared/train/*.jsonl
+!/experiments/self_rec_train/raw/train/*.json
+
 mlruns/
 cache/
 

@@ -360,7 +360,7 @@ def main(
             tasks=task,
             model=run.generator.model_info.model,
             epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=48,
+            max_connections=8, #old: 48
             max_sandboxes=8, #old: 48
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
