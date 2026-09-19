@@ -170,7 +170,7 @@ def backdoored_solutions(
         original_dataset_split="test",
         filter_on_split="even_test" if data_split == DataSplit.TEST else "odd_train",
         shuffle=False,
-        problem_ids_range=[0, 100], # old: 2999
+        problem_ids_range=[0, 1000], # old: 2999
     )
 
     dataset = apps_setting.get_dataset(eval_mode=eval_mode)
