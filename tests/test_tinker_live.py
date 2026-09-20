@@ -57,3 +57,26 @@ async def test_collusion_logprobs_exact_and_discriminate(tinker_base_model):
     score_true = true_stmt["YES"] - true_stmt["NO"]
     score_false = false_stmt["YES"] - false_stmt["NO"]
     assert score_true > score_false
+
+
+def test_kimi_tokenizer_loads(tinker_base_model):
+    tok = tp._tokenizer("moonshotai/Kimi-K2.6")
+    assert tok is not None
+    prompt_ids = tp._apply_chat_template(
+        "moonshotai/Kimi-K2.6",
+        [{"role": "user", "content": "Hello"}],
+        add_generation_prompt=True,
+    )
+    assert len(prompt_ids) > 0
+
+
+def test_glm_tokenizer_loads(tinker_base_model):
+    tok = tp._tokenizer("zai-org/GLM-5.3:peft:262144")
+    assert tok is not None
+    prompt_ids = tp._apply_chat_template(
+        "zai-org/GLM-5.3:peft:262144",
+        [{"role": "user", "content": "Hello"}],
+        add_generation_prompt=True,
+    )
+    assert len(prompt_ids) > 0
+

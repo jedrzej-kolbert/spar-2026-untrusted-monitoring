@@ -5,6 +5,8 @@ Live end-to-end tests against the real Tinker API live in test_tinker_live.py.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from inspect_ai.model import GenerateConfig, get_model
 
@@ -125,3 +127,73 @@ async def test_generate_via_provider(stub_tinker):
     # stub emits token id 10 -> tokenizer decodes to "YES"
     assert out.completion == "YES"
     assert out.stop_reason == "stop"
+
+
+def test_nothink_template_kwargs():
+    assert tp._NOTHINK_TEMPLATE_KWARGS.get("enable_thinking") is False
+    assert tp._NOTHINK_TEMPLATE_KWARGS.get("thinking") is False
+
+
+def test_tiktoken_blobfile_patch_fallback(monkeypatch, tmp_path):
+    """Verify that tiktoken.load.read_file falls back to open() when blobfile is missing."""
+    import tiktoken.load
+
+    # Create a test file
+    test_file = tmp_path / "test.bpe"
+    test_file.write_bytes(b"hello bpe")
+
+    # Force unpatched state and patch
+    monkeypatch.setattr(tiktoken.load, "_spar_patched", False)
+    tp._ensure_tiktoken_blobfile_patch()
+
+    # Simulate blobfile missing in sys.modules
+    monkeypatch.setitem(sys.modules, "blobfile", None)
+
+    # Calling read_file on local path should succeed via open()
+    data = tiktoken.load.read_file(str(test_file))
+    assert data == b"hello bpe"
+
+
+def test_tokenizer_fallback_on_tokenizers_backend_error(monkeypatch):
+    """When sampling_client.get_tokenizer() fails with TokenizersBackend error, fallback is called."""
+    called_with = []
+
+    class FakeSamplingClient:
+        def get_tokenizer(self):
+            raise ValueError("Tokenizer class TokenizersBackend does not exist or is not currently imported.")
+
+        def get_base_model(self):
+            return "zai-org/GLM-5.3:peft:262144"
+
+    monkeypatch.setattr(tp, "_sampling_client", lambda model_ref: FakeSamplingClient())
+    monkeypatch.setattr(
+        tp,
+        "_load_fast_tokenizer_fallback",
+        lambda base_model: called_with.append(base_model) or "mock_fast_tokenizer",
+    )
+    tp._tokenizer.cache_clear()
+    try:
+        tok = tp._tokenizer("zai-org/GLM-5.3:peft:262144")
+        assert tok == "mock_fast_tokenizer"
+        assert called_with == ["zai-org/GLM-5.3:peft:262144"]
+    finally:
+        tp._tokenizer.cache_clear()
+
+
+async def test_collusion_logprobs_closes_unclosed_think(stub_tinker, monkeypatch):
+    """If chat template ends with <think>, collusion_yes_no_logprobs appends </think>."""
+    module, sc, tok = stub_tinker
+
+    # Enhance stub tokenizer to support convert_tokens_to_ids
+    tok.convert_tokens_to_ids = lambda t: 501 if t == "<think>" else 502 if t == "</think>" else None
+    # Chat template returns prefix ending in 501 (<think>)
+    monkeypatch.setattr(
+        tok,
+        "apply_chat_template",
+        lambda messages, add_generation_prompt, tokenize, return_dict=False, **kwargs: [1, 2, 501],
+    )
+
+    await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
+    # prefix should have [1, 2, 501] + [502] (</think>) + [900] (<answer>) = 5 tokens
+    assert sc.logprob_calls[0][:5] == [1, 2, 501, 502, 900]
+
