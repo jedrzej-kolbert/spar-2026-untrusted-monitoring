@@ -12,10 +12,10 @@ runs:
     eval_mode: honest
     system_prompt: honest_policy_prompt
     save_path: generator/honest.eval
-    model: tinker/deepseek-ai/DeepSeek-V3.1
+    model: tinker/<untrusted_generator_model_name>
   honeypots:
     eval_mode: honest
     system_prompt: honest_policy_prompt
     save_path: generator/honeypots.eval
-    model: tinker/openai/gpt-oss-120b
+    model: tinker/openai/<honeypot-generator-model-name>
 
