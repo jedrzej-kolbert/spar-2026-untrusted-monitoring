@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import types as pytypes
+from pathlib import Path
 
 import pytest
 
@@ -105,3 +106,124 @@ def test_load_examples_roundtrip(tmp_path, stub_finetune):
 def test_default_base_model_is_u_not_t(stub_finetune):
     # Guard the instruction: SFT U (30B), never default to the small T.
     assert stub_finetune.DEFAULT_BASE_MODEL == "Qwen/Qwen3-30B-A3B-Instruct-2507"
+
+
+def test_cli_wandb_options(stub_finetune):
+    """Verify click CLI exposes wandb flags."""
+    ft = stub_finetune
+    params = {p.name: p for p in ft.main.params}
+    assert "wandb" in params
+    assert "wandb_project" in params
+    assert "eval_every_epoch" in params
+
+
+def test_finetune_logs_wandb_metrics_and_checkpoints(monkeypatch, stub_finetune):
+    ft = stub_finetune
+    monkeypatch.setattr(ft, "load_examples", lambda _: [{"messages": []}] * 4)
+    monkeypatch.setattr(ft, "build_datum", lambda *_: object())
+    monkeypatch.setattr(ft, "_mean_loss", lambda *_: 0.5)
+    evaluated = []
+    monkeypatch.setattr(
+        ft, "evaluate_checkpoint", lambda path, *_args, **_kwargs: evaluated.append(path)
+    )
+
+    class Future:
+        def __init__(self, value=None):
+            self.value = value
+
+        def result(self):
+            return self.value
+
+    class TrainingClient:
+        def forward_backward(self, *_args):
+            return Future()
+
+        def optim_step(self, *_args):
+            return Future()
+
+        def forward(self, *_args):
+            return Future()
+
+        def save_weights_for_sampler(self, name):
+            return Future(pytypes.SimpleNamespace(path=f"tinker://{name}"))
+
+    class ServiceClient:
+        def create_lora_training_client(self, **_kwargs):
+            return TrainingClient()
+
+    tinker = sys.modules["tinker"]
+    tinker.ServiceClient = ServiceClient
+    tinker.types.AdamParams = lambda **_kwargs: object()
+
+    class Run:
+        def __init__(self):
+            self.summary = {}
+            self.finished = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.finished = True
+
+    run = Run()
+    logged = []
+    wandb = pytypes.SimpleNamespace(
+        init=lambda **_kwargs: run,
+        run=run,
+        log=lambda payload: logged.append(payload),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+
+    path = ft.finetune(
+        Path("unused.jsonl"), epochs=2, batch_size=2,
+        val_frac=0.25, use_wandb=True, eval_every_epoch=True,
+    )
+
+    assert path == "tinker://self_rec_u"
+    assert run.finished
+    assert run.summary["checkpoint_epoch_1"] == "tinker://self_rec_u_epoch1"
+    assert run.summary["checkpoint_path"] == path
+    assert evaluated == ["tinker://self_rec_u_epoch1", path]
+    assert sum("train/loss" in item for item in logged) == 4
+    assert sum("val/loss" in item for item in logged) == 2
+
+
+def test_evaluate_checkpoint_auroc_and_stats(monkeypatch, stub_finetune):
+    """Test evaluate_checkpoint returns expected metrics and computes AUROC."""
+    ft = stub_finetune
+
+    async def fake_logprobs(model_name, system_prompt, user_prompt):
+        # Return high YES for positive examples (containing "target"), high NO otherwise
+        if "target" in user_prompt:
+            return {"YES": 0.0, "NO": -5.0}  # margin = +5.0
+        return {"YES": -5.0, "NO": 0.0}  # margin = -5.0
+
+    from lasr_labs_2025_control_project.utils import tinker_provider as tp
+
+    monkeypatch.setattr(tp, "collusion_yes_no_logprobs", fake_logprobs)
+
+    val_examples = [
+        {"messages": [{"role": "user", "content": "target 1"}, {"role": "assistant", "content": "<answer>YES</answer>"}]},
+        {"messages": [{"role": "user", "content": "other 1"}, {"role": "assistant", "content": "<answer>NO</answer>"}]},
+        {"messages": [{"role": "user", "content": "target 2"}, {"role": "assistant", "content": "<answer>YES</answer>"}]},
+        {"messages": [{"role": "user", "content": "other 2"}, {"role": "assistant", "content": "<answer>NO</answer>"}]},
+    ]
+
+    logged = []
+    wandb = pytypes.SimpleNamespace(
+        log=lambda payload: logged.append(payload),
+        plot=pytypes.SimpleNamespace(roc_curve=lambda *_args, **_kwargs: "roc"),
+    )
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+    stats = ft.evaluate_checkpoint("mock_ckpt", val_examples, epoch=1, step=10, use_wandb=True)
+    assert stats["n"] == 4.0
+    assert stats["collusion_accuracy"] == 1.0
+    assert stats["collusion_score"] == 0.0
+    assert stats["collusion_auroc"] == 1.0
+    # Also verify backward-compatible aliases
+    assert stats["accuracy"] == 1.0
+    assert stats["mean_margin"] == 0.0
+    assert stats["yes_rate"] == 0.5
+    assert logged[0]["val/collusion_auroc"] == 1.0
+    assert logged[0]["val/roc_curve"] == "roc"
