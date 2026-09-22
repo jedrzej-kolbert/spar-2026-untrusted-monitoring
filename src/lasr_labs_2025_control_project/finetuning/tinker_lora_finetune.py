@@ -25,6 +25,7 @@ Usage:
       [--max-examples N] [--seed 0] [--val-frac 0.05]
       [--wandb] [--wandb-project untrusted-monitoring-lora] \
       [--wandb-entity s184361] [--eval-every-epoch]
+      [--train-rate-usd-per-million RATE]
 
 After saving, a held-out slice (`--val-frac`, 5% by default) is scored through
 the same forced-decoding path the monitor uses, reporting accuracy, predicted-YES
@@ -44,6 +45,7 @@ from typing import Any, Iterator, Optional
 
 import click
 
+from lasr_labs_2025_control_project.finetuning.cost_tracker import CostTracker
 from lasr_labs_2025_control_project.utils import tinker_provider as tp
 
 logging.basicConfig(level=logging.INFO)
@@ -154,6 +156,7 @@ def finetune(
     wandb_project: str = "untrusted-monitoring-lora",
     wandb_entity: Optional[str] = None,
     eval_every_epoch: bool = False,
+    train_rate_usd_per_million: Optional[float] = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
     import tinker
@@ -191,6 +194,7 @@ def finetune(
         if val_examples
         else []
     )
+    cost_tracker = CostTracker(train_rate_usd_per_million)
 
     def _calc_val_loss() -> Optional[float]:
         if not val_data:
@@ -224,6 +228,7 @@ def finetune(
                 "seed": seed,
                 "val_frac": val_frac,
                 "train_jsonl": str(train_jsonl),
+                "train_rate_usd_per_million": train_rate_usd_per_million,
             },
         )
     else:
@@ -242,12 +247,14 @@ def finetune(
                 opt_future.result()
                 step += 1
                 loss = _mean_loss(fb_output, batch)
+                cost_metrics = cost_tracker.record_batch(batch)
                 logger.info(
-                    "epoch %d step %d (%d examples)%s",
+                    "epoch %d step %d (%d examples)%s tokens=%d",
                     epoch + 1,
                     step,
                     len(batch),
                     f" loss={loss:.4f}" if loss is not None else "",
+                    int(cost_metrics["cost/step_tokens"]),
                 )
                 if use_wandb:
                     import wandb
@@ -255,6 +262,7 @@ def finetune(
                     log_payload: dict[str, Any] = {
                         "train/step": step,
                         "train/epoch": epoch + 1,
+                        **cost_metrics,
                     }
                     if loss is not None:
                         log_payload["train/loss"] = loss
@@ -301,10 +309,22 @@ def finetune(
                 use_wandb=use_wandb,
             )
 
+        logger.info("Submitted %d training tokens", cost_tracker.total_tokens)
+        if cost_tracker.estimated_training_cost_usd is not None:
+            logger.info(
+                "Estimated training compute: $%.4f",
+                cost_tracker.estimated_training_cost_usd,
+            )
+
         if use_wandb:
             import wandb
 
             wandb.run.summary["checkpoint_path"] = resp.path
+            wandb.run.summary["training_tokens"] = cost_tracker.total_tokens
+            if cost_tracker.estimated_training_cost_usd is not None:
+                wandb.run.summary["estimated_training_cost_usd"] = (
+                    cost_tracker.estimated_training_cost_usd
+                )
 
         return resp.path
 
@@ -500,6 +520,12 @@ def evaluate_checkpoint(
     default=False,
     help="Save sampler weights and evaluate validation ROC curve at every epoch.",
 )
+@click.option(
+    "--train-rate-usd-per-million",
+    type=click.FloatRange(min=0),
+    default=None,
+    help="Current Tinker training rate in USD per million tokens; enables cost estimates.",
+)
 def main(
     train_jsonl: Path,
     base_model: str,
@@ -516,6 +542,7 @@ def main(
     wandb_project: str,
     wandb_entity: Optional[str],
     eval_every_epoch: bool,
+    train_rate_usd_per_million: Optional[float],
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
     # in a gitignored .env. Without this the trainer dies immediately with
@@ -539,6 +566,7 @@ def main(
         wandb_project=wandb_project,
         wandb_entity=wandb_entity,
         eval_every_epoch=eval_every_epoch,
+        train_rate_usd_per_million=train_rate_usd_per_million,
     )
     click.echo(path)
     if out_path_file is not None:
