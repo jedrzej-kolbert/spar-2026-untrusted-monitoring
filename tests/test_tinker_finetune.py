@@ -120,7 +120,13 @@ def test_cli_wandb_options(stub_finetune):
 def test_finetune_logs_wandb_metrics_and_checkpoints(monkeypatch, stub_finetune):
     ft = stub_finetune
     monkeypatch.setattr(ft, "load_examples", lambda _: [{"messages": []}] * 4)
-    monkeypatch.setattr(ft, "build_datum", lambda *_: object())
+    monkeypatch.setattr(
+        ft,
+        "build_datum",
+        lambda *_: pytypes.SimpleNamespace(
+            model_input=pytypes.SimpleNamespace(to_ints=lambda: [0] * 10)
+        ),
+    )
     monkeypatch.setattr(ft, "_mean_loss", lambda *_: 0.5)
     evaluated = []
     monkeypatch.setattr(
@@ -178,6 +184,7 @@ def test_finetune_logs_wandb_metrics_and_checkpoints(monkeypatch, stub_finetune)
     path = ft.finetune(
         Path("unused.jsonl"), epochs=2, batch_size=2,
         val_frac=0.25, use_wandb=True, eval_every_epoch=True,
+        train_rate_usd_per_million=2.5,
     )
 
     assert path == "tinker://self_rec_u"
@@ -187,6 +194,31 @@ def test_finetune_logs_wandb_metrics_and_checkpoints(monkeypatch, stub_finetune)
     assert evaluated == ["tinker://self_rec_u_epoch1", path]
     assert sum("train/loss" in item for item in logged) == 4
     assert sum("val/loss" in item for item in logged) == 2
+    assert run.summary["training_tokens"] == 60
+    assert run.summary["estimated_training_cost_usd"] == pytest.approx(0.00015)
+    assert next(item for item in logged if item.get("train/step") == 4)[
+        "cost/cumulative_tokens"
+    ] == 60
+
+
+def test_cost_tracker_requires_a_rate_for_dollar_estimates():
+    from lasr_labs_2025_control_project.finetuning.cost_tracker import CostTracker
+
+    batch = [
+        pytypes.SimpleNamespace(model_input=pytypes.SimpleNamespace(to_ints=lambda: [0] * 9)),
+        pytypes.SimpleNamespace(model_input=pytypes.SimpleNamespace(to_ints=lambda: [0] * 19)),
+    ]
+    tracker = CostTracker()
+    metrics = tracker.record_batch(batch)
+    assert metrics == {"cost/step_tokens": 28.0, "cost/cumulative_tokens": 28.0}
+    assert tracker.estimated_training_cost_usd is None
+
+    priced = CostTracker(2.5)
+    metrics = priced.record_batch(batch)
+    assert metrics["cost/estimated_step_usd"] == pytest.approx(0.00007)
+    assert priced.estimated_training_cost_usd == pytest.approx(0.00007)
+    with pytest.raises(ValueError):
+        CostTracker(-1)
 
 
 def test_evaluate_checkpoint_auroc_and_stats(monkeypatch, stub_finetune):
