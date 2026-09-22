@@ -196,4 +196,3 @@ async def test_collusion_logprobs_closes_unclosed_think(stub_tinker, monkeypatch
     await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
     # prefix should have [1, 2, 501] + [502] (</think>) + [900] (<answer>) = 5 tokens
     assert sc.logprob_calls[0][:5] == [1, 2, 501, 502, 900]
-

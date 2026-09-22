@@ -79,4 +79,3 @@ def test_glm_tokenizer_loads(tinker_base_model):
         add_generation_prompt=True,
     )
     assert len(prompt_ids) > 0
-
