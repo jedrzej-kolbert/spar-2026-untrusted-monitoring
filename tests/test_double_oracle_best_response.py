@@ -5,10 +5,6 @@ from importlib import import_module
 import numpy as np
 from scipy.optimize import OptimizeResult
 
-from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.prima_bobyqa import (
-    minimize_prima_bobyqa,
-)
-
 
 def test_known_strategies_keep_bounds_ordered_when_local_search_misses(monkeypatch):
     module = import_module(
@@ -39,41 +35,48 @@ def test_known_strategies_keep_bounds_ordered_when_local_search_misses(monkeypat
     )
 
     iteration = result["history"][-1]
-    assert iteration["raw_blue_score"] < iteration["best_existing_blue_score"]
-    assert iteration["raw_red_score"] > iteration["best_existing_red_score"]
-    assert iteration["used_existing_blue"] is True
-    assert iteration["used_existing_red"] is True
+    assert result["red_best_response"]["red_choice"] == 1.0
     assert iteration["lower_bound"] <= iteration["upper_bound"]
     assert result["converged"] is False
-    assert iteration["termination_reason"] == "unverified_best_response"
+    assert set(iteration) == {
+        "iteration",
+        "num_blue_strategies",
+        "num_red_strategies",
+        "equilibrium_value",
+        "upper_bound",
+        "lower_bound",
+        "gap",
+        "blue_probs",
+        "red_probs",
+    }
 
 
-def test_prima_bridge_evaluates_log_parameters_in_original_coordinates(tmp_path):
-    runner = tmp_path / "runner"
-    runner.write_text(
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "print('EVAL 0.5 0.5', flush=True)\n"
-        "score = float(sys.stdin.readline())\n"
-        "print(f'RESULT 0 0.5 0.5 {score:.17g} 1', flush=True)\n"
-    )
-    runner.chmod(0o755)
-    seen = []
-
-    def objective(values):
-        seen.append(values.copy())
-        return float(values[0] + values[1])
-
-    result = minimize_prima_bobyqa(
-        objective,
-        np.array([0.2, 1e-4]),
-        [(0.0, 1.0), (1e-6, 1e-2)],
-        ["linear", "log"],
-        runner=runner,
+def test_cobyqa_searches_log_parameter_in_log_coordinates(monkeypatch):
+    module = import_module(
+        "lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_oracle"
     )
 
-    assert result.success
-    assert result.nfev == 1
-    assert np.allclose(seen[0], [0.5, 1e-4])
-    assert np.allclose(result.x, seen[0])
-    assert np.isclose(result.fun, objective(result.x))
+    def initial_strategies(names, _param_data, _rng):
+        if names == ["blue_choice"]:
+            return [{"blue_choice": 0.0}, {"blue_choice": 1.0}]
+        return [{"red_attack": 1e-6}, {"red_attack": 1e-1}]
+
+    monkeypatch.setattr(module, "_generate_initial_strategies", initial_strategies)
+
+    def payoff(params):
+        value = params["blue_choice"] + (
+            np.log10(params["red_attack"]) + 3.0
+        ) ** 2
+        return np.asarray(value), {"blue_win": np.asarray(value)}
+
+    result = module.double_oracle(
+        {
+            "blue_choice": {"min": 0.0, "max": 1.0, "scale": "linear"},
+            "red_attack": {"min": 1e-6, "max": 1e-1, "scale": "log"},
+        },
+        payoff,
+        max_iterations=1,
+        best_response_method="COBYQA",
+    )
+
+    assert np.isclose(result["red_best_response"]["red_attack"], 1e-3, rtol=0.05)

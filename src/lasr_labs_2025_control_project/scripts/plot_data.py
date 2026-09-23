@@ -54,7 +54,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--best-response-method",
-        choices=("Powell", "PRIMA-BOBYQA"),
+        choices=("Powell", "COBYQA"),
         default="Powell",
         help="Optimizer used for each double-oracle best response",
     )

@@ -27,8 +27,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import numpy as np
 from scipy.optimize import linprog, minimize
 
-from .prima_bobyqa import minimize_prima_bobyqa
-
 Strategy = Dict[str, float]
 ParamConfig = Dict[str, Dict[str, Union[str, float]]]
 ObjectiveFn = Callable[
@@ -404,7 +402,7 @@ def double_oracle(
     """
 
     epsilon = 1e-3  # Convergence tolerance for gap between upper/lower bounds
-    if best_response_method not in ("Powell", "PRIMA-BOBYQA"):
+    if best_response_method not in ("Powell", "COBYQA"):
         raise ValueError(f"Unsupported best-response method: {best_response_method}")
     rng = np.random.default_rng()
 
@@ -488,12 +486,36 @@ def double_oracle(
                 options={"maxiter": 200},
             )
 
-        return minimize_prima_bobyqa(
-            objective,
-            guess,
-            bounds,
-            [str(param_data[name].get("scale", "linear")) for name in names],
+        # COBYQA searches in a unit box, using log coordinates for parameters
+        # whose ranges span orders of magnitude.
+        lower = np.array([bound[0] for bound in bounds], dtype=float)
+        upper = np.array([bound[1] for bound in bounds], dtype=float)
+        log_scale = np.array(
+            [param_data[name].get("scale", "linear") == "log" for name in names]
         )
+        if np.any(log_scale & (lower <= 0)):
+            raise ValueError("Log-scale best-response bounds must be positive")
+        lower[log_scale] = np.log(lower[log_scale])
+        upper[log_scale] = np.log(upper[log_scale])
+        span = upper - lower
+
+        def to_parameters(x: np.ndarray) -> np.ndarray:
+            values = lower + np.clip(x, 0.0, 1.0) * span
+            values[log_scale] = np.exp(values[log_scale])
+            return values
+
+        scaled_guess = np.asarray(guess, dtype=float).copy()
+        scaled_guess[log_scale] = np.log(scaled_guess[log_scale])
+        scaled_guess = np.clip((scaled_guess - lower) / span, 0.0, 1.0)
+        result = minimize(
+            lambda x: objective(to_parameters(x)),
+            scaled_guess,
+            method="COBYQA",
+            bounds=[(0.0, 1.0)] * len(guess),
+            options={"maxfev": 3000},
+        )
+        result.x = to_parameters(result.x)
+        return result
 
     # Initial guesses for best response optimization
     blue_guess = np.array(
@@ -568,11 +590,9 @@ def double_oracle(
         raw_blue_score = blue_expected_value(candidate_blue)
         if raw_blue_score < blue_guess_score:
             candidate_blue = blue_start
-        used_existing_blue = False
         if blue_expected_value(candidate_blue) < best_existing_blue_score:
             existing = blue_strategies[int(np.argmax(payoff_matrix @ red_probs))]
             candidate_blue = np.array([existing[name] for name in blue_param_names])
-            used_existing_blue = True
         best_blue_strategy = {
             name: float(val) for name, val in zip(blue_param_names, candidate_blue)
         }
@@ -588,11 +608,9 @@ def double_oracle(
         raw_red_score = red_expected_value(candidate_red)
         if raw_red_score > red_guess_score:
             candidate_red = red_start
-        used_existing_red = False
         if red_expected_value(candidate_red) > best_existing_red_score:
             existing = red_strategies[int(np.argmin(blue_probs @ payoff_matrix))]
             candidate_red = np.array([existing[name] for name in red_param_names])
-            used_existing_red = True
         best_red_strategy = {
             name: float(val) for name, val in zip(red_param_names, candidate_red)
         }
@@ -612,47 +630,14 @@ def double_oracle(
         history.append(
             {
                 "iteration": iteration,
-                "best_response_method": best_response_method,
                 "num_blue_strategies": float(len(blue_strategies)),
                 "num_red_strategies": float(len(red_strategies)),
                 "equilibrium_value": game_value,
                 "upper_bound": upper_bound,
                 "lower_bound": lower_bound,
-                "red_lower": red_lower,
-                "raw_gap": raw_gap,
                 "gap": gap,
                 "blue_probs": blue_probs.tolist(),
                 "red_probs": red_probs.tolist(),
-                "blue_guess": dict(zip(blue_param_names, map(float, blue_start))),
-                "candidate_blue": best_blue_strategy.copy(),
-                "red_guess": dict(zip(red_param_names, map(float, red_start))),
-                "candidate_red": best_red_strategy.copy(),
-                "blue_guess_score": blue_guess_score,
-                "candidate_blue_score": blue_upper,
-                "raw_blue_score": raw_blue_score,
-                "used_existing_blue": used_existing_blue,
-                "best_existing_blue_score": best_existing_blue_score,
-                "red_guess_score": red_guess_score,
-                "candidate_red_score": red_lower,
-                "raw_red_score": raw_red_score,
-                "used_existing_red": used_existing_red,
-                "best_existing_red_score": best_existing_red_score,
-                "res_blue_success": bool(res_blue.success),
-                "res_blue_nit": (
-                    int(res_blue.nit) if res_blue.get("nit") is not None else None
-                ),
-                "res_blue_nfev": (
-                    int(res_blue.nfev) if res_blue.get("nfev") is not None else None
-                ),
-                "res_blue_message": str(res_blue.message),
-                "res_red_success": bool(res_red.success),
-                "res_red_nit": (
-                    int(res_red.nit) if res_red.get("nit") is not None else None
-                ),
-                "res_red_nfev": (
-                    int(res_red.nfev) if res_red.get("nfev") is not None else None
-                ),
-                "res_red_message": str(res_red.message),
             }
         )
 
@@ -676,9 +661,6 @@ def double_oracle(
             payoff_matrix = np.hstack([payoff_matrix, new_col[:, np.newaxis]])
             added_new = True
 
-        history[-1]["added_blue_strategy"] = added_blue
-        history[-1]["added_red_strategy"] = added_red
-
         if gap <= epsilon and not added_new:
             # A local response that misses an already-known strategy has not
             # established even local convergence; retaining the known strategy
@@ -688,9 +670,6 @@ def double_oracle(
                 or raw_red_score > best_existing_red_score + 1e-8
             )
             converged = bool(res_blue.success and res_red.success and not oracle_miss)
-            history[-1]["termination_reason"] = (
-                "local_gap" if converged else "unverified_best_response"
-            )
             break
 
     # Compute the final outcome distribution using red's best response against blue's Nash equilibrium
