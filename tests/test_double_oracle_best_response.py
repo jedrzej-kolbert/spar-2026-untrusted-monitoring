@@ -1,4 +1,4 @@
-"""Regression tests for double-oracle local best-response failures."""
+"""Regression tests for double-oracle best-response failures."""
 
 from importlib import import_module
 
@@ -6,7 +6,7 @@ import numpy as np
 from scipy.optimize import OptimizeResult
 
 
-def test_known_strategies_keep_bounds_ordered_when_local_search_misses(monkeypatch):
+def test_known_strategies_keep_bounds_ordered_when_search_misses(monkeypatch):
     module = import_module(
         "lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_oracle"
     )
@@ -15,11 +15,11 @@ def test_known_strategies_keep_bounds_ordered_when_local_search_misses(monkeypat
         assert len(names) == 1
         return [{names[0]: 0.0}, {names[0]: 1.0}]
 
-    def stuck_local_search(_objective, x0, **_kwargs):
-        return OptimizeResult(x=x0.copy(), success=True, nfev=1, message="stuck")
+    def stuck_search(_objective, **kwargs):
+        return OptimizeResult(x=kwargs["x0"].copy(), success=True, nfev=1, message="stuck")
 
     monkeypatch.setattr(module, "_generate_initial_strategies", initial_strategies)
-    monkeypatch.setattr(module, "minimize", stuck_local_search)
+    monkeypatch.setattr(module, "differential_evolution", stuck_search)
 
     def payoff(params):
         value = params["blue_choice"] - params["red_choice"]
@@ -51,7 +51,7 @@ def test_known_strategies_keep_bounds_ordered_when_local_search_misses(monkeypat
     }
 
 
-def test_cobyqa_searches_log_parameter_in_log_coordinates(monkeypatch):
+def test_de_searches_log_parameter_in_log_coordinates(monkeypatch):
     module = import_module(
         "lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_oracle"
     )
@@ -62,6 +62,12 @@ def test_cobyqa_searches_log_parameter_in_log_coordinates(monkeypatch):
         return [{"red_attack": 1e-6}, {"red_attack": 1e-1}]
 
     monkeypatch.setattr(module, "_generate_initial_strategies", initial_strategies)
+    original_default_rng = np.random.default_rng
+
+    def seeded_rng(value=None):
+        return original_default_rng(123 if value is None else value)
+
+    monkeypatch.setattr(module.np.random, "default_rng", seeded_rng)
 
     def payoff(params):
         value = params["blue_choice"] + (
@@ -76,7 +82,5 @@ def test_cobyqa_searches_log_parameter_in_log_coordinates(monkeypatch):
         },
         payoff,
         max_iterations=1,
-        best_response_method="COBYQA",
     )
-
     assert np.isclose(result["red_best_response"]["red_attack"], 1e-3, rtol=0.05)

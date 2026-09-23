@@ -14,9 +14,9 @@ terminates when the gap between upper and lower bounds converges.
 
 Key differences from grid_search:
   - Supports mixed strategies (probability distributions over pure strategies)
-  - Estimates an equilibrium using locally optimized best responses; the
+  - Estimates an equilibrium using heuristic best responses; the
     stopping gap is not a global equilibrium certificate
-  - More computationally expensive but theoretically sound for adversarial settings
+  - Models both sides of the adversarial game, with more expensive searches
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from itertools import product
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
-from scipy.optimize import linprog, minimize
+from scipy.optimize import differential_evolution, linprog
 
 Strategy = Dict[str, float]
 ParamConfig = Dict[str, Dict[str, Union[str, float]]]
@@ -357,7 +357,6 @@ def double_oracle(
     param_data: ParamConfig,
     function: ObjectiveFn,
     max_iterations: int,
-    best_response_method: str = "Powell",
 ) -> Dict[
     str,
     Union[
@@ -373,11 +372,11 @@ def double_oracle(
 
     Iteratively builds up mixed strategies for both players:
     1. Solve the restricted game (using current strategy supports) via LP
-    2. Compute best responses to opponent's mixed strategy via local optimization
+    2. Search for best responses to the opponent's mixed strategy
     3. Add new best responses to strategy supports
     4. Repeat until convergence (gap between bounds < epsilon)
 
-    With locally optimized best responses, a small reported gap does not establish
+    With heuristic best-response searches, a small reported gap does not establish
     that neither player can improve by deviating elsewhere in the strategy space.
 
     Args:
@@ -388,7 +387,6 @@ def double_oracle(
             and returns a tuple ``(blue_win_rate, outcome_dict)``. Blue wants to maximize,
             red wants to minimize.
         max_iterations: Maximum number of outer Double Oracle iterations.
-        best_response_method: Local method used for best-response searches.
 
     Returns:
         Dictionary containing:
@@ -398,12 +396,10 @@ def double_oracle(
             * ``red_mixed_strategy`` – list of (strategy, probability) tuples for red team Nash equilibrium.
             * ``history`` – per-iteration trace (objective, bounds, probabilities).
             * ``outcome_distribution`` – final outcome breakdown at equilibrium (weighted sum over both mixed strategies).
-            * ``converged`` – whether the local-response stopping tolerance was satisfied.
+            * ``converged`` – whether the heuristic-response stopping tolerance was satisfied.
     """
 
     epsilon = 1e-3  # Convergence tolerance for gap between upper/lower bounds
-    if best_response_method not in ("Powell", "COBYQA"):
-        raise ValueError(f"Unsupported best-response method: {best_response_method}")
     rng = np.random.default_rng()
 
     # Separate parameters by player (blue vs red)
@@ -477,16 +473,7 @@ def double_oracle(
         bounds: List[Tuple[float, float]],
         names: List[str],
     ) -> Any:
-        if best_response_method == "Powell":
-            return minimize(
-                objective,
-                guess,
-                method="Powell",
-                bounds=bounds,
-                options={"maxiter": 200},
-            )
-
-        # COBYQA searches in a unit box, using log coordinates for parameters
+        # Search in a unit box, using log coordinates for parameters
         # whose ranges span orders of magnitude.
         lower = np.array([bound[0] for bound in bounds], dtype=float)
         upper = np.array([bound[1] for bound in bounds], dtype=float)
@@ -507,12 +494,15 @@ def double_oracle(
         scaled_guess = np.asarray(guess, dtype=float).copy()
         scaled_guess[log_scale] = np.log(scaled_guess[log_scale])
         scaled_guess = np.clip((scaled_guess - lower) / span, 0.0, 1.0)
-        result = minimize(
+        result = differential_evolution(
             lambda x: objective(to_parameters(x)),
-            scaled_guess,
-            method="COBYQA",
             bounds=[(0.0, 1.0)] * len(guess),
-            options={"maxfev": 3000},
+            x0=scaled_guess,
+            rng=rng,
+            maxiter=40,
+            popsize=10,
+            tol=1e-4,
+            polish=False,
         )
         result.x = to_parameters(result.x)
         return result
@@ -573,11 +563,7 @@ def double_oracle(
         def red_objective(x: np.ndarray) -> float:
             return red_expected_value(x)
 
-        # Step 2: compute best responses with local continuous optimization.
-        blue_start = blue_guess.copy()
-        red_start = red_guess.copy()
-        blue_guess_score = blue_expected_value(blue_start)
-        red_guess_score = red_expected_value(red_start)
+        # Step 2: search for best responses to the current mixed strategies.
         # These are payoffs of policies already evaluated by this offline solver.
         # No realized Blue action or deployment observation is revealed to Red.
         best_existing_blue_score = float(np.max(payoff_matrix @ red_probs))
@@ -590,9 +576,7 @@ def double_oracle(
             res_blue.x if np.all(np.isfinite(res_blue.x)) else blue_guess, bounds_blue
         )
         raw_blue_score = blue_expected_value(candidate_blue)
-        if raw_blue_score < blue_guess_score:
-            candidate_blue = blue_start
-        if blue_expected_value(candidate_blue) < best_existing_blue_score:
+        if raw_blue_score < best_existing_blue_score:
             existing = blue_strategies[int(np.argmax(payoff_matrix @ red_probs))]
             candidate_blue = np.array([existing[name] for name in blue_param_names])
         best_blue_strategy = {
@@ -608,9 +592,7 @@ def double_oracle(
             res_red.x if np.all(np.isfinite(res_red.x)) else red_guess, bounds_red
         )
         raw_red_score = red_expected_value(candidate_red)
-        if raw_red_score > red_guess_score:
-            candidate_red = red_start
-        if red_expected_value(candidate_red) > best_existing_red_score:
+        if raw_red_score > best_existing_red_score:
             existing = red_strategies[int(np.argmin(blue_probs @ payoff_matrix))]
             candidate_red = np.array([existing[name] for name in red_param_names])
         best_red_strategy = {
@@ -664,8 +646,8 @@ def double_oracle(
             added_new = True
 
         if gap <= epsilon and not added_new:
-            # A local response that misses an already-known strategy has not
-            # established even local convergence; retaining the known strategy
+            # A search that misses an already-known strategy has not
+            # established convergence; retaining the known strategy
             # makes the gap small but must not turn that miss into success.
             oracle_miss = (
                 raw_blue_score < best_existing_blue_score - 1e-8

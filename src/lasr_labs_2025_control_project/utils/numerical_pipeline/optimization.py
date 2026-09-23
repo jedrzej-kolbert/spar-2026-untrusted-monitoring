@@ -268,7 +268,6 @@ def derive_untrusted_threshold_bounds(
 def _optimize_single_parameter_set(
     config: OptimizationConfig,
     max_iterations: int,
-    best_response_method: str = "Powell",
 ) -> Dict[str, Any]:
     """Run parameter optimization using the provided configuration.
 
@@ -304,7 +303,6 @@ def _optimize_single_parameter_set(
         parameter_spaces,
         config.blue_team_win_calculator,
         max_iterations=max_iterations,
-        best_response_method=best_response_method,
     )
 
     return results  # raw dict (backwards compatibility handled by wrapper)
@@ -315,7 +313,6 @@ def optimize_parameters(
     base_config: OptimizationConfig,
     max_iterations: int,
     replace_fnr_values: Optional[List[float]] = None,
-    best_response_method: str = "Powell",
 ) -> OptimizationResult:
     """Run the parameter optimization for a sweep of fixed blue_team_replace_fnr values.
 
@@ -400,7 +397,6 @@ def optimize_parameters(
         raw_result = _optimize_single_parameter_set(
             config=config,
             max_iterations=max_iterations,
-            best_response_method=best_response_method,
         )
 
         # Extract the blue mixed strategy
