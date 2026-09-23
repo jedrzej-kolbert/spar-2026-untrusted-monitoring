@@ -84,3 +84,37 @@ def test_de_searches_log_parameter_in_log_coordinates(monkeypatch):
         max_iterations=1,
     )
     assert np.isclose(result["red_best_response"]["red_attack"], 1e-3, rtol=0.05)
+
+
+def test_uppercase_log_scale_uses_log_coordinates(monkeypatch):
+    module = import_module(
+        "lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_oracle"
+    )
+    midpoint = np.sqrt(1e-6 * 1e-1)
+
+    def initial_strategies(names, _param_data, _rng):
+        if names == ["blue_choice"]:
+            return [{"blue_choice": 0.0}, {"blue_choice": 1.0}]
+        return [{"red_attack": 1e-6}, {"red_attack": 1e-1}]
+
+    def fixed_unit_midpoint(_objective, **_kwargs):
+        return OptimizeResult(x=np.array([0.5]), success=True, nfev=1, message="midpoint")
+
+    monkeypatch.setattr(module, "_generate_initial_strategies", initial_strategies)
+    monkeypatch.setattr(module, "differential_evolution", fixed_unit_midpoint)
+
+    def payoff(params):
+        value = params["blue_choice"] + (
+            np.log10(params["red_attack"] / midpoint)
+        ) ** 2
+        return np.asarray(value), {"blue_win": np.asarray(value)}
+
+    result = module.double_oracle(
+        {
+            "blue_choice": {"min": 0.0, "max": 1.0, "scale": "linear"},
+            "red_attack": {"min": 1e-6, "max": 1e-1, "scale": "LOG"},
+        },
+        payoff,
+        max_iterations=1,
+    )
+    assert np.isclose(result["red_best_response"]["red_attack"], midpoint)

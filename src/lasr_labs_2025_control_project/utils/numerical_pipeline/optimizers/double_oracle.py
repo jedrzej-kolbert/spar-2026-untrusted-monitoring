@@ -478,7 +478,7 @@ def double_oracle(
         lower = np.array([bound[0] for bound in bounds], dtype=float)
         upper = np.array([bound[1] for bound in bounds], dtype=float)
         log_scale = np.array(
-            [param_data[name].get("scale", "linear") == "log" for name in names]
+            [str(param_data[name].get("scale", "linear")).lower() == "log" for name in names]
         )
         if np.any(log_scale & (lower <= 0)):
             raise ValueError("Log-scale best-response bounds must be positive")
