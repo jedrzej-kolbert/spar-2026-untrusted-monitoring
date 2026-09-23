@@ -538,7 +538,7 @@ def double_oracle(
     best_blue_strategy = blue_strategies[0]
     best_red_strategy = red_strategies[0]
 
-    history: List[Dict[str, Any]] = []
+    history: List[Dict[str, Union[int, float, List[float]]]] = []
     converged = False
 
     for iteration in range(max_iterations):
@@ -578,6 +578,8 @@ def double_oracle(
         red_start = red_guess.copy()
         blue_guess_score = blue_expected_value(blue_start)
         red_guess_score = red_expected_value(red_start)
+        # These are payoffs of policies already evaluated by this offline solver.
+        # No realized Blue action or deployment observation is revealed to Red.
         best_existing_blue_score = float(np.max(payoff_matrix @ red_probs))
         best_existing_red_score = float(np.min(blue_probs @ payoff_matrix))
 
