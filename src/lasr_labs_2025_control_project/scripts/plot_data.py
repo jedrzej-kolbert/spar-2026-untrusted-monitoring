@@ -52,6 +52,12 @@ def main() -> None:
         default=None,
         help="Save visualizations to a 'grouped' subfolder in the results folder",
     )
+    parser.add_argument(
+        "--best-response-method",
+        choices=("Powell", "PRIMA-BOBYQA"),
+        default="Powell",
+        help="Optimizer used for each double-oracle best response",
+    )
     args = parser.parse_args()
 
     # Aggregate results keyed by experiment_name
@@ -63,7 +69,9 @@ def main() -> None:
         if args.disable_trusted_monitor:
             normalized.defaults["disable_trusted_monitor"] = True
         # Re-run optimization for this config and store under experiment_name
-        result = run_single_config(normalized)
+        result = run_single_config(
+            normalized, best_response_method=args.best_response_method
+        )
         aggregated[normalized.experiment_name] = result
 
         # Persist the full analysis data (Nash strategies at every sweep
@@ -153,6 +161,7 @@ def plot_ensemble_monitoring(
     blue_team_replace_fnr: float,
     disable_trusted_monitor: bool = False,
     disable_untrusted_monitor: bool = False,
+    best_response_method: str = "Powell",
 ) -> OptimizationResult:
     """Build optimization inputs from both monitors using DataFrames.
 
@@ -191,7 +200,11 @@ def plot_ensemble_monitoring(
         disable_untrusted_monitor=disable_untrusted_monitor,
     )
 
-    result = optimize_parameters(base_config=config, max_iterations=100)
+    result = optimize_parameters(
+        base_config=config,
+        max_iterations=100,
+        best_response_method=best_response_method,
+    )
 
     # Attach extra metadata (diagnostic) for visualization
     meta = result.config.monitor_roc_fn_metadata or {}
@@ -215,7 +228,9 @@ def plot_ensemble_monitoring(
     return result
 
 
-def run_single_config(normalized: ExperimentConfig) -> OptimizationResult:
+def run_single_config(
+    normalized: ExperimentConfig, best_response_method: str = "Powell"
+) -> OptimizationResult:
     """Execute optimization for a single normalized config dict.
 
     Args:
@@ -246,6 +261,7 @@ def run_single_config(normalized: ExperimentConfig) -> OptimizationResult:
         blue_team_replace_fnr=0.0,
         disable_trusted_monitor=disable_trusted_monitor,
         disable_untrusted_monitor=disable_untrusted_monitor,
+        best_response_method=best_response_method,
     )
 
 

@@ -14,17 +14,20 @@ terminates when the gap between upper and lower bounds converges.
 
 Key differences from grid_search:
   - Supports mixed strategies (probability distributions over pure strategies)
-  - Provides Nash equilibrium guarantees
+  - Estimates an equilibrium using locally optimized best responses; the
+    stopping gap is not a global equilibrium certificate
   - More computationally expensive but theoretically sound for adversarial settings
 """
 
 from __future__ import annotations
 
 from itertools import product
-from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 from scipy.optimize import linprog, minimize
+
+from .prima_bobyqa import minimize_prima_bobyqa
 
 Strategy = Dict[str, float]
 ParamConfig = Dict[str, Dict[str, Union[str, float]]]
@@ -356,6 +359,7 @@ def double_oracle(
     param_data: ParamConfig,
     function: ObjectiveFn,
     max_iterations: int,
+    best_response_method: str = "Powell",
 ) -> Dict[
     str,
     Union[
@@ -375,8 +379,8 @@ def double_oracle(
     3. Add new best responses to strategy supports
     4. Repeat until convergence (gap between bounds < epsilon)
 
-    The algorithm provides theoretical guarantees: at convergence, neither player
-    can improve their expected payoff by deviating unilaterally.
+    With locally optimized best responses, a small reported gap does not establish
+    that neither player can improve by deviating elsewhere in the strategy space.
 
     Args:
         param_data: Parameter metadata describing bounds and scales, with keys like
@@ -386,19 +390,22 @@ def double_oracle(
             and returns a tuple ``(blue_win_rate, outcome_dict)``. Blue wants to maximize,
             red wants to minimize.
         max_iterations: Maximum number of outer Double Oracle iterations.
+        best_response_method: Local method used for best-response searches.
 
     Returns:
         Dictionary containing:
-            * ``best_score`` – the guaranteed blue team win rate at Nash equilibrium (lower bound).
+            * ``best_score`` – estimated blue win rate against the discovered red response.
             * ``red_best_response`` – the best response red strategy (unmixed, for exploitation).
             * ``blue_mixed_strategy`` – list of (strategy, probability) tuples for blue team Nash equilibrium.
             * ``red_mixed_strategy`` – list of (strategy, probability) tuples for red team Nash equilibrium.
             * ``history`` – per-iteration trace (objective, bounds, probabilities).
             * ``outcome_distribution`` – final outcome breakdown at equilibrium (weighted sum over both mixed strategies).
-            * ``converged`` – whether the stopping tolerance was satisfied.
+            * ``converged`` – whether the local-response stopping tolerance was satisfied.
     """
 
     epsilon = 1e-3  # Convergence tolerance for gap between upper/lower bounds
+    if best_response_method not in ("Powell", "PRIMA-BOBYQA"):
+        raise ValueError(f"Unsupported best-response method: {best_response_method}")
     rng = np.random.default_rng()
 
     # Separate parameters by player (blue vs red)
@@ -466,6 +473,28 @@ def double_oracle(
     bounds_blue = _compute_bounds(param_data, blue_param_names)
     bounds_red = _compute_bounds(param_data, red_param_names)
 
+    def minimize_best_response(
+        objective: Callable[[np.ndarray], float],
+        guess: np.ndarray,
+        bounds: List[Tuple[float, float]],
+        names: List[str],
+    ) -> Any:
+        if best_response_method == "Powell":
+            return minimize(
+                objective,
+                guess,
+                method="Powell",
+                bounds=bounds,
+                options={"maxiter": 200},
+            )
+
+        return minimize_prima_bobyqa(
+            objective,
+            guess,
+            bounds,
+            [str(param_data[name].get("scale", "linear")) for name in names],
+        )
+
     # Initial guesses for best response optimization
     blue_guess = np.array(
         [blue_strategies[0][name] for name in blue_param_names], dtype=float
@@ -487,7 +516,7 @@ def double_oracle(
     best_blue_strategy = blue_strategies[0]
     best_red_strategy = red_strategies[0]
 
-    history: List[Dict[str, Union[int, float, List[float]]]] = []
+    history: List[Dict[str, Any]] = []
     converged = False
 
     for iteration in range(max_iterations):
@@ -523,32 +552,47 @@ def double_oracle(
             return red_expected_value(x)
 
         # Step 2: compute best responses with local continuous optimization.
-        res_blue = minimize(
-            blue_objective,
-            blue_guess,
-            method="Powell",
-            bounds=bounds_blue,
-            options={"maxiter": 200},
+        blue_start = blue_guess.copy()
+        red_start = red_guess.copy()
+        blue_guess_score = blue_expected_value(blue_start)
+        red_guess_score = red_expected_value(red_start)
+        best_existing_blue_score = float(np.max(payoff_matrix @ red_probs))
+        best_existing_red_score = float(np.min(blue_probs @ payoff_matrix))
+
+        res_blue = minimize_best_response(
+            blue_objective, blue_guess, bounds_blue, blue_param_names
         )
         candidate_blue = _clip_array_to_bounds(
-            res_blue.x if res_blue.success else blue_guess, bounds_blue
+            res_blue.x if np.all(np.isfinite(res_blue.x)) else blue_guess, bounds_blue
         )
+        raw_blue_score = blue_expected_value(candidate_blue)
+        if raw_blue_score < blue_guess_score:
+            candidate_blue = blue_start
+        used_existing_blue = False
+        if blue_expected_value(candidate_blue) < best_existing_blue_score:
+            existing = blue_strategies[int(np.argmax(payoff_matrix @ red_probs))]
+            candidate_blue = np.array([existing[name] for name in blue_param_names])
+            used_existing_blue = True
         best_blue_strategy = {
             name: float(val) for name, val in zip(blue_param_names, candidate_blue)
         }
         blue_upper = blue_expected_value(candidate_blue)
         blue_guess = candidate_blue
 
-        res_red = minimize(
-            red_objective,
-            red_guess,
-            method="Powell",
-            bounds=bounds_red,
-            options={"maxiter": 200},
+        res_red = minimize_best_response(
+            red_objective, red_guess, bounds_red, red_param_names
         )
         candidate_red = _clip_array_to_bounds(
-            res_red.x if res_red.success else red_guess, bounds_red
+            res_red.x if np.all(np.isfinite(res_red.x)) else red_guess, bounds_red
         )
+        raw_red_score = red_expected_value(candidate_red)
+        if raw_red_score > red_guess_score:
+            candidate_red = red_start
+        used_existing_red = False
+        if red_expected_value(candidate_red) > best_existing_red_score:
+            existing = red_strategies[int(np.argmin(blue_probs @ payoff_matrix))]
+            candidate_red = np.array([existing[name] for name in red_param_names])
+            used_existing_red = True
         best_red_strategy = {
             name: float(val) for name, val in zip(red_param_names, candidate_red)
         }
@@ -557,25 +601,65 @@ def double_oracle(
 
         upper_bound = blue_upper
         lower_bound = red_lower
-        gap = max(0.0, upper_bound - lower_bound)
+        raw_gap = upper_bound - lower_bound
+        if raw_gap < -1e-8:
+            raise RuntimeError(
+                "Invalid best-response bounds: "
+                f"lower={lower_bound}, upper={upper_bound}"
+            )
+        gap = max(0.0, raw_gap)
 
         history.append(
             {
                 "iteration": iteration,
+                "best_response_method": best_response_method,
                 "num_blue_strategies": float(len(blue_strategies)),
                 "num_red_strategies": float(len(red_strategies)),
                 "equilibrium_value": game_value,
                 "upper_bound": upper_bound,
                 "lower_bound": lower_bound,
+                "red_lower": red_lower,
+                "raw_gap": raw_gap,
                 "gap": gap,
                 "blue_probs": blue_probs.tolist(),
                 "red_probs": red_probs.tolist(),
+                "blue_guess": dict(zip(blue_param_names, map(float, blue_start))),
+                "candidate_blue": best_blue_strategy.copy(),
+                "red_guess": dict(zip(red_param_names, map(float, red_start))),
+                "candidate_red": best_red_strategy.copy(),
+                "blue_guess_score": blue_guess_score,
+                "candidate_blue_score": blue_upper,
+                "raw_blue_score": raw_blue_score,
+                "used_existing_blue": used_existing_blue,
+                "best_existing_blue_score": best_existing_blue_score,
+                "red_guess_score": red_guess_score,
+                "candidate_red_score": red_lower,
+                "raw_red_score": raw_red_score,
+                "used_existing_red": used_existing_red,
+                "best_existing_red_score": best_existing_red_score,
+                "res_blue_success": bool(res_blue.success),
+                "res_blue_nit": (
+                    int(res_blue.nit) if res_blue.get("nit") is not None else None
+                ),
+                "res_blue_nfev": (
+                    int(res_blue.nfev) if res_blue.get("nfev") is not None else None
+                ),
+                "res_blue_message": str(res_blue.message),
+                "res_red_success": bool(res_red.success),
+                "res_red_nit": (
+                    int(res_red.nit) if res_red.get("nit") is not None else None
+                ),
+                "res_red_nfev": (
+                    int(res_red.nfev) if res_red.get("nfev") is not None else None
+                ),
+                "res_red_message": str(res_red.message),
             }
         )
 
         added_new = False
 
-        if not _strategy_exists(blue_strategies, best_blue_strategy):
+        added_blue = not _strategy_exists(blue_strategies, best_blue_strategy)
+        if added_blue:
             blue_strategies.append(best_blue_strategy)
             new_row = np.array(
                 [evaluate(best_blue_strategy, red)[0] for red in red_strategies]
@@ -583,7 +667,8 @@ def double_oracle(
             payoff_matrix = np.vstack([payoff_matrix, new_row[np.newaxis, :]])
             added_new = True
 
-        if not _strategy_exists(red_strategies, best_red_strategy):
+        added_red = not _strategy_exists(red_strategies, best_red_strategy)
+        if added_red:
             red_strategies.append(best_red_strategy)
             new_col = np.array(
                 [evaluate(blue, best_red_strategy)[0] for blue in blue_strategies]
@@ -591,8 +676,21 @@ def double_oracle(
             payoff_matrix = np.hstack([payoff_matrix, new_col[:, np.newaxis]])
             added_new = True
 
+        history[-1]["added_blue_strategy"] = added_blue
+        history[-1]["added_red_strategy"] = added_red
+
         if gap <= epsilon and not added_new:
-            converged = True
+            # A local response that misses an already-known strategy has not
+            # established even local convergence; retaining the known strategy
+            # makes the gap small but must not turn that miss into success.
+            oracle_miss = (
+                raw_blue_score < best_existing_blue_score - 1e-8
+                or raw_red_score > best_existing_red_score + 1e-8
+            )
+            converged = bool(res_blue.success and res_red.success and not oracle_miss)
+            history[-1]["termination_reason"] = (
+                "local_gap" if converged else "unverified_best_response"
+            )
             break
 
     # Compute the final outcome distribution using red's best response against blue's Nash equilibrium
@@ -608,8 +706,9 @@ def double_oracle(
         for key, value in outcomes.items():
             final_outcomes[key] = final_outcomes.get(key, 0.0) + blue_prob * value
 
-    # Use lower_bound which represents red's best response against blue's Nash equilibrium
-    # This aligns with the outcome_distribution computation above
+    # Use the discovered red response against blue's restricted-game mixture.
+    # This aligns with the outcome_distribution computation above, but remains
+    # an estimate unless the red best-response search was globally validated.
     best_score = lower_bound if np.isfinite(lower_bound) else game_value
 
     # Build the blue mixed strategy as a list of (strategy, probability) tuples
