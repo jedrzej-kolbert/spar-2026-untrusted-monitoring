@@ -24,7 +24,7 @@ from itertools import product
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
-from scipy.optimize import linprog, minimize
+from scipy.optimize import differential_evolution, linprog
 
 Strategy = Dict[str, float]
 ParamConfig = Dict[str, Dict[str, Union[str, float]]]
@@ -523,15 +523,18 @@ def double_oracle(
             return red_expected_value(x)
 
         # Step 2: compute best responses with local continuous optimization.
-        res_blue = minimize(
+        res_blue = differential_evolution(
             blue_objective,
-            blue_guess,
-            method="Powell",
             bounds=bounds_blue,
-            options={"maxiter": 200},
+            x0=blue_guess,
+            rng=rng,
+            maxiter=40,
+            popsize=10,
+            tol=1e-4,
+            polish=False,
         )
         candidate_blue = _clip_array_to_bounds(
-            res_blue.x if res_blue.success else blue_guess, bounds_blue
+            res_blue.x if np.all(np.isfinite(res_blue.x)) else blue_guess, bounds_blue
         )
         best_blue_strategy = {
             name: float(val) for name, val in zip(blue_param_names, candidate_blue)
@@ -539,15 +542,18 @@ def double_oracle(
         blue_upper = blue_expected_value(candidate_blue)
         blue_guess = candidate_blue
 
-        res_red = minimize(
+        res_red = differential_evolution(
             red_objective,
-            red_guess,
-            method="Powell",
             bounds=bounds_red,
-            options={"maxiter": 200},
+            x0=red_guess,
+            rng=rng,
+            maxiter=40,
+            popsize=10,
+            tol=1e-4,
+            polish=False,
         )
         candidate_red = _clip_array_to_bounds(
-            res_red.x if res_red.success else red_guess, bounds_red
+            res_red.x if np.all(np.isfinite(res_red.x)) else red_guess, bounds_red
         )
         best_red_strategy = {
             name: float(val) for name, val in zip(red_param_names, candidate_red)
