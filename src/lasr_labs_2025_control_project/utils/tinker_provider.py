@@ -134,12 +134,9 @@ def _load_fast_tokenizer_fallback(base_model: str):
         kwargs["pad_token"] = "<|endoftext|>"
     tok = PreTrainedTokenizerFast(tokenizer_file=tok_file, **kwargs)
 
-    try:
-        chat_template_file = hf_hub_download(repo_id, "chat_template.jinja")
-        with open(chat_template_file, encoding="utf-8") as f:
-            tok.chat_template = f.read()
-    except Exception:
-        pass
+    chat_template_file = hf_hub_download(repo_id, "chat_template.jinja")
+    with open(chat_template_file, encoding="utf-8") as f:
+        tok.chat_template = f.read()
     return tok
 
 

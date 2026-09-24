@@ -59,22 +59,45 @@ async def test_collusion_logprobs_exact_and_discriminate(tinker_base_model):
     assert score_true > score_false
 
 
-def test_kimi_tokenizer_loads(tinker_base_model):
-    tok = tp._tokenizer("moonshotai/Kimi-K2.6")
+def _require_model(model_name: str) -> None:
+    import tinker
+
+    available = {
+        m.model_name
+        for m in tinker.ServiceClient().get_server_capabilities().supported_models
+    }
+    if model_name not in available:
+        pytest.skip(f"{model_name} is unavailable on this Tinker account")
+
+
+async def test_kimi_no_thinking_sampling(tinker_base_model):
+    model_name = "moonshotai/Kimi-K2.6"
+    _require_model(model_name)
+    tok = tp._tokenizer(model_name)
     assert tok is not None
     prompt_ids = tp._apply_chat_template(
-        "moonshotai/Kimi-K2.6",
+        model_name,
         [{"role": "user", "content": "Hello"}],
         add_generation_prompt=True,
     )
     assert len(prompt_ids) > 0
+    assert tok.decode(prompt_ids).endswith("<think></think>")
+
+    model = get_model(f"tinker/{model_name}")
+    out = await model.generate(
+        [ChatMessageUser(content="Say hello.")],
+        config=GenerateConfig(max_tokens=32, temperature=0.0),
+    )
+    assert out.completion.strip()
 
 
 def test_glm_tokenizer_loads(tinker_base_model):
-    tok = tp._tokenizer("zai-org/GLM-5.3:peft:262144")
+    model_name = "zai-org/GLM-5.3:peft:262144"
+    _require_model(model_name)
+    tok = tp._tokenizer(model_name)
     assert tok is not None
     prompt_ids = tp._apply_chat_template(
-        "zai-org/GLM-5.3:peft:262144",
+        model_name,
         [{"role": "user", "content": "Hello"}],
         add_generation_prompt=True,
     )
