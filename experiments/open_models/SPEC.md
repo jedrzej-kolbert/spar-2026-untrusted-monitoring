@@ -70,10 +70,26 @@ Catalogue gotcha: the Tinker **website** models page is not authoritative for
 sampling — it's a curated/lagging view that mixes in training-only and
 `-Base` (pretrained, non-instruct) entries. What you can actually call is what
 `get_server_capabilities()` returns for your account, and even then "listed"
-does not guarantee "sampleable": e.g. `Qwen/Qwen3-30B-A3B-Instruct-2507` (our U)
-is callable but absent from the website, while `Qwen/Qwen3.5-35B-A3B` appears on
-the website yet returns `400 "Sampling is not supported"` (only its `-Base`
-exists here). Always confirm a model with an actual `sample` call before a run.
+does not guarantee "sampleable".
+
+Model-serving compatibility notes:
+- **Qwen series**: The older `Qwen/Qwen3-30B-A3B-Instruct-2507` is no longer supported
+  for sampling by Tinker's endpoint (`400: Sampling is not supported for Qwen/Qwen3-30B-A3B-Instruct-2507`).
+  Verified working sampling models on our Tinker account include `Qwen/Qwen3-8B`,
+  `Qwen/Qwen3.6-35B-A3B` (the direct architectural successor to Qwen3-30B-A3B),
+  `Qwen/Qwen3.6-27B`, `Qwen/Qwen3.8-27B`, and `Qwen/Qwen3.5-4B` (T).
+- **Moonshot Kimi K2.6 (`moonshotai/Kimi-K2.6`)**: Supported for sampling. Its custom
+  tokenizer (`tokenization_kimi.py`) uses `tiktoken`, which imports `blobfile` to read
+  local files. `tinker_provider.py` includes an automatic standard-`open` fallback when
+  `blobfile` is not installed. Thinking is controlled via `thinking=False` in its template.
+- **GLM 5.3 (`zai-org/GLM-5.3:peft:262144`)**: Supported for sampling. Hugging Face's
+  `tokenizer_config.json` sets `"tokenizer_class": "TokenizersBackend"`, causing
+  `AutoTokenizer.from_pretrained` to fail. `tinker_provider.py` automatically falls back
+  to `PreTrainedTokenizerFast` using `tokenizer.json` and `chat_template.jinja`. In
+  addition, GLM's chat template unconditionally appends `<think>`; `collusion_yes_no_logprobs`
+  automatically closes it with `</think>` before `<answer>`.
+
+Always confirm a model with an actual `sample` call before an experiment run.
 
 Reasoning-model note (why H is gpt-oss, not Nemotron): the honeypot generator
 must emit `<final_code>`/`<secret_input>` within a reasonable token budget.

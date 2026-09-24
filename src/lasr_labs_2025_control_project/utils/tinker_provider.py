@@ -26,9 +26,10 @@ The authoritative live catalogue is
 
 from __future__ import annotations
 
+import asyncio
 import threading
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Optional
+from functools import cache
+from typing import TYPE_CHECKING, Any
 
 from inspect_ai.model import (
     ChatMessage,
@@ -67,16 +68,81 @@ _DEFAULT_MAX_TOKENS = 16384
 # families, so completions carry only the final answer (matches the behaviour
 # we rely on for clean answer extraction). Applied best-effort: templates that
 # don't accept the kwarg are called without it.
-_NOTHINK_TEMPLATE_KWARGS = {"enable_thinking": False}
+# - enable_thinking=False: Qwen / DeepSeek
+# - thinking=False: Kimi K2.5 / K2.6
+_NOTHINK_TEMPLATE_KWARGS = {"enable_thinking": False, "thinking": False}
 
 # inspect's reasoning_effort vocabulary -> the values harmony templates (gpt-oss)
 # accept. inspect allows "minimal", harmony does not; "low" is the nearest.
 _HARMONY_REASONING_EFFORT = {"minimal": "low"}
 
 
+def _ensure_tiktoken_blobfile_patch() -> None:
+    """tiktoken.load.read_file requires blobfile for local paths.
+
+    If blobfile is not installed, fallback to standard Python open(..., 'rb').
+    This enables Kimi K2.6 (and other tiktoken-based tokenizers) to load
+    cleanly without failing on missing blobfile.
+    """
+    try:
+        import tiktoken.load
+
+        if getattr(tiktoken.load, "_spar_patched", False):
+            return
+
+        def _read_file_fallback(blobpath: str) -> bytes:
+            if blobpath.startswith("http://") or blobpath.startswith("https://"):
+                import requests
+
+                resp = requests.get(blobpath)
+                resp.raise_for_status()
+                return resp.content
+            try:
+                import blobfile
+
+                with blobfile.BlobFile(blobpath, "rb") as f:
+                    return f.read()
+            except ImportError:
+                with open(blobpath, "rb") as f:
+                    return f.read()
+
+        tiktoken.load.read_file = _read_file_fallback
+        tiktoken.load._spar_patched = True
+    except (ImportError, AttributeError):
+        pass
+
+
+_ensure_tiktoken_blobfile_patch()
+
+
+def _load_fast_tokenizer_fallback(base_model: str):
+    """Fallback tokenizer loader for models with non-standard tokenizer_class.
+
+    For example, zai-org/GLM-5.3 has "tokenizer_class": "TokenizersBackend" in
+    tokenizer_config.json, which causes AutoTokenizer.from_pretrained() to fail
+    with "ValueError: Tokenizer class TokenizersBackend does not exist".
+    This loads tokenizer.json and chat_template.jinja directly with PreTrainedTokenizerFast.
+    """
+    from huggingface_hub import hf_hub_download
+    from transformers import PreTrainedTokenizerFast
+
+    repo_id = base_model.split(":")[0]
+    tok_file = hf_hub_download(repo_id, "tokenizer.json")
+    kwargs: dict[str, Any] = {}
+    if "GLM" in repo_id or "glm" in repo_id:
+        kwargs["eos_token"] = "<|endoftext|>"
+        kwargs["pad_token"] = "<|endoftext|>"
+    tok = PreTrainedTokenizerFast(tokenizer_file=tok_file, **kwargs)
+
+    chat_template_file = hf_hub_download(repo_id, "chat_template.jinja")
+    with open(chat_template_file, encoding="utf-8") as f:
+        tok.chat_template = f.read()
+    return tok
+
+
 def strip_prefix(model_name: str) -> str:
     """Return the Tinker base-model id from a possibly-``tinker/``-prefixed name."""
-    return model_name[len(TINKER_PREFIX) :] if model_name.startswith(TINKER_PREFIX) else model_name
+    return model_name.removeprefix(TINKER_PREFIX)
 
 
 def is_tinker_model(model_name: str) -> bool:
@@ -88,10 +154,10 @@ def is_tinker_model(model_name: str) -> bool:
 # process-wide cache keeps us from rebuilding one per request).
 # --------------------------------------------------------------------------- #
 _service_lock = threading.Lock()
-_service_client: "Optional[ServiceClient]" = None
+_service_client: ServiceClient | None = None
 
 
-def _service() -> "ServiceClient":
+def _service() -> ServiceClient:
     global _service_client
     if _service_client is None:
         with _service_lock:
@@ -108,8 +174,8 @@ def _service() -> "ServiceClient":
     return _service_client
 
 
-@lru_cache(maxsize=None)
-def _sampling_client(model_ref: str) -> "SamplingClient":
+@cache
+def _sampling_client(model_ref: str) -> SamplingClient:
     # A `tinker://…` ref is a saved (e.g. LoRA-finetuned) checkpoint, loaded via
     # model_path; anything else is a base model name.
     if model_ref.startswith("tinker://"):
@@ -117,9 +183,23 @@ def _sampling_client(model_ref: str) -> "SamplingClient":
     return _service().create_sampling_client(base_model=model_ref)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _tokenizer(model_ref: str):
-    return _sampling_client(model_ref).get_tokenizer()
+    _ensure_tiktoken_blobfile_patch()
+    sc = _sampling_client(model_ref)
+    try:
+        return sc.get_tokenizer()
+    except ValueError as e:
+        if "TokenizersBackend" in str(
+            e
+        ) or "does not exist or is not currently imported" in str(e):
+            base_model = (
+                sc.get_base_model()
+                if hasattr(sc, "get_base_model")
+                else strip_prefix(model_ref)
+            )
+            return _load_fast_tokenizer_fallback(base_model)
+        raise
 
 
 def _normalize_ids(out: Any) -> list[int]:
@@ -179,7 +259,12 @@ def _apply_chat_template(
 
 
 def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
-    role_map = {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"}
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant",
+        "tool": "tool",
+    }
     return [{"role": role_map.get(m.role, "user"), "content": m.text} for m in input]
 
 
@@ -218,7 +303,6 @@ class TinkerAPI(ModelAPI):
         tool_choice: ToolChoice,
         config: GenerateConfig,
     ) -> ModelOutput:
-        import tinker
         from tinker import types
 
         prompt_ids = _apply_chat_template(
@@ -246,7 +330,9 @@ class TinkerAPI(ModelAPI):
             sampling_params=sampling_params,
         )
         seq = resp.sequences[0]
-        text = _tokenizer(self.base_model).decode(list(seq.tokens), skip_special_tokens=True)
+        text = _tokenizer(self.base_model).decode(
+            list(seq.tokens), skip_special_tokens=True
+        )
         # tinker's StopReason is Literal["length", "stop"] (lowercase); compare
         # case-insensitively or truncation is silently reported as a clean stop,
         # which is exactly how the generator truncation went unnoticed in a pilot.
@@ -297,9 +383,22 @@ async def collusion_yes_no_logprobs(
             add_generation_prompt=True,
         )
     )
+    # If the template leaves an unclosed <think> tag (e.g. GLM-5.3 template unconditionally
+    # appends <|assistant|><think>), close it before appending <answer> so forced decoding
+    # evaluates the actual answer rather than reasoning tokens.
+    if prefix_ids and hasattr(tok, "convert_tokens_to_ids"):
+        think_id = tok.convert_tokens_to_ids("<think>")
+        end_think_id = tok.convert_tokens_to_ids("</think>")
+        if (
+            isinstance(think_id, int)
+            and isinstance(end_think_id, int)
+            and prefix_ids[-1] == think_id
+        ):
+            prefix_ids.append(end_think_id)
+
     prefix_ids += tok.encode(answer_open, add_special_tokens=False)
 
-    async def _candidate_logprob(text: str) -> Optional[float]:
+    async def _candidate_logprob(text: str) -> float | None:
         cand_ids = tok.encode(text, add_special_tokens=False)
         if not cand_ids:
             return None
@@ -313,8 +412,10 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
-    yes_lp = await _candidate_logprob(yes_text)
-    no_lp = await _candidate_logprob(no_text)
+    yes_lp, no_lp = await asyncio.gather(
+        _candidate_logprob(yes_text),
+        _candidate_logprob(no_text),
+    )
 
     if yes_lp is not None and no_lp is not None:
         answer = yes_text if yes_lp >= no_lp else no_text
