@@ -84,7 +84,7 @@ Run this command to fine-tune the model through the Tinker API:
 
 ```
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
-      --train-jsonl <path/to/train_messages.jsonl> \
+      --train-jsonl experiments/open-source-model/apps/self_rec_train/prepared/train/train_messages.jsonl \
       --base-model <untrusted_generator_model_name> \
       [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
       --checkpoint-name experiments/open_models/ckpts.json [--out-path-file <file_name>.txt] \
