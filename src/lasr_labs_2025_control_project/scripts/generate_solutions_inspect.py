@@ -170,7 +170,7 @@ def backdoored_solutions(
         original_dataset_split="test",
         filter_on_split="even_test" if data_split == DataSplit.TEST else "odd_train",
         shuffle=False,
-        problem_ids_range=[0, 2999],
+        problem_ids_range=[0, 2999] 
     )
 
     dataset = apps_setting.get_dataset(eval_mode=eval_mode)
@@ -360,8 +360,8 @@ def main(
             tasks=task,
             model=run.generator.model_info.model,
             epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=48,
-            max_sandboxes=48,
+            max_connections=8, #old: 48
+            max_sandboxes=8, #old: 48
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             max_tokens=run.generator.max_tokens,  # None -> provider default

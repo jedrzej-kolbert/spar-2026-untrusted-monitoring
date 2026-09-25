@@ -18,7 +18,12 @@ import types as pytypes
 import numpy as np
 import pandas as pd
 import pytest
+from dotenv import load_dotenv
 from scipy import stats
+
+# Every pipeline entrypoint calls load_dotenv(); do the same here, or the live
+# tests skip silently even when TINKER_API_KEY is sitting in .env.
+load_dotenv()
 
 
 def _discretize(u: np.ndarray, loc: float, scale: float) -> np.ndarray:
