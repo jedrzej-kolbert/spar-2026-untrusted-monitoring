@@ -87,7 +87,7 @@ python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
       --train-jsonl <path/to/train_messages.jsonl> \
       --base-model <untrusted_generator_model_name> \
       [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
-      --checkpoint-name <checkpoint_name> [--out-path-file <file_name>.txt] \
+      --checkpoint-name experiments/open_models/ckpts.json [--out-path-file <file_name>.txt] \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 ```
 This is copied directly from the docstring in `src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py`. 
