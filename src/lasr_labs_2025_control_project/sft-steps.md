@@ -90,7 +90,7 @@ python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
       --checkpoint-name <checkpoint_name> [--out-path-file <file_name>.txt] \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 ```
-This is copied directly from the docstring in src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py. 
+This is copied directly from the docstring in `src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py`. 
 Once the fine-tuning process is done, check that the `tinker://` paths to the checkpoints has appeared in `experiments/open_models/ckpts.json`. 
 
 ## Generate test data 
