@@ -52,7 +52,7 @@ You don't have to change anything here for now: just know changing this setting 
 
 For training, the models will get all the odd problems in the range you specify, and for testing, the models will get all the even problems. 
 
-**Note:** If trying to conserve tokens, I'd recommend lowering the upper limit of `problem_ids_range` to maybe 2000, but **only when you are generating training data** because usually fewer problems are enough to still acheive high self-rec accuracy.
+**Note:** If trying to conserve tokens, I'd recommend lowering the upper limit of `problem_ids_range` to maybe 2000, but **only when you are generating training data** because usually fewer problems are enough to still achieve high self-rec accuracy.
 
 ## Training data generation 
 
