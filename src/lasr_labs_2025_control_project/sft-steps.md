@@ -63,7 +63,16 @@ python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py 
 ```
 Check that your eval files were saved in `experiments/open-source-model/apps/self_rec_train/generator`. 
 
-**Important:** Create a subdirectory under the `generator` folder called `train`. Place the eval files you just generated into the `train` subdirectory. This is necessary for the next commands to work.
+**Important:** Move the generated eval files into a `train` subdirectory. From the repository root:
+
+```sh
+generator_dir=experiments/open-source-model/apps/self_rec_train/generator
+mkdir -p "$generator_dir/train"
+mv "$generator_dir"/*.eval "$generator_dir/train/"
+ls "$generator_dir/train"
+```
+
+The next commands expect the eval files there.
 
 Next, we need to convert the .eval files into .json files and prepare the data for fine-tuning. 
 
@@ -85,13 +94,22 @@ Run this command to fine-tune the model through the Tinker API:
 ```
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
       --train-jsonl experiments/open-source-model/apps/self_rec_train/prepared/train/train_messages.jsonl \
-      --base-model <untrusted_generator_model_name> \
+      --base-model <supported_tinker_model_id> \
       [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
       --checkpoint-name self_rec_base --out-path-file experiments/open_models/self_rec_base.txt \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 ```
-This is copied directly from the docstring in `src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py`. 
-Once the fine-tuning process is done, check that the `tinker://` paths to the checkpoints has appeared in `experiments/open_models/ckpts.json`. 
+Pass the raw Tinker model ID to `--base-model` (for example, `Qwen/Qwen3-8B`), without the `tinker/` provider prefix used in generated monitor configs. Check Tinker's supported model list if the ID is rejected.
+
+The trainer prints the `tinker://` sampler-weights path and writes it to `experiments/open_models/self_rec_base.txt`. Add that path to `experiments/open_models/ckpts.json` under the matching arm name:
+
+```json
+{
+  "self_rec_base": "tinker://<run-id>/sampler_weights/self_rec_base"
+}
+```
+
+Create the file if it does not exist. `--checkpoint-name` is the remote sampler-weights name; it does not write to `ckpts.json`.
 
 ## Generate test data 
 
@@ -116,4 +134,4 @@ python3 src/lasr_labs_2025_control_project/scripts/monitor_solutions_inspect.py 
 ```
 python3 src/lasr_labs_2025_control_project/scripts/plot_data.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
-You'll find all plots in `experiments/open-source-model/apps/self_rec/results/none_sft`. Upload those graphs to the team Google Drive and share any key notes/observations you make! 
+You'll find all plots in `experiments/open-source-model/apps/self_rec/results/none_sft`. Upload those graphs to the team Google Drive and share any key notes/observations you make!
