@@ -191,7 +191,10 @@ def plot_ensemble_monitoring(
         disable_untrusted_monitor=disable_untrusted_monitor,
     )
 
-    result = optimize_parameters(base_config=config, max_iterations=100)
+    result = optimize_parameters(
+        base_config=config,
+        max_iterations=100,
+    )
 
     # Attach extra metadata (diagnostic) for visualization
     meta = result.config.monitor_roc_fn_metadata or {}
