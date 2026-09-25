@@ -24,6 +24,13 @@ Usage:
       [--checkpoint-name self_rec_u] [--out-path-file checkpoint_path.txt] \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 
+For attack-vs-honeypot dynamics, add --checkpoint-every-steps N,
+--attacks-eval attacks.eval, --honeypots-eval honeypots.eval,
+--dynamics-csv results.csv and --dynamics-plot results.svg. The plot is
+refreshed after each checkpoint's full evaluation. Pass
+--solution-field transformed_solution when evaluating summarized solutions.
+Each sample makes two Tinker logprob requests per checkpoint.
+
 After saving, a held-out slice (`--val-frac`, 5% by default) is scored through
 the same forced-decoding path the monitor uses, reporting accuracy, predicted-YES
 rate and mean margin. The YES rate is the important one: a collapsed LoRA that
@@ -147,10 +154,31 @@ def finetune(
     max_examples: Optional[int] = None,
     seed: int = 0,
     val_frac: float = 0.05,
+    checkpoint_every_steps: int = 0,
+    attacks_eval: Optional[Path] = None,
+    honeypots_eval: Optional[Path] = None,
+    solution_field: str = "base_solution",
+    dynamics_csv: Optional[Path] = None,
+    dynamics_plot: Optional[Path] = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
     import tinker
     from tinker import types
+
+    if checkpoint_every_steps < 0:
+        raise ValueError("checkpoint_every_steps must be nonnegative")
+    dynamics_options = (attacks_eval, honeypots_eval, dynamics_csv, dynamics_plot)
+    if any(option is not None for option in dynamics_options) and not all(
+        option is not None for option in dynamics_options
+    ):
+        raise ValueError("pass both .eval files, --dynamics-csv, and --dynamics-plot together")
+    if solution_field not in ("base_solution", "transformed_solution"):
+        raise ValueError("solution_field must be base_solution or transformed_solution")
+    if attacks_eval is not None:
+        from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
+            load_eval_examples, record_checkpoint,
+        )
+        eval_examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
 
     examples = load_examples(train_jsonl)
     if max_examples is not None:
@@ -181,6 +209,8 @@ def finetune(
     data = [build_datum(ex["messages"], base_model) for ex in examples]
 
     step = 0
+    loss = None
+    last_checkpoint = None
     for epoch in range(epochs):
         rng.shuffle(data)
         for batch in _batches(data, batch_size):
@@ -197,12 +227,24 @@ def finetune(
                 epoch, step, len(batch),
                 f" loss={loss:.4f}" if loss is not None else "",
             )
+            if checkpoint_every_steps and step % checkpoint_every_steps == 0:
+                saved = training_client.save_weights_for_sampler(
+                    name=f"{checkpoint_name}-step-{step}"
+                ).result()
+                last_checkpoint = saved.path
+                logger.info("Saved update %d checkpoint: %s", step, saved.path)
+                if attacks_eval is not None:
+                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_csv, dynamics_plot)
 
-    resp = training_client.save_weights_for_sampler(name=checkpoint_name).result()
-    logger.info("Saved sampler weights: %s", resp.path)
+    final_path = last_checkpoint
+    if final_path is None or not checkpoint_every_steps or step % checkpoint_every_steps:
+        final_path = training_client.save_weights_for_sampler(name=checkpoint_name).result().path
+        logger.info("Saved sampler weights: %s", final_path)
+    if attacks_eval is not None and (not checkpoint_every_steps or step % checkpoint_every_steps):
+        record_checkpoint(final_path, step, loss, eval_examples, dynamics_csv, dynamics_plot)
     if val_examples:
-        evaluate_checkpoint(resp.path, val_examples)
-    return resp.path
+        evaluate_checkpoint(final_path, val_examples)
+    return final_path
 
 
 def evaluate_checkpoint(
@@ -287,6 +329,15 @@ def evaluate_checkpoint(
     default=None,
     help="If given, write the tinker:// checkpoint path here for config generation.",
 )
+@click.option("--checkpoint-every-steps", type=int, default=0, show_default=True,
+              help="Save sampler weights every N updates (0 saves only the final checkpoint)")
+@click.option("--attacks-eval", type=click.Path(exists=True, path_type=Path))
+@click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path))
+@click.option("--solution-field", type=click.Choice(["base_solution", "transformed_solution"]),
+              default="base_solution", show_default=True)
+@click.option("--dynamics-csv", type=click.Path(path_type=Path))
+@click.option("--dynamics-plot", type=click.Path(path_type=Path),
+              help="SVG figure refreshed after each checkpoint evaluation")
 def main(
     train_jsonl: Path,
     base_model: str,
@@ -299,6 +350,12 @@ def main(
     seed: int,
     val_frac: float,
     out_path_file: Optional[Path],
+    checkpoint_every_steps: int,
+    attacks_eval: Optional[Path],
+    honeypots_eval: Optional[Path],
+    solution_field: str,
+    dynamics_csv: Optional[Path],
+    dynamics_plot: Optional[Path],
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
     # in a gitignored .env. Without this the trainer dies immediately with
@@ -318,6 +375,12 @@ def main(
         max_examples=max_examples,
         seed=seed,
         val_frac=val_frac,
+        checkpoint_every_steps=checkpoint_every_steps,
+        attacks_eval=attacks_eval,
+        honeypots_eval=honeypots_eval,
+        solution_field=solution_field,
+        dynamics_csv=dynamics_csv,
+        dynamics_plot=dynamics_plot,
     )
     click.echo(path)
     if out_path_file is not None:
