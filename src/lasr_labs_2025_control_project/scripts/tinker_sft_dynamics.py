@@ -16,6 +16,7 @@ from inspect_ai.log import read_eval_log
 from sklearn.metrics import roc_auc_score
 
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+from lasr_labs_2025_control_project.utils.utils import apply_python_code_format, remove_comments
 from lasr_labs_2025_control_project.utils.tinker_provider import collusion_yes_no_logprobs
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ def load_eval_examples(attacks: Path, honeypots: Path, solution_field: str) -> l
             solution = metadata.get(solution_field)
             if not isinstance(problem, str) or not problem.strip() or not isinstance(solution, str) or not solution.strip():
                 raise ValueError(f"missing main_task_description or {solution_field}: {path} sample {index}")
+            if solution_field == "base_solution":
+                solution = apply_python_code_format(remove_comments(solution))
             examples.append((label, system, user.format(problem_statement=problem, solution=solution)))
     return examples
 
