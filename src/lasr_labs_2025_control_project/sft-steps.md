@@ -96,7 +96,8 @@ Once the fine-tuning process is done, check that the `tinker://` paths to the ch
 ## Generate test data 
 
 ```
-python3 src/lasr_labs_2025_control_project/scripts/monitor_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/generator/generator_config.yaml
+python3 src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py \
+  --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/generator/generator_config.yaml
 ```
 Your testing data should appear in `experiments/open-source-model/apps/self_rec/generator` as `honest.eval`, `honeypots.eval`, and `attacks.eval`. 
 
