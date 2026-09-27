@@ -1,8 +1,0 @@
-updates,checkpoint,train_loss,roc_auc,eval_n
-3,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-3,0.11422563529175078,0.6951740199249579,190
-6,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-6,0.08299246477703197,0.7101177383878898,190
-9,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-9,0.0756975142962204,0.7314659076206494,190
-12,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-12,0.07369339058791691,0.7469918488808385,190
-15,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-15,0.07146928599684621,0.7297192392288783,190
-18,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-18,0.059066856058665795,0.7585716134040625,190
-21,tinker://4994fce0-cb1e-5a35-9655-2711b1405ced:train:0/sampler_weights/self_rec_attack_summarized_batch64-step-21,0.06634269821205376,0.7700866865053694,190
