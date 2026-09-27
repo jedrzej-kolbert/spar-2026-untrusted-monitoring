@@ -130,7 +130,6 @@ def record_checkpoint(
     train_loss: float | None,
     examples: list[tuple[int, str, str]],
     csv_path: Path,
-    plot_path: Path,
     concurrency: int = 8,
     *,
     solution_field: str,
@@ -140,6 +139,9 @@ def record_checkpoint(
         raise ValueError("checkpoint must be a tinker:// sampler weights path")
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
+    plot_path = csv_path.with_suffix(".svg")
+    if plot_path.resolve() == csv_path.resolve():
+        raise ValueError("dynamics CSV and plot must have different paths")
     check_eval_manifest(csv_path, examples, solution_field)
     rows = []
     if csv_path.exists():
@@ -176,15 +178,14 @@ def record_checkpoint(
 @click.option("--transformed", is_flag=True,
               help="Evaluate transformed_solution instead of base_solution from the eval logs.")
 @click.option("--dynamics-csv", type=click.Path(path_type=Path), required=True)
-@click.option("--dynamics-plot", type=click.Path(path_type=Path), required=True)
 @click.option("--concurrency", type=click.IntRange(1, 32), default=8, show_default=True)
 def main(checkpoint: str, updates: int, attacks_eval: Path, honeypots_eval: Path,
-         transformed: bool, dynamics_csv: Path, dynamics_plot: Path, concurrency: int) -> None:
+         transformed: bool, dynamics_csv: Path, concurrency: int) -> None:
     from dotenv import load_dotenv
     load_dotenv()
     solution_field = "transformed_solution" if transformed else "base_solution"
     examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
-    record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, dynamics_plot, concurrency,
+    record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, concurrency,
                       solution_field=solution_field)
 
 

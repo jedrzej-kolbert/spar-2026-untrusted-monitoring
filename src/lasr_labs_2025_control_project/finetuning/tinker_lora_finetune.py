@@ -26,7 +26,7 @@ Usage:
 
 For attack-vs-honeypot dynamics, add --checkpoint-every-steps N,
 --attacks-eval attacks.eval, --honeypots-eval honeypots.eval,
---dynamics-csv results.csv and --dynamics-plot results.svg. The plot is
+--dynamics-csv results.csv. The plot is saved beside it as results.svg and
 refreshed after each checkpoint's full evaluation. Pass
 --transformed when evaluating transformed solutions. Prepare the training JSONL
 with transform_logs_to_raw.sh --transformed too: the trainer uses those prepared
@@ -162,7 +162,6 @@ def finetune(
     honeypots_eval: Optional[Path] = None,
     solution_field: str = "base_solution",
     dynamics_csv: Optional[Path] = None,
-    dynamics_plot: Optional[Path] = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
     import tinker
@@ -170,11 +169,11 @@ def finetune(
 
     if checkpoint_every_steps < 0:
         raise ValueError("checkpoint_every_steps must be nonnegative")
-    dynamics_options = (attacks_eval, honeypots_eval, dynamics_csv, dynamics_plot)
+    dynamics_options = (attacks_eval, honeypots_eval, dynamics_csv)
     if any(option is not None for option in dynamics_options) and not all(
         option is not None for option in dynamics_options
     ):
-        raise ValueError("pass both .eval files, --dynamics-csv, and --dynamics-plot together")
+        raise ValueError("pass both .eval files and --dynamics-csv together")
     if solution_field not in ("base_solution", "transformed_solution"):
         raise ValueError("solution_field must be base_solution or transformed_solution")
     if attacks_eval is not None:
@@ -238,7 +237,7 @@ def finetune(
                 last_checkpoint = saved.path
                 logger.info("Saved update %d checkpoint: %s", step, saved.path)
                 if attacks_eval is not None:
-                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_csv, dynamics_plot,
+                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_csv,
                                       solution_field=solution_field)
 
     final_path = last_checkpoint
@@ -246,7 +245,7 @@ def finetune(
         final_path = training_client.save_weights_for_sampler(name=checkpoint_name).result().path
         logger.info("Saved sampler weights: %s", final_path)
         if attacks_eval is not None:
-            record_checkpoint(final_path, step, loss, eval_examples, dynamics_csv, dynamics_plot,
+            record_checkpoint(final_path, step, loss, eval_examples, dynamics_csv,
                               solution_field=solution_field)
     if val_examples:
         evaluate_checkpoint(final_path, val_examples)
@@ -342,8 +341,6 @@ def evaluate_checkpoint(
 @click.option("--transformed", is_flag=True,
               help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.")
 @click.option("--dynamics-csv", type=click.Path(path_type=Path))
-@click.option("--dynamics-plot", type=click.Path(path_type=Path),
-              help="SVG figure refreshed after each checkpoint evaluation")
 def main(
     train_jsonl: Path,
     base_model: str,
@@ -361,7 +358,6 @@ def main(
     honeypots_eval: Optional[Path],
     transformed: bool,
     dynamics_csv: Optional[Path],
-    dynamics_plot: Optional[Path],
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
     # in a gitignored .env. Without this the trainer dies immediately with
@@ -386,7 +382,6 @@ def main(
         honeypots_eval=honeypots_eval,
         solution_field="transformed_solution" if transformed else "base_solution",
         dynamics_csv=dynamics_csv,
-        dynamics_plot=dynamics_plot,
     )
     click.echo(path)
     if out_path_file is not None:

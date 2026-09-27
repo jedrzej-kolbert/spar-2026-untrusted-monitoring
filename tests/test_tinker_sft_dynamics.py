@@ -56,11 +56,11 @@ def test_filter_and_preprocessing():
 def test_csv_provenance_and_retry():
     examples = [(1, "system", "attack"), (0, "system", "honeypot")]
     with tempfile.TemporaryDirectory() as directory:
-        csv_path, plot_path = Path(directory) / "roc.csv", Path(directory) / "roc.svg"
+        csv_path = Path(directory) / "roc.csv"
 
         def record(update=0, inputs=examples, field="base_solution"):
             dynamics.record_checkpoint(f"tinker://step-{update}", update, None, inputs,
-                                       csv_path, plot_path, solution_field=field)
+                                       csv_path, solution_field=field)
 
         with patch.object(dynamics, "_score", new_callable=AsyncMock) as score, patch.object(dynamics, "_plot"):
             score.side_effect = RuntimeError("interrupted")
@@ -111,7 +111,7 @@ def test_final_checkpoint_timing():
                 final_path = ft.finetune(
                     train, epochs=epochs, val_frac=0, checkpoint_every_steps=interval,
                     attacks_eval=root / "a.eval", honeypots_eval=root / "h.eval",
-                    dynamics_csv=root / "roc.csv", dynamics_plot=root / "roc.svg",
+                    dynamics_csv=root / "roc.csv",
                 )
             assert [call.args[1] for call in record.call_args_list] == expected_steps
             assert client.save_weights_for_sampler.call_count == len(expected_steps)
@@ -123,7 +123,7 @@ def test_final_checkpoint_timing():
              patch.object(dynamics, "load_eval_examples", return_value=[(1, "changed", "a")]):
             with raises(ValueError, "evaluation inputs changed"):
                 ft.finetune(train, attacks_eval=root / "a.eval", honeypots_eval=root / "h.eval",
-                            dynamics_csv=root / "roc.csv", dynamics_plot=root / "roc.svg")
+                            dynamics_csv=root / "roc.csv")
             service.assert_not_called()
 
 
@@ -136,7 +136,7 @@ def test_transformed_cli():
         for path in (train, attacks, honeypots):
             path.touch()
         eval_args = ["--attacks-eval", str(attacks), "--honeypots-eval", str(honeypots),
-                     "--dynamics-csv", str(root / "roc.csv"), "--dynamics-plot", str(root / "roc.svg")]
+                     "--dynamics-csv", str(root / "roc.csv")]
         for flags, field in (([], "base_solution"), (["--transformed"], "transformed_solution")):
             with patch.object(ft, "finetune", return_value="tinker://saved") as train_call:
                 result = CliRunner().invoke(ft.main, ["--train-jsonl", str(train), *eval_args, *flags])
@@ -151,9 +151,25 @@ def test_transformed_cli():
                 assert load.call_args.args[2] == field
                 assert record.call_args.kwargs["solution_field"] == field
 
+
+def test_plot_beside_csv():
+    with tempfile.TemporaryDirectory() as directory:
+        csv_path = Path(directory) / "results.csv"
+        examples = [(1, "system", "attack"), (0, "system", "honeypot")]
+        with patch.object(dynamics, "_score", new_callable=AsyncMock, return_value=0.75), \
+             patch.object(dynamics, "_plot") as plot:
+            for _ in range(2):  # Newly scored and reused results use the same plot path.
+                dynamics.record_checkpoint("tinker://saved", 1, None, examples, csv_path,
+                                           solution_field="base_solution")
+                assert plot.call_args.args[1] == csv_path.with_suffix(".svg")
+            with raises(ValueError, "must have different paths"):
+                dynamics.record_checkpoint("tinker://saved", 1, None, examples,
+                                           csv_path.with_suffix(".svg"), solution_field="base_solution")
+
 if __name__ == "__main__":
     test_filter_and_preprocessing()
     test_csv_provenance_and_retry()
     test_final_checkpoint_timing()
     test_transformed_cli()
+    test_plot_beside_csv()
     print("Dynamics regression checks passed")
