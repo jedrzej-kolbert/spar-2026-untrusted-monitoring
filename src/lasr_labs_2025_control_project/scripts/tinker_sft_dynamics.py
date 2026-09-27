@@ -3,6 +3,7 @@
 The trainer calls record_checkpoint after saving sampler weights. This module can
 also be run directly to evaluate a checkpoint saved before an interrupted run.
 
+The results folder contains dynamics.csv, dynamics.svg, and dynamics.csv.manifest.json.
 Keep the CSV with its .manifest.json sidecar. Changed evaluation inputs or legacy
 CSVs without provenance require a fresh CSV path.
 """
@@ -129,7 +130,7 @@ def record_checkpoint(
     updates: int,
     train_loss: float | None,
     examples: list[tuple[int, str, str]],
-    csv_path: Path,
+    results_dir: Path,
     concurrency: int = 8,
     *,
     solution_field: str,
@@ -139,9 +140,8 @@ def record_checkpoint(
         raise ValueError("checkpoint must be a tinker:// sampler weights path")
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
-    plot_path = csv_path.with_suffix(".svg")
-    if plot_path.resolve() == csv_path.resolve():
-        raise ValueError("dynamics CSV path would be overwritten by the SVG plot; use a .csv filename")
+    csv_path = results_dir / "dynamics.csv"
+    plot_path = results_dir / "dynamics.svg"
     check_eval_manifest(csv_path, examples, solution_field)
     rows = []
     if csv_path.exists():
@@ -177,15 +177,16 @@ def record_checkpoint(
 @click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path), required=True)
 @click.option("--transformed", is_flag=True,
               help="Evaluate transformed_solution instead of base_solution from the eval logs.")
-@click.option("--dynamics-csv", type=click.Path(path_type=Path), required=True)
+@click.option("--dynamics-results", type=click.Path(file_okay=False, path_type=Path), required=True,
+              help="Output folder for dynamics CSV, SVG, and provenance manifest")
 @click.option("--concurrency", type=click.IntRange(1, 32), default=8, show_default=True)
 def main(checkpoint: str, updates: int, attacks_eval: Path, honeypots_eval: Path,
-         transformed: bool, dynamics_csv: Path, concurrency: int) -> None:
+         transformed: bool, dynamics_results: Path, concurrency: int) -> None:
     from dotenv import load_dotenv
     load_dotenv()
     solution_field = "transformed_solution" if transformed else "base_solution"
     examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
-    record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, concurrency,
+    record_checkpoint(checkpoint, updates, None, examples, dynamics_results, concurrency,
                       solution_field=solution_field)
 
 

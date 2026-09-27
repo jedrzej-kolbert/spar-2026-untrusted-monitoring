@@ -56,11 +56,11 @@ def test_filter_and_preprocessing():
 def test_csv_provenance_and_retry():
     examples = [(1, "system", "attack"), (0, "system", "honeypot")]
     with tempfile.TemporaryDirectory() as directory:
-        csv_path = Path(directory) / "roc.csv"
+        csv_path = Path(directory) / "dynamics.csv"
 
         def record(update=0, inputs=examples, field="base_solution"):
             dynamics.record_checkpoint(f"tinker://step-{update}", update, None, inputs,
-                                       csv_path, solution_field=field)
+                                       csv_path.parent, solution_field=field)
 
         with patch.object(dynamics, "_score", new_callable=AsyncMock) as score, patch.object(dynamics, "_plot"):
             score.side_effect = RuntimeError("interrupted")
@@ -111,7 +111,7 @@ def test_final_checkpoint_timing():
                 final_path = ft.finetune(
                     train, epochs=epochs, val_frac=0, checkpoint_every_steps=interval,
                     attacks_eval=root / "a.eval", honeypots_eval=root / "h.eval",
-                    dynamics_csv=root / "roc.csv",
+                    dynamics_results=root / "results",
                 )
             assert [call.args[1] for call in record.call_args_list] == expected_steps
             assert client.save_weights_for_sampler.call_count == len(expected_steps)
@@ -123,7 +123,7 @@ def test_final_checkpoint_timing():
              patch.object(dynamics, "load_eval_examples", return_value=[(1, "changed", "a")]):
             with raises(ValueError, "evaluation inputs changed"):
                 ft.finetune(train, attacks_eval=root / "a.eval", honeypots_eval=root / "h.eval",
-                            dynamics_csv=root / "roc.csv")
+                            dynamics_results=root / "results")
             service.assert_not_called()
 
 
@@ -136,7 +136,7 @@ def test_transformed_cli():
         for path in (train, attacks, honeypots):
             path.touch()
         eval_args = ["--attacks-eval", str(attacks), "--honeypots-eval", str(honeypots),
-                     "--dynamics-csv", str(root / "roc.csv")]
+                     "--dynamics-results", str(root / "results")]
         for flags, field in (([], "base_solution"), (["--transformed"], "transformed_solution")):
             with patch.object(ft, "finetune", return_value="tinker://saved") as train_call:
                 result = CliRunner().invoke(ft.main, ["--train-jsonl", str(train), *eval_args, *flags])
