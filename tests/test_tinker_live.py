@@ -19,7 +19,6 @@ _ANSWER_SYSTEM = (
     "like <answer>YES</answer> or <answer>NO</answer>."
 )
 
-
 def test_capabilities_nonempty(tinker_base_model):
     import tinker
 
