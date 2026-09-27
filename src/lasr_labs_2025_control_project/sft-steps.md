@@ -140,6 +140,7 @@ The trainer prints the `tinker://` sampler-weights path and writes it to `experi
 ```json
 {
   "<checkpoint-name>": "tinker://<run-id>/sampler_weights/<checkpoint-name>"
+}
 ```
 Create the file if it does not exist. `--checkpoint-name` is the remote sampler-weights name; it does not write to `ckpts.json`.
 
