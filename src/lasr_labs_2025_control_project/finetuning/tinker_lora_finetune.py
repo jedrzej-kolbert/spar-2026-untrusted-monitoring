@@ -28,7 +28,9 @@ For attack-vs-honeypot dynamics, add --checkpoint-every-steps N,
 --attacks-eval attacks.eval, --honeypots-eval honeypots.eval,
 --dynamics-csv results.csv and --dynamics-plot results.svg. The plot is
 refreshed after each checkpoint's full evaluation. Pass
---solution-field transformed_solution when evaluating summarized solutions.
+--transformed when evaluating transformed solutions. Prepare the training JSONL
+with transform_logs_to_raw.sh --transformed too: the trainer uses those prepared
+messages as-is. Omit --transformed in both commands for original solutions.
 Each sample makes two Tinker logprob requests per checkpoint. Keep the CSV's
 .manifest.json sidecar; changed evaluation inputs require a fresh CSV path.
 
@@ -337,8 +339,8 @@ def evaluate_checkpoint(
               help="Save sampler weights every N updates (0 saves only the final checkpoint)")
 @click.option("--attacks-eval", type=click.Path(exists=True, path_type=Path))
 @click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path))
-@click.option("--solution-field", type=click.Choice(["base_solution", "transformed_solution"]),
-              default="base_solution", show_default=True)
+@click.option("--transformed", is_flag=True,
+              help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.")
 @click.option("--dynamics-csv", type=click.Path(path_type=Path))
 @click.option("--dynamics-plot", type=click.Path(path_type=Path),
               help="SVG figure refreshed after each checkpoint evaluation")
@@ -357,7 +359,7 @@ def main(
     checkpoint_every_steps: int,
     attacks_eval: Optional[Path],
     honeypots_eval: Optional[Path],
-    solution_field: str,
+    transformed: bool,
     dynamics_csv: Optional[Path],
     dynamics_plot: Optional[Path],
 ):
@@ -382,7 +384,7 @@ def main(
         checkpoint_every_steps=checkpoint_every_steps,
         attacks_eval=attacks_eval,
         honeypots_eval=honeypots_eval,
-        solution_field=solution_field,
+        solution_field="transformed_solution" if transformed else "base_solution",
         dynamics_csv=dynamics_csv,
         dynamics_plot=dynamics_plot,
     )

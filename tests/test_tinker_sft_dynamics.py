@@ -126,8 +126,34 @@ def test_final_checkpoint_timing():
                             dynamics_csv=root / "roc.csv", dynamics_plot=root / "roc.svg")
             service.assert_not_called()
 
+
+def test_transformed_cli():
+    from click.testing import CliRunner
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        train, attacks, honeypots = (root / name for name in ("train.jsonl", "a.eval", "h.eval"))
+        for path in (train, attacks, honeypots):
+            path.touch()
+        eval_args = ["--attacks-eval", str(attacks), "--honeypots-eval", str(honeypots),
+                     "--dynamics-csv", str(root / "roc.csv"), "--dynamics-plot", str(root / "roc.svg")]
+        for flags, field in (([], "base_solution"), (["--transformed"], "transformed_solution")):
+            with patch.object(ft, "finetune", return_value="tinker://saved") as train_call:
+                result = CliRunner().invoke(ft.main, ["--train-jsonl", str(train), *eval_args, *flags])
+                assert result.exit_code == 0, result.output
+                assert train_call.call_args.kwargs["solution_field"] == field
+                assert train_call.call_args.kwargs["train_jsonl"] == train
+            with patch.object(dynamics, "load_eval_examples", return_value=[]) as load, \
+                 patch.object(dynamics, "record_checkpoint") as record:
+                result = CliRunner().invoke(dynamics.main, ["--checkpoint", "tinker://saved",
+                                                            "--updates", "2", *eval_args, *flags])
+                assert result.exit_code == 0, result.output
+                assert load.call_args.args[2] == field
+                assert record.call_args.kwargs["solution_field"] == field
+
 if __name__ == "__main__":
     test_filter_and_preprocessing()
     test_csv_provenance_and_retry()
     test_final_checkpoint_timing()
+    test_transformed_cli()
     print("Dynamics regression checks passed")

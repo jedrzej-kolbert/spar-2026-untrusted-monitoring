@@ -173,15 +173,16 @@ def record_checkpoint(
 @click.option("--updates", type=int, required=True)
 @click.option("--attacks-eval", type=click.Path(exists=True, path_type=Path), required=True)
 @click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path), required=True)
-@click.option("--solution-field", type=click.Choice(["base_solution", "transformed_solution"]),
-              default="base_solution", show_default=True)
+@click.option("--transformed", is_flag=True,
+              help="Evaluate transformed_solution instead of base_solution from the eval logs.")
 @click.option("--dynamics-csv", type=click.Path(path_type=Path), required=True)
 @click.option("--dynamics-plot", type=click.Path(path_type=Path), required=True)
 @click.option("--concurrency", type=click.IntRange(1, 32), default=8, show_default=True)
 def main(checkpoint: str, updates: int, attacks_eval: Path, honeypots_eval: Path,
-         solution_field: str, dynamics_csv: Path, dynamics_plot: Path, concurrency: int) -> None:
+         transformed: bool, dynamics_csv: Path, dynamics_plot: Path, concurrency: int) -> None:
     from dotenv import load_dotenv
     load_dotenv()
+    solution_field = "transformed_solution" if transformed else "base_solution"
     examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
     record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, dynamics_plot, concurrency,
                       solution_field=solution_field)
