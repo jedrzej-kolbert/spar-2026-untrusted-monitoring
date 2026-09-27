@@ -100,7 +100,7 @@ Next, we need to convert the .eval files into .json files.
 
 Repeat these commands for each pair of .eval files:
 ```
-bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> [--transformed]
+bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw [--transformed]
 ```
 **Important:** `<eval_logs_dir>` should point to the *parent* directory of the `train` subdirectory where all pairs of the .eval files are. 
 
