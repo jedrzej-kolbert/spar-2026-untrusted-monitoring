@@ -141,7 +141,7 @@ def record_checkpoint(
         raise ValueError("concurrency must be positive")
     plot_path = csv_path.with_suffix(".svg")
     if plot_path.resolve() == csv_path.resolve():
-        raise ValueError("dynamics CSV and plot must have different paths")
+        raise ValueError("dynamics CSV path would be overwritten by the SVG plot; use a .csv filename")
     check_eval_manifest(csv_path, examples, solution_field)
     rows = []
     if csv_path.exists():

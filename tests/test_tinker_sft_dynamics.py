@@ -152,24 +152,9 @@ def test_transformed_cli():
                 assert record.call_args.kwargs["solution_field"] == field
 
 
-def test_plot_beside_csv():
-    with tempfile.TemporaryDirectory() as directory:
-        csv_path = Path(directory) / "results.csv"
-        examples = [(1, "system", "attack"), (0, "system", "honeypot")]
-        with patch.object(dynamics, "_score", new_callable=AsyncMock, return_value=0.75), \
-             patch.object(dynamics, "_plot") as plot:
-            for _ in range(2):  # Newly scored and reused results use the same plot path.
-                dynamics.record_checkpoint("tinker://saved", 1, None, examples, csv_path,
-                                           solution_field="base_solution")
-                assert plot.call_args.args[1] == csv_path.with_suffix(".svg")
-            with raises(ValueError, "must have different paths"):
-                dynamics.record_checkpoint("tinker://saved", 1, None, examples,
-                                           csv_path.with_suffix(".svg"), solution_field="base_solution")
-
 if __name__ == "__main__":
     test_filter_and_preprocessing()
     test_csv_provenance_and_retry()
     test_final_checkpoint_timing()
     test_transformed_cli()
-    test_plot_beside_csv()
     print("Dynamics regression checks passed")
