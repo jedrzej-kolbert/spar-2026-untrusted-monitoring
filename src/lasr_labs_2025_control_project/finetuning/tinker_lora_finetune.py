@@ -29,7 +29,8 @@ For attack-vs-honeypot dynamics, add --checkpoint-every-steps N,
 --dynamics-csv results.csv and --dynamics-plot results.svg. The plot is
 refreshed after each checkpoint's full evaluation. Pass
 --solution-field transformed_solution when evaluating summarized solutions.
-Each sample makes two Tinker logprob requests per checkpoint.
+Each sample makes two Tinker logprob requests per checkpoint. Keep the CSV's
+.manifest.json sidecar; changed evaluation inputs require a fresh CSV path.
 
 After saving, a held-out slice (`--val-frac`, 5% by default) is scored through
 the same forced-decoding path the monitor uses, reporting accuracy, predicted-YES
@@ -176,9 +177,10 @@ def finetune(
         raise ValueError("solution_field must be base_solution or transformed_solution")
     if attacks_eval is not None:
         from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
-            load_eval_examples, record_checkpoint,
+            check_eval_manifest, load_eval_examples, record_checkpoint,
         )
         eval_examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
+        check_eval_manifest(dynamics_csv, eval_examples, solution_field)
 
     examples = load_examples(train_jsonl)
     if max_examples is not None:
@@ -234,14 +236,16 @@ def finetune(
                 last_checkpoint = saved.path
                 logger.info("Saved update %d checkpoint: %s", step, saved.path)
                 if attacks_eval is not None:
-                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_csv, dynamics_plot)
+                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_csv, dynamics_plot,
+                                      solution_field=solution_field)
 
     final_path = last_checkpoint
     if final_path is None or not checkpoint_every_steps or step % checkpoint_every_steps:
         final_path = training_client.save_weights_for_sampler(name=checkpoint_name).result().path
         logger.info("Saved sampler weights: %s", final_path)
-    if attacks_eval is not None and (not checkpoint_every_steps or step % checkpoint_every_steps):
-        record_checkpoint(final_path, step, loss, eval_examples, dynamics_csv, dynamics_plot)
+        if attacks_eval is not None:
+            record_checkpoint(final_path, step, loss, eval_examples, dynamics_csv, dynamics_plot,
+                              solution_field=solution_field)
     if val_examples:
         evaluate_checkpoint(final_path, val_examples)
     return final_path

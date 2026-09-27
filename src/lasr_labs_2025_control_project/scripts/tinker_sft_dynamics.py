@@ -2,12 +2,17 @@
 
 The trainer calls record_checkpoint after saving sampler weights. This module can
 also be run directly to evaluate a checkpoint saved before an interrupted run.
+
+Keep the CSV with its .manifest.json sidecar. Changed evaluation inputs or legacy
+CSVs without provenance require a fresh CSV path.
 """
 
 from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
+import json
 import logging
 from pathlib import Path
 
@@ -17,6 +22,9 @@ from sklearn.metrics import roc_auc_score
 
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from lasr_labs_2025_control_project.utils.tinker_provider import collusion_yes_no_logprobs
+from lasr_labs_2025_control_project.utils.utils import (
+    apply_python_code_format, check_sample_is_valid, remove_comments,
+)
 
 logger = logging.getLogger(__name__)
 FIELDS = ("updates", "checkpoint", "train_loss", "roc_auc", "eval_n")
@@ -31,14 +39,43 @@ def load_eval_examples(attacks: Path, honeypots: Path, solution_field: str) -> l
         log = read_eval_log(str(path))
         if not log.samples:
             raise ValueError(f"no samples in {path}")
+        retained = 0
         for index, sample in enumerate(log.samples):
+            if not check_sample_is_valid(sample.scores):
+                continue
             metadata = {**(sample.metadata or {}), **(sample.store or {})}
             problem = metadata.get("main_task_description")
             solution = metadata.get(solution_field)
             if not isinstance(problem, str) or not problem.strip() or not isinstance(solution, str) or not solution.strip():
                 raise ValueError(f"missing main_task_description or {solution_field}: {path} sample {index}")
+            if solution_field == "base_solution":
+                solution = apply_python_code_format(remove_comments(solution))
             examples.append((label, system, user.format(problem_statement=problem, solution=solution)))
+            retained += 1
+        if not retained:
+            raise ValueError(f"no valid samples in {path}")
     return examples
+
+
+def check_eval_manifest(
+    csv_path: Path, examples: list[tuple[int, str, str]], solution_field: str,
+) -> None:
+    """Bind a CSV to its ordered labels, rendered prompts, and representation."""
+    # Ponytail: one writer per CSV; use locking if concurrent writers are needed.
+    payload = json.dumps([solution_field, examples], ensure_ascii=False, separators=(",", ":"))
+    manifest = {"version": 1, "solution_field": solution_field,
+                "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest()}
+    manifest_path = csv_path.with_name(csv_path.name + ".manifest.json")
+    if manifest_path.exists():
+        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest:
+            raise ValueError(f"evaluation inputs changed; use a fresh dynamics CSV path: {csv_path}")
+    elif csv_path.exists():
+        raise ValueError(f"dynamics CSV has no provenance; use a fresh CSV path: {csv_path}")
+    else:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = manifest_path.with_name(manifest_path.name + ".tmp")
+        temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(manifest_path)
 
 
 async def _score(checkpoint: str, examples: list[tuple[int, str, str]], concurrency: int) -> float:
@@ -95,12 +132,15 @@ def record_checkpoint(
     csv_path: Path,
     plot_path: Path,
     concurrency: int = 8,
+    *,
+    solution_field: str,
 ) -> None:
     """Persist the checkpoint URI before Tinker evaluation, then refresh the plot."""
     if not checkpoint.startswith("tinker://"):
         raise ValueError("checkpoint must be a tinker:// sampler weights path")
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
+    check_eval_manifest(csv_path, examples, solution_field)
     rows = []
     if csv_path.exists():
         with csv_path.open(newline="", encoding="utf-8") as file:
@@ -143,7 +183,8 @@ def main(checkpoint: str, updates: int, attacks_eval: Path, honeypots_eval: Path
     from dotenv import load_dotenv
     load_dotenv()
     examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
-    record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, dynamics_plot, concurrency)
+    record_checkpoint(checkpoint, updates, None, examples, dynamics_csv, dynamics_plot, concurrency,
+                      solution_field=solution_field)
 
 
 if __name__ == "__main__":
