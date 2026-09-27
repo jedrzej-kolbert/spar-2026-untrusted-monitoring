@@ -63,52 +63,85 @@ python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py 
 ```
 Check that your eval files were saved in `experiments/open-source-model/apps/self_rec_train/generator`. 
 
-**Important:** Move the generated eval files into a `train` subdirectory. From the repository root:
+## Applying blue-team mitigation strategies to training data 
 
-```sh
-generator_dir=experiments/open-source-model/apps/self_rec_train/generator
-mkdir -p "$generator_dir/train"
-mv "$generator_dir"/*.eval "$generator_dir/train/"
-ls "$generator_dir/train"
+We can apply the mitigation strategies of minification and paraphrasing to the training data, to test our red team's robustness to signal jamming. 
+
+Run from the repo root: 
+
+**Minification:** 
+```
+uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/minified_config_train.yaml 
 ```
 
-The next commands expect the eval files there.
+**Paraphrasing:**
+```
+uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config_train.yaml 
+```
 
-Next, we need to convert the .eval files into .json files and prepare the data for fine-tuning. 
+Your data will appear in `experiments/open-source-model/apps/self_rec_train/transforms/minified` and `experiments/open-source-model/apps/self_rec_train/transforms/paraphrased`. 
+
+You now have 3 pairs of honeypot and attack training samples, for each of three arms (no signal jamming, minification, and paraphrasing). 
+
+**Important:** Move each pair of generated eval files into a `train` subdirectory. Repeat these commands three times, for each pair (from the repository root):
+
+```sh
+eval_files_dir=<path/to/eval/files>
+mkdir -p "$eval_files_dir/train"
+mv "$eval_files_dir"/*.eval "$eval_files_dir/train/"
+ls "$eval_files_dir/train"
+```
+
+The next commands expect the eval files there. 
 
 ## Prepare data for fine-tuning 
 
-Run these commands:
-```
-bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh experiments/open-source-model/apps/self_rec_train/generator
+Next, we need to convert the .eval files into .json files.
 
-bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh experiments/open-source-model/apps/self_rec_train/raw <untrusted_generator_model_name>
+Repeat these commands for each pair of .eval files:
 ```
+bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw [--transformed]
+```
+**Important:** `<eval_logs_dir>` should point to the *parent* directory of the `train` subdirectory where all pairs of the .eval files are. 
+
+Include the `--transformed` flag for the minified and paraphrased arms. 
+
+You will find the .json files in `<eval_logs_dir>/raw`. 
+
+Then run: 
+```
+bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name>
+```
+Repeat thrice for each arm. 
+
 Check out `src/lasr_labs_2025_control_project/finetuning/binary_tuning/README.md` for more info on how these two commands work. 
-Check that `train_messages.jsonl` shows up under `experiments/open-source-model/apps/self_rec_train/prepared`. 
+Check that `train_messages.jsonl` shows up under `<eval_logs_dir>/prepared/train` for each arm. 
 
 ## Fine-tune the untrusted model 
 
 Run this command to fine-tune the model through the Tinker API: 
-
 ```
+checkpoint_name=<name> 
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
-      --train-jsonl experiments/open-source-model/apps/self_rec_train/prepared/train/train_messages.jsonl \
+      --train-jsonl <eval_logs_dir>/prepared/train/train_messages.jsonl \
       --base-model <supported_tinker_model_id> \
-      [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
-      --checkpoint-name self_rec_base --out-path-file experiments/open_models/self_rec_base.txt \
+      --checkpoint-name $checkpoint_name --out-path-file experiments/open_models/$checkpoint_name.txt \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 ```
+**⚠️ Important:** Change `checkpoint_name` to the corresponding names for each signal jamming regime: 
+- No signal jamming: `checkpoint_name=self_rec_base`
+- Paraphrased: `checkpoint_name=self_rec_paraphrased`
+- Minified: `checkpoint_name=self_rec_minified`
+
 Pass the raw Tinker model ID to `--base-model` (for example, `Qwen/Qwen3-8B`), without the `tinker/` provider prefix used in generated monitor configs. Check Tinker's supported model list if the ID is rejected.
 
-The trainer prints the `tinker://` sampler-weights path and writes it to `experiments/open_models/self_rec_base.txt`. Add that path to `experiments/open_models/ckpts.json` under the matching arm name:
+The trainer prints the `tinker://` sampler-weights path and writes it to `experiments/open_models/<checkpoint_name>.txt`. Add that path to `experiments/open_models/ckpts.json` under the matching arm name:
 
 ```json
 {
-  "self_rec_base": "tinker://<run-id>/sampler_weights/self_rec_base"
+  "<checkpoint-name>": "tinker://<run-id>/sampler_weights/<checkpoint-name>"
 }
 ```
-
 Create the file if it does not exist. `--checkpoint-name` is the remote sampler-weights name; it does not write to `ckpts.json`.
 
 ## Generate test data 
@@ -119,6 +152,18 @@ python3 src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py
 ```
 Your testing data should appear in `experiments/open-source-model/apps/self_rec/generator` as `honest.eval`, `honeypots.eval`, and `attacks.eval`. 
 
+Apply minification and paraphrasing. Run these two commands: 
+
+```
+python3 src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py \
+  --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/minified_config.yaml
+```
+```
+python3 src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py \
+  --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config.yaml
+```
+Check that your transformed testing data has saved under `experiments/open-source-model/apps/self_rec/transforms/minified` and `experiments/open-source-model/apps/self_rec/transforms/paraphrased`. 
+
 ## Let's test the untrusted and trusted monitors!
 
 We need to pass `tinker://` paths to the fine-tuning checkpoints to our monitor config files. To do so, re-run this command: 
@@ -126,12 +171,18 @@ We need to pass `tinker://` paths to the fine-tuning checkpoints to our monitor 
 python3 experiments/open_models/make_configs.py --checkpoints experiments/open_models/ckpts.json
 ```
 
-Run this command to test the untrusted and trusted monitors: 
+Run this command to test the untrusted and trusted monitors when no signal jamming is applied: 
 ```
 python3 src/lasr_labs_2025_control_project/scripts/monitor_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
+To test the monitors against the signal-jammed arms, re-run the previous command, replacing the config file name with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`. 
+
 ## Plot your results 
 ```
 python3 src/lasr_labs_2025_control_project/scripts/plot_data.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
-You'll find all plots in `experiments/open-source-model/apps/self_rec/results/none_sft`. Upload those graphs to the team Google Drive and share any key notes/observations you make!
+
+To generate plots for the minifed and paraphrased arms, replace `base_monitor_config.yaml` with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`. 
+
+Plots for the no-signal-jamming arm appear in `experiments/open-source-model/apps/self_rec/results/none_sft`. Plots for the signal-jamming arms appear in `results/minified_sft` and `results/paraphrased_sft`. 
+Upload those graphs to the team Google Drive and share any key notes/observations you make!
