@@ -7,7 +7,6 @@ import shutil
 from pathlib import Path
 
 import click
-import python_minifier
 from dotenv import load_dotenv
 from inspect_ai import Epochs, Task, eval, task
 from inspect_ai.model import (
@@ -26,6 +25,11 @@ from inspect_ai.solver import (
 )
 from inspect_ai.util import store
 
+from lasr_labs_2025_control_project.blue_team.contracts import (
+    MonitorView,
+    RepresentationKind,
+)
+from lasr_labs_2025_control_project.blue_team.jammers import MinifierJammer
 from lasr_labs_2025_control_project.scripts.helpers.eval_to_dataset import (
     eval_to_dataset,
 )
@@ -53,22 +57,10 @@ def minify_solution() -> Solver:
         assert isinstance(
             state.input, str
         ), "State input must be a string, check your .eval file"
-        code = state.input.replace("```python\n", "").replace("```", "")
-        output = python_minifier.minify(
-            code,
-            remove_literal_statements=True,
-            hoist_literals=True,
-            combine_imports=True,
-            rename_locals=True,
-            rename_globals=True,
-            remove_annotations=True,
-            remove_object_base=True,
-            convert_posargs_to_args=True,
-            remove_asserts=True,
-            remove_debug=True,
-            remove_explicit_return_none=True,
-            constant_folding=True,
+        view, _ = await MinifierJammer()(
+            MonitorView("", state.input, RepresentationKind.PYTHON_CODE)
         )
+        output = view.content
 
         response = ChatMessageAssistant(content=output)
         state.messages.append(response)
