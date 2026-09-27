@@ -140,6 +140,19 @@ The trainer prints the `tinker://` sampler-weights path and writes it to `experi
 ```json
 {
   "<checkpoint-name>": "tinker://<run-id>/sampler_weights/<checkpoint-name>"
+      --train-jsonl experiments/open-source-model/apps/self_rec_train/prepared/train/train_messages.jsonl \
+      --base-model <supported_tinker_model_id> \
+      [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
+      --checkpoint-name self_rec_base --out-path-file experiments/open_models/self_rec_base.txt \
+      [--max-examples N] [--seed 0] [--val-frac 0.05]
+```
+Pass the raw Tinker model ID to `--base-model` (for example, `Qwen/Qwen3-8B`), without the `tinker/` provider prefix used in generated monitor configs. Check Tinker's supported model list if the ID is rejected.
+
+The trainer prints the `tinker://` sampler-weights path and writes it to `experiments/open_models/self_rec_base.txt`. Add that path to `experiments/open_models/ckpts.json` under the matching arm name:
+
+```json
+{
+  "self_rec_base": "tinker://<run-id>/sampler_weights/self_rec_base"
 }
 ```
 

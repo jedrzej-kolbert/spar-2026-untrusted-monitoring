@@ -465,8 +465,8 @@ def main(config: str):
         ), "Run is not a MonitorRunConfig, make sure to use the correct config"
         result = eval(
             tasks=monitor_solutions(run),
-            max_connections=8, # prev: 48 
-            max_sandboxes=8, # prev: 48 
+            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
+            max_sandboxes=8,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             limit=run.limit,

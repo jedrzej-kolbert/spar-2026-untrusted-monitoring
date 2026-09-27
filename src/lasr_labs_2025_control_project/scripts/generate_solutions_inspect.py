@@ -360,8 +360,8 @@ def main(
             tasks=task,
             model=run.generator.model_info.model,
             epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=8, #old: 48
-            max_sandboxes=8, #old: 48
+            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
+            max_sandboxes=8,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             max_tokens=run.generator.max_tokens,  # None -> provider default
