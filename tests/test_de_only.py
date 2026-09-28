@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_oracle import (
@@ -6,7 +8,7 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers.double_o
 
 
 def test_direct_de_finds_quadratic_response():
-    def payoff(params):
+    def payoff(params: dict[str, np.ndarray]):
         value = params["blue_choice"] + (params["red_choice"] - 0.2) ** 2
         return np.asarray(value), {"blue_win": np.asarray(value)}
 
@@ -18,4 +20,5 @@ def test_direct_de_finds_quadratic_response():
         payoff,
         max_iterations=1,
     )
-    assert abs(result["red_best_response"]["red_choice"] - 0.2) < 0.05
+    red_response = cast(dict[str, float], result["red_best_response"])
+    assert abs(red_response["red_choice"] - 0.2) < 0.05

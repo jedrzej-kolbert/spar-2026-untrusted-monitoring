@@ -371,12 +371,12 @@ def double_oracle(
 
     Iteratively builds up mixed strategies for both players:
     1. Solve the restricted game (using current strategy supports) via LP
-    2. Compute best responses to opponent's mixed strategy via local optimization
+    2. Compute best responses to opponent's mixed strategy via differential evolution
     3. Add new best responses to strategy supports
     4. Repeat until convergence (gap between bounds < epsilon)
 
-    The algorithm provides theoretical guarantees: at convergence, neither player
-    can improve their expected payoff by deviating unilaterally.
+    Differential evolution is heuristic; reported convergence does not certify
+    globally optimal best responses or a Nash equilibrium.
 
     Args:
         param_data: Parameter metadata describing bounds and scales, with keys like
@@ -389,7 +389,7 @@ def double_oracle(
 
     Returns:
         Dictionary containing:
-            * ``best_score`` – the guaranteed blue team win rate at Nash equilibrium (lower bound).
+            * ``best_score`` – estimated blue team win rate against red's best response.
             * ``red_best_response`` – the best response red strategy (unmixed, for exploitation).
             * ``blue_mixed_strategy`` – list of (strategy, probability) tuples for blue team Nash equilibrium.
             * ``red_mixed_strategy`` – list of (strategy, probability) tuples for red team Nash equilibrium.
@@ -522,7 +522,7 @@ def double_oracle(
         def red_objective(x: np.ndarray) -> float:
             return red_expected_value(x)
 
-        # Step 2: compute best responses with local continuous optimization.
+        # Step 2: compute best responses with differential evolution.
         res_blue = differential_evolution(
             blue_objective,
             bounds=bounds_blue,
