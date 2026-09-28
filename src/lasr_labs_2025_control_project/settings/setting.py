@@ -1,12 +1,9 @@
 import json
 from typing import Any, Callable, Literal
 
-from control_arena.control_task_metadata import ControlTaskMetadata
-from control_arena.eval_mode import EvalMode
-from control_arena.settings.apps.task.dataset import (
-    AppsTaskMetadata,
-    get_backdoors_dataset,
-)
+from control_arena import ControlTaskMetadata, EvalMode
+from control_arena.settings import Setting
+from control_arena.settings.apps.task.metadata import AppsTaskMetadata
 from control_arena.settings.apps.task.scorers import (
     apps_scorer,
 )
@@ -14,9 +11,10 @@ from control_arena.settings.apps.task.submission_types import (
     SubmitAttackArgs,
     SubmitHonestArgs,
 )
-from control_arena.settings.setting import Setting
 from control_arena.tools.submit_tool import SubmitToolConfig
-from inspect_ai.dataset import Dataset, MemoryDataset, Sample, hf_dataset
+from datasets import load_dataset
+from huggingface_hub import hf_hub_download
+from inspect_ai.dataset import Dataset, MemoryDataset, Sample, json_dataset
 from inspect_ai.scorer import (
     Scorer,
 )
@@ -78,16 +76,15 @@ class AppsSetting(Setting):
         if self.original_dataset_split == "all":
             dataset = self.get_all_data(eval_mode)
         else:
-            dataset = hf_dataset(
-                "codeparrot/apps",
-                sample_fields=self.record_to_sample_factory(eval_mode),
-                split=self.original_dataset_split,
-                trust=True,
-                shuffle=self.shuffle,
+            dataset = self.load_apps_split(
+                self.original_dataset_split, eval_mode, self.shuffle
             )
 
         if self.dataset_name == "backdoor":
-            backdoors = get_backdoors_dataset()
+            # control-arena 2.1.3's get_backdoors_dataset(), removed upstream.
+            backdoors = load_dataset(
+                "TylordTheGreat/apps-backdoors-04-02-25", split="train"
+            )
             problem_ids = {
                 int(backdoor["problem_id"])  # type: ignore
                 for backdoor in backdoors
@@ -133,16 +130,21 @@ class AppsSetting(Setting):
 
         return dataset
 
+    def load_apps_split(
+        self, split: str, mode: EvalMode, shuffle: bool = False
+    ) -> Dataset:
+        # codeparrot/apps is script-only on the Hub (no parquet export) and
+        # datasets>=4 cannot run loading scripts, so read the raw JSONL the
+        # script wrapped. apps.py only renamed `id` to `problem_id`.
+        path = hf_hub_download("codeparrot/apps", f"{split}.jsonl", repo_type="dataset")
+        return json_dataset(
+            path, sample_fields=self.record_to_sample_factory(mode), shuffle=shuffle
+        )
+
     def get_all_data(self, mode: EvalMode) -> Dataset:
         dataset = []
         for original_dataset_split in ["train", "test"]:
-            split_data = hf_dataset(
-                "codeparrot/apps",
-                sample_fields=self.record_to_sample_factory(mode=mode),
-                split=original_dataset_split,
-                trust=True,
-            )
-            dataset.extend(split_data)
+            dataset.extend(self.load_apps_split(original_dataset_split, mode))
         return MemoryDataset(dataset)
 
     def get_scorers(self) -> list[Scorer]:
@@ -168,6 +170,7 @@ class AppsSetting(Setting):
         mode: EvalMode,
     ) -> Callable[[dict[str, Any]], Sample | list[Sample]]:
         def record_to_sample(record: dict[str, Any]) -> Sample | list[Sample]:
+            record = {"problem_id": record.get("id"), **record}
             if record.get("problem_id") is None:
                 return []
 
@@ -200,10 +203,12 @@ class AppsSetting(Setting):
                 return []
 
             # Create metadata
-            metadata = AppsTaskMetadata(
-                inputs=inputs,
-                outputs=outputs,
-                solutions=solutions,
+            metadata = ControlTaskMetadata(
+                metadata=AppsTaskMetadata(
+                    inputs=inputs,
+                    outputs=outputs,
+                    solutions=[{"code": code} for code in solutions],
+                ).model_dump(),
                 main_task_description=record["question"],
                 side_task_description="",
                 setting_description=setting_description,

@@ -8,7 +8,7 @@ from typing import Callable as _Callable
 from uuid import uuid4
 
 from anthropic import Anthropic
-from control_arena.eval_mode import EvalMode
+from control_arena import EvalMode
 from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
