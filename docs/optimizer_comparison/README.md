@@ -28,7 +28,8 @@ change retains the existing convergence logic, including clamping a negative
 raw gap to zero. If non-monotone behavior recurs, revisit PR #18's known-policy
 checks, log coordinates, and invalid-bound diagnostics.
 
-`results.json` preserves the original unsmoothed measurements from
+[Archived measurements](https://github.com/jedrzej-kolbert/spar-2026-untrusted-monitoring/blob/d790f10a4/docs/optimizer_comparison/results.json)
+preserve the original unsmoothed measurements from
 `experiments/self_rec_attack_500/results/grouped/all_monitors/main_vs_pr_matched_seed_500/`.
 The sweep used 59 attack, 131 honeypot, and 379 honest saved monitor samples per
 arm, with 5000 simulated tasks, budget fraction 0.02, and slack honeypots 5.
@@ -39,16 +40,10 @@ imply identical subsequent random draws across optimizers.
 
 The raw-DE implementation is commit `53376224b198ef36d260dbf9afd35fcb2bdada1a`
 on `experiment/main-de-only`. The baseline and PR revision hashes are recorded
-in `results.json`. DE uses `x0` equal to the existing previous-response guess,
+in the archived measurements. DE uses `x0` equal to the existing previous-response guess,
 the existing RNG and raw bounds, `maxiter=40`, `popsize=10`, `tol=1e-4`, and
 `polish=False`. Finite candidates are retained even when DE reaches its
 iteration limit. Guess selection and production seeding are unchanged.
-
-Check the saved monotonicity evidence with the standard library:
-
-```bash
-python3 docs/optimizer_comparison/check_results.py
-```
 
 Related: [issue #17](https://github.com/jedrzej-kolbert/spar-2026-untrusted-monitoring/issues/17)
 and [PR #18](https://github.com/jedrzej-kolbert/spar-2026-untrusted-monitoring/pull/18).
