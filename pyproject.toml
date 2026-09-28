@@ -36,6 +36,9 @@ dependencies = [
     # Tinker open-weights backend (utils/tinker_provider.py). jinja2 is needed by
     # transformers' apply_chat_template, which the provider uses for tokenisation.
     "tinker>=0.29.0",
+    # Native per-family tool-call rendering/parsing for agentic tinker/ runs
+    # (BashArena); the provider's plain chat-template path is unchanged.
+    "tinker-cookbook>=0.5.7",
     "jinja2>=3.1.0",
 ]
 

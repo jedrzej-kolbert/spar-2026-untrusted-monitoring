@@ -6,7 +6,8 @@ Everything Tinker-specific lives in this module. It does two jobs:
    ``get_model("tinker/Qwen/Qwen3-32B")`` and ``eval(model="tinker/...")`` work
    for solution *generation* (attacks / honest / honeypots), the text-``<score>``
    suspiciousness monitors, and the LLM paraphraser -- i.e. every plain-sampling
-   role -- with no other pipeline changes.
+   role -- with no other pipeline changes. Requests that carry tools (agentic
+   settings like BashArena) go through tinker-cookbook's native renderers.
 
 2. Exposes :func:`collusion_yes_no_logprobs`, which returns the *exact*
    log P(YES) / log P(NO) answer-token logprobs the untrusted collusion monitor
@@ -26,12 +27,17 @@ The authoritative live catalogue is
 
 from __future__ import annotations
 
+import json
 import threading
+import uuid
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
 from inspect_ai.model import (
+    ChatCompletionChoice,
     ChatMessage,
+    ChatMessageAssistant,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
@@ -39,7 +45,7 @@ from inspect_ai.model import (
 from inspect_ai.model import (
     modelapi as _modelapi,
 )
-from inspect_ai.tool import ToolChoice, ToolInfo
+from inspect_ai.tool import ToolCall, ToolChoice, ToolInfo
 
 if TYPE_CHECKING:  # avoid importing tinker at module load
     from tinker import SamplingClient, ServiceClient
@@ -76,7 +82,11 @@ _HARMONY_REASONING_EFFORT = {"minimal": "low"}
 
 def strip_prefix(model_name: str) -> str:
     """Return the Tinker base-model id from a possibly-``tinker/``-prefixed name."""
-    return model_name[len(TINKER_PREFIX) :] if model_name.startswith(TINKER_PREFIX) else model_name
+    return (
+        model_name[len(TINKER_PREFIX) :]
+        if model_name.startswith(TINKER_PREFIX)
+        else model_name
+    )
 
 
 def is_tinker_model(model_name: str) -> bool:
@@ -179,8 +189,116 @@ def _apply_chat_template(
 
 
 def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
-    role_map = {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"}
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant",
+        "tool": "tool",
+    }
     return [{"role": role_map.get(m.role, "user"), "content": m.text} for m in input]
+
+
+# --------------------------------------------------------------------------- #
+# Tool calling (agentic settings such as BashArena). Each model family has its
+# own tool-call wire format (DeepSeek special tokens, Qwen <tool_call>, gpt-oss
+# harmony, ...), so we use tinker-cookbook's per-family renderers rather than
+# the plain chat-template path above.
+# --------------------------------------------------------------------------- #
+@lru_cache(maxsize=None)
+def _renderer(model_ref: str):
+    from tinker_cookbook.model_info import get_recommended_renderer_name
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    base = model_ref
+    if model_ref.startswith(
+        "tinker://"
+    ):  # fine-tuned checkpoint: renderer follows its base
+        rest = _service().create_rest_client()
+        run = rest.get_training_run_by_tinker_path(model_ref, access_scope="accessible")
+        base = run.result().base_model
+    return get_renderer(
+        get_recommended_renderer_name(base), get_tokenizer(base), model_name=base
+    )
+
+
+def _renderer_messages(
+    renderer: Any, input: list[ChatMessage], tools: list[ToolInfo]
+) -> list[Any]:
+    from tinker_cookbook.renderers import ToolCall as RendererToolCall
+
+    specs = [
+        {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters.model_dump(exclude_none=True),
+        }
+        for t in tools
+    ]
+    system = "\n\n".join(m.text for m in input if m.role == "system")
+    messages = renderer.create_conversation_prefix_with_tools(
+        specs, system_prompt=system
+    )
+    for m in input:
+        if m.role == "user":
+            messages.append({"role": "user", "content": m.text})
+        elif m.role == "assistant":
+            message: dict[str, Any] = {"role": "assistant", "content": m.text}
+            if m.tool_calls:
+                message["tool_calls"] = [
+                    RendererToolCall(
+                        id=call.id,
+                        function=RendererToolCall.FunctionBody(
+                            name=call.function, arguments=json.dumps(call.arguments)
+                        ),
+                    )
+                    for call in m.tool_calls
+                ]
+            messages.append(message)
+        elif m.role == "tool":
+            messages.append(
+                {
+                    "role": "tool",
+                    "content": f"Error: {m.error.message}" if m.error else m.text,
+                    # Renderers differ in which of these they need; supply both.
+                    "tool_call_id": m.tool_call_id or "",
+                    "name": m.function or "",
+                }
+            )
+    return messages
+
+
+def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
+    calls = []
+    for call in message.get("tool_calls", []):
+        call_id = call.id or f"{call.function.name}_{uuid.uuid4().hex[:8]}"
+        try:
+            arguments = json.loads(call.function.arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("arguments must be a JSON object")
+            calls.append(
+                ToolCall(id=call_id, function=call.function.name, arguments=arguments)
+            )
+        except ValueError as err:
+            calls.append(
+                ToolCall(
+                    id=call_id,
+                    function=call.function.name,
+                    arguments={},
+                    parse_error=f"Could not parse tool arguments: {err}",
+                )
+            )
+    # Malformed calls are returned as parse errors so the agent sees them and retries.
+    for bad in message.get("unparsed_tool_calls", []):
+        calls.append(
+            ToolCall(
+                id=f"unparsed_{uuid.uuid4().hex[:8]}",
+                function="unknown",
+                arguments={},
+                parse_error=f"{bad.error}\n{bad.raw_text}",
+            )
+        )
+    return calls
 
 
 # --------------------------------------------------------------------------- #
@@ -218,15 +336,24 @@ class TinkerAPI(ModelAPI):
         tool_choice: ToolChoice,
         config: GenerateConfig,
     ) -> ModelOutput:
-        import tinker
         from tinker import types
 
-        prompt_ids = _apply_chat_template(
-            self.base_model,
-            _messages_to_dicts(input),
-            add_generation_prompt=True,
-            reasoning_effort=config.reasoning_effort,
-        )
+        if tools:
+            renderer = _renderer(self.base_model)
+            prompt = renderer.build_generation_prompt(
+                _renderer_messages(renderer, input, tools)
+            )
+            stop = renderer.get_stop_sequences()
+        else:
+            prompt = types.ModelInput.from_ints(
+                _apply_chat_template(
+                    self.base_model,
+                    _messages_to_dicts(input),
+                    add_generation_prompt=True,
+                    reasoning_effort=config.reasoning_effort,
+                )
+            )
+            stop = config.stop_seqs
         sampling_params = types.SamplingParams(
             # Generous default for callers that set no max_tokens (monitors, the
             # paraphraser): a short cap truncates generators mid-output, e.g.
@@ -236,25 +363,47 @@ class TinkerAPI(ModelAPI):
             temperature=1.0 if config.temperature is None else config.temperature,
             top_p=1.0 if config.top_p is None else config.top_p,
             top_k=-1 if config.top_k is None else config.top_k,
-            stop=config.stop_seqs,
+            stop=stop,
             seed=config.seed,
         )
         sc = _sampling_client(self.base_model)
         resp = await sc.sample_async(
-            prompt=types.ModelInput.from_ints(prompt_ids),
+            prompt=prompt,
             num_samples=1,
             sampling_params=sampling_params,
         )
         seq = resp.sequences[0]
-        text = _tokenizer(self.base_model).decode(list(seq.tokens), skip_special_tokens=True)
         # tinker's StopReason is Literal["length", "stop"] (lowercase); compare
         # case-insensitively or truncation is silently reported as a clean stop,
         # which is exactly how the generator truncation went unnoticed in a pilot.
         stop_reason = (
             "max_tokens" if str(seq.stop_reason).lower().endswith("length") else "stop"
         )
-        return ModelOutput.from_content(
-            model=self.model_name, content=text, stop_reason=stop_reason
+        if not tools:
+            text = _tokenizer(self.base_model).decode(
+                list(seq.tokens), skip_special_tokens=True
+            )
+            return ModelOutput.from_content(
+                model=self.model_name, content=text, stop_reason=stop_reason
+            )
+
+        from tinker_cookbook.renderers import get_text_content
+
+        message, _ = renderer.parse_response(list(seq.tokens))
+        tool_calls = _inspect_tool_calls(message)
+        return ModelOutput(
+            model=self.model_name,
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatMessageAssistant(
+                        content=get_text_content(message),
+                        tool_calls=tool_calls or None,
+                        model=self.model_name,
+                        source="generate",
+                    ),
+                    stop_reason="tool_calls" if tool_calls else stop_reason,
+                )
+            ],
         )
 
     def connection_key(self) -> str:
