@@ -1,4 +1,4 @@
-"""Check the archived experiment and plotted curves; no model calls required."""
+"""Check the archived experiment; no model calls required."""
 
 import json
 import math
@@ -13,19 +13,12 @@ methods = (
     "de_raw_known_policy",
     "pr_de",
 )
-html = (folder / "safety_usefulness_five_way_ablation_zoom.html").read_text()
-traces, _ = json.JSONDecoder().raw_decode(html.split("const traces = ", 1)[1])
-assert len(traces) == 10
-
-for arm_index, arm in enumerate(("passive", "sft")):
-    for method_index, method in enumerate(methods):
+for arm in ("passive", "sft"):
+    for method in methods:
         rows = data["curves"][arm][method]
         assert len(rows) == 10
         assert all(math.isfinite(r["safety"]) and 0 <= r["safety"] <= 1 for r in rows)
         assert all(a["usefulness"] > b["usefulness"] for a, b in zip(rows, rows[1:]))
-        trace = traces[arm_index * len(methods) + method_index]
-        assert trace["x"] == [r["safety"] for r in rows]
-        assert trace["y"] == [r["usefulness"] for r in rows]
         reversals = sum(
             b["safety"] < a["safety"] - 1e-8 for a, b in zip(rows, rows[1:])
         )
@@ -43,6 +36,4 @@ for arm_index, arm in enumerate(("passive", "sft")):
 pairs = data["sft_seed_repeats"]["offsets"]
 assert len(pairs) == 4
 assert all(p["0.99"]["safety"] <= p["0.98"]["safety"] + 1e-8 for p in pairs.values())
-print(
-    "HTML matches all 100 saved points; raw DE is monotone in both arms and all four repeat pairs."
-)
+print("Raw DE is monotone in both arms and all four repeat pairs.")

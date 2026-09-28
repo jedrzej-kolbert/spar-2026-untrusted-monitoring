@@ -7,11 +7,6 @@ and SFT arms. No smoothing or monotonicity correction is applied.
 
 ![Five-way comparison](safety_usefulness_five_way_ablation_zoom.png)
 
-[Download the standalone interactive HTML](safety_usefulness_five_way_ablation_zoom.html)
-and open it locally to inspect points, convergence flags, and final raw gaps.
-[Full-range SVG](safety_usefulness_five_way_ablation.svg) includes both axes from zero.
-GitHub does not render the interactive HTML directly.
-
 The five curves compare main's Powell, Powell with a previous-guess payoff
 guard, raw DE, raw DE with a known-policy check, and PR #18's scaled/log DE
 with known-policy checks. Raw DE and both augmented DE variants are monotone
@@ -49,8 +44,7 @@ the existing RNG and raw bounds, `maxiter=40`, `popsize=10`, `tol=1e-4`, and
 `polish=False`. Finite candidates are retained even when DE reaches its
 iteration limit. Guess selection and production seeding are unchanged.
 
-Check the saved monotonicity evidence and that the HTML contains these exact
-curves with the standard library:
+Check the saved monotonicity evidence with the standard library:
 
 ```bash
 python3 docs/optimizer_comparison/check_results.py
