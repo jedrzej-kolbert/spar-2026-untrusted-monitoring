@@ -76,7 +76,11 @@ _HARMONY_REASONING_EFFORT = {"minimal": "low"}
 
 def strip_prefix(model_name: str) -> str:
     """Return the Tinker base-model id from a possibly-``tinker/``-prefixed name."""
-    return model_name[len(TINKER_PREFIX) :] if model_name.startswith(TINKER_PREFIX) else model_name
+    return (
+        model_name[len(TINKER_PREFIX) :]
+        if model_name.startswith(TINKER_PREFIX)
+        else model_name
+    )
 
 
 def is_tinker_model(model_name: str) -> bool:
@@ -179,7 +183,12 @@ def _apply_chat_template(
 
 
 def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
-    role_map = {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"}
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant",
+        "tool": "tool",
+    }
     return [{"role": role_map.get(m.role, "user"), "content": m.text} for m in input]
 
 
@@ -218,7 +227,6 @@ class TinkerAPI(ModelAPI):
         tool_choice: ToolChoice,
         config: GenerateConfig,
     ) -> ModelOutput:
-        import tinker
         from tinker import types
 
         prompt_ids = _apply_chat_template(
@@ -246,7 +254,9 @@ class TinkerAPI(ModelAPI):
             sampling_params=sampling_params,
         )
         seq = resp.sequences[0]
-        text = _tokenizer(self.base_model).decode(list(seq.tokens), skip_special_tokens=True)
+        text = _tokenizer(self.base_model).decode(
+            list(seq.tokens), skip_special_tokens=True
+        )
         # tinker's StopReason is Literal["length", "stop"] (lowercase); compare
         # case-insensitively or truncation is silently reported as a clean stop,
         # which is exactly how the generator truncation went unnoticed in a pilot.

@@ -734,7 +734,9 @@ BIGCODEBENCH = Setting(
             runs=(
                 GenRun("attacks", "attack", "self_rec_attack_policy_prompt_bcb", "U"),
                 GenRun("honest", "honest", "honest_policy_prompt_bcb", "U"),
-                GenRun("honeypots", "attack", HONEYPOT_ATTACK_PROMPT["bigcodebench"], "H"),
+                GenRun(
+                    "honeypots", "attack", HONEYPOT_ATTACK_PROMPT["bigcodebench"], "H"
+                ),
             ),
         ),
         # SFT training data (train split). `dataset:` rather than `dataset_type:`
@@ -747,7 +749,9 @@ BIGCODEBENCH = Setting(
             extra_defaults={"dataset": "bigcodebench"},
             runs=(
                 GenRun("attacks", "attack", "self_rec_attack_policy_prompt_bcb", "U"),
-                GenRun("honeypots", "attack", HONEYPOT_ATTACK_PROMPT["bigcodebench"], "H"),
+                GenRun(
+                    "honeypots", "attack", HONEYPOT_ATTACK_PROMPT["bigcodebench"], "H"
+                ),
             ),
         ),
     ),

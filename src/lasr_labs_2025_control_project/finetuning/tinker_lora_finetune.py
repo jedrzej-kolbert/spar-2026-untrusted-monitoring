@@ -61,9 +61,7 @@ def load_examples(jsonl_path: Path) -> list[dict[str, Any]]:
                 continue
             obj = json.loads(line)
             if "messages" not in obj:
-                raise ValueError(
-                    f"line missing 'messages' key: {line[:120]}"
-                )
+                raise ValueError(f"line missing 'messages' key: {line[:120]}")
             examples.append(obj)
     if not examples:
         raise ValueError(f"no examples found in {jsonl_path}")
@@ -99,7 +97,9 @@ def build_datum(messages: list[dict[str, str]], base_model: str):
     target_tokens = tokens[1:]
     # target position i predicts tokens[i+1]; train only where that target is a
     # tail (answer/EOS) token, i.e. index i+1 >= len(prompt_ids).
-    weights = [1.0 if (i + 1) >= len(prompt_ids) else 0.0 for i in range(len(target_tokens))]
+    weights = [
+        1.0 if (i + 1) >= len(prompt_ids) else 0.0 for i in range(len(target_tokens))
+    ]
 
     return types.Datum(
         model_input=types.ModelInput.from_ints(model_input_ids),
@@ -169,8 +169,14 @@ def finetune(
     logger.info(
         "Loaded %d examples (%d train / %d held-out); "
         "base_model=%s rank=%d lr=%g epochs=%d batch_size=%d",
-        len(shuffled), len(examples), len(val_examples),
-        base_model, rank, lr, epochs, batch_size,
+        len(shuffled),
+        len(examples),
+        len(val_examples),
+        base_model,
+        rank,
+        lr,
+        epochs,
+        batch_size,
     )
 
     service = tinker.ServiceClient()
@@ -185,16 +191,16 @@ def finetune(
         rng.shuffle(data)
         for batch in _batches(data, batch_size):
             fb_future = training_client.forward_backward(batch, "cross_entropy")
-            opt_future = training_client.optim_step(
-                types.AdamParams(learning_rate=lr)
-            )
+            opt_future = training_client.optim_step(types.AdamParams(learning_rate=lr))
             fb_output = fb_future.result()
             opt_future.result()
             step += 1
             loss = _mean_loss(fb_output, batch)
             logger.info(
                 "epoch %d step %d (%d examples)%s",
-                epoch, step, len(batch),
+                epoch,
+                step,
+                len(batch),
                 f" loss={loss:.4f}" if loss is not None else "",
             )
 
@@ -250,7 +256,10 @@ def evaluate_checkpoint(
         }
         logger.info(
             "held-out: n=%d accuracy=%.3f yes_rate=%.3f mean_margin=%+.3f",
-            stats["n"], stats["accuracy"], stats["yes_rate"], stats["mean_margin"],
+            stats["n"],
+            stats["accuracy"],
+            stats["yes_rate"],
+            stats["mean_margin"],
         )
         if stats["yes_rate"] in (0.0, 1.0):
             logger.warning(
@@ -265,7 +274,9 @@ def evaluate_checkpoint(
 
 
 @click.command()
-@click.option("--train-jsonl", type=click.Path(exists=True, path_type=Path), required=True)
+@click.option(
+    "--train-jsonl", type=click.Path(exists=True, path_type=Path), required=True
+)
 @click.option("--base-model", type=str, default=DEFAULT_BASE_MODEL, show_default=True)
 @click.option("--rank", type=int, default=32, show_default=True)
 @click.option("--lr", type=float, default=1e-4, show_default=True)
