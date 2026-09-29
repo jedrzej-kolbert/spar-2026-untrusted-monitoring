@@ -1,23 +1,23 @@
-# Running SFT Experiments with Passive Self-Recognition 
+# Running SFT Experiments with Passive Self-Recognition
 
-## Setup 
+## Setup
 
-Create a virtual environment for this project. Run the following command to install all dependencies: 
+Create a virtual environment for this project. Run the following command to install all dependencies:
 ```
 uv sync
 ```
 
-Select three Tinker models to use as: 
+Select three Tinker models to use as:
 -  untrusted generator (this will double as untrusted monitor) U
 -  honeypot generator H
 -  trusted monitor T
-Save their model strings. Make sure you select models that are sampleable. 
+Save their model strings. Make sure you select models that are sampleable.
 
-Configure the Tinker API key in the .env file. 
+Configure the Tinker API key in the .env file.
 
-## Configs 
+## Configs
 
-Before making your config files, open `experiments/open_models/make_configs.py` to line 142: 
+Before making your config files, open `experiments/open_models/make_configs.py` to line 142:
 ```
 #: role -> model string, per model class. U untrusted, T trusted/weak, H honeypot.
 ROLE_MODELS: dict[str, dict[str, str]] = {
@@ -32,36 +32,36 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
         "H": "tinker/openai/gpt-oss-120b",
     },
 }
-``` 
-This is where you'll set U, T, and H. Paste the model strings you found earlier into the corresponding locations under `"open"`. 
+```
+This is where you'll set U, T, and H. Paste the model strings you found earlier into the corresponding locations under `"open"`.
 
-Generate all config files: 
+Generate all config files:
 ```
 python experiments/open_models/make_configs.py --model-class open
 ```
 
-## A note about changing the number of code samples 
+## A note about changing the number of code samples
 
-Line 173 of `scripts/generate_solutions_inspect.py` is where the number of problems are defined: 
+Line 173 of `scripts/generate_solutions_inspect.py` is where the number of problems are defined:
 ```
 ...
-shuffle=False, 
-problem_ids_range=[0, 2999], 
+shuffle=False,
+problem_ids_range=[0, 2999],
 ```
-You don't have to change anything here for now: just know changing this setting will change how many problems the model will solve.  
+You don't have to change anything here for now: just know changing this setting will change how many problems the model will solve.
 
-For training, the models will get all the odd problems in the range you specify, and for testing, the models will get all the even problems. 
+For training, the models will get all the odd problems in the range you specify, and for testing, the models will get all the even problems.
 
 **Note:** If trying to conserve tokens, I'd recommend lowering the upper limit of `problem_ids_range` to maybe 2000, but **only when you are generating training data** because usually fewer problems are enough to still achieve high self-rec accuracy.
 
-## Training data generation 
+## Training data generation
 
-To generate the training data, run this command: 
+To generate the training data, run this command:
 
 ```
 python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/generator/train_generator_config.yaml
 ```
-Check that your eval files were saved in `experiments/open-source-model/apps/self_rec_train/generator`. 
+Check that your eval files were saved in `experiments/open-source-model/apps/self_rec_train/generator`.
 
 ## Applying blue-team mitigation strategies to training data 
 
@@ -79,9 +79,9 @@ uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py
 uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config_train.yaml 
 ```
 
-Your data will appear in `experiments/open-source-model/apps/self_rec_train/transforms/minified` and `experiments/open-source-model/apps/self_rec_train/transforms/paraphrased`. 
+Your data will appear in `experiments/open-source-model/apps/self_rec_train/transforms/minified` and `experiments/open-source-model/apps/self_rec_train/transforms/paraphrased`.
 
-You now have 3 pairs of honeypot and attack training samples, for each of three arms (no signal jamming, minification, and paraphrasing). 
+You now have 3 pairs of honeypot and attack training samples, for each of three arms (no signal jamming, minification, and paraphrasing).
 
 **Important:** Move each pair of generated eval files into a `train` subdirectory. Repeat these commands three times, for each pair (from the repository root):
 
@@ -92,9 +92,9 @@ mv "$eval_files_dir"/*.eval "$eval_files_dir/train/"
 ls "$eval_files_dir/train"
 ```
 
-The next commands expect the eval files there. 
+The next commands expect the eval files there.
 
-## Prepare data for fine-tuning 
+## Prepare data for fine-tuning
 
 Next, we need to convert the .eval files into .json files.
 
@@ -102,24 +102,24 @@ Repeat these commands for each pair of .eval files:
 ```
 bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw [--transformed]
 ```
-**Important:** `<eval_logs_dir>` should point to the *parent* directory of the `train` subdirectory where all pairs of the .eval files are. 
+**Important:** `<eval_logs_dir>` should point to the *parent* directory of the `train` subdirectory where all pairs of the .eval files are.
 
-Include the `--transformed` flag for the minified and paraphrased arms. 
+Include the `--transformed` flag for the minified and paraphrased arms.
 
-You will find the .json files in `<eval_logs_dir>/raw`. 
+You will find the .json files in `<eval_logs_dir>/raw`.
 
-Then run: 
+Then run:
 ```
 bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name>
 ```
-Repeat thrice for each arm. 
+Repeat thrice for each arm.
 
-Check out `src/lasr_labs_2025_control_project/finetuning/binary_tuning/README.md` for more info on how these two commands work. 
-Check that `train_messages.jsonl` shows up under `<eval_logs_dir>/prepared/train` for each arm. 
+Check out `src/lasr_labs_2025_control_project/finetuning/binary_tuning/README.md` for more info on how these two commands work.
+Check that `train_messages.jsonl` shows up under `<eval_logs_dir>/prepared/train` for each arm.
 
-## Fine-tune the untrusted model 
+## Fine-tune the untrusted model
 
-Run this command to fine-tune the model through the Tinker API: 
+Run this command to fine-tune the model through the Tinker API:
 ```
 checkpoint_name=<name> 
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
@@ -144,13 +144,34 @@ The trainer prints the `tinker://` sampler-weights path and writes it to `experi
 ```
 Create the file if it does not exist. `--checkpoint-name` is the remote sampler-weights name; it does not write to `ckpts.json`.
 
-## Generate test data 
+## Optional: track checkpoint learning dynamics
+
+To track ROC AUC during training, use prepared training JSONL and held-out attack/honeypot `.eval` files:
+
+```bash
+export PYTHONPATH="$PWD/src"
+python -m lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
+  --train-jsonl /path/to/train_messages.jsonl \
+  --base-model deepseek-ai/DeepSeek-V3.1 \
+  --rank 32 --lr 1e-4 --epochs 3 --batch-size 64 --val-frac 0 \
+  --checkpoint-every-steps 12 \
+  --attacks-eval /path/to/test/attacks.eval \
+  --honeypots-eval /path/to/test/honeypots.eval \
+  --dynamics-results results/my-run
+```
+
+For transformed data, add `--transformed` here and during training-data preparation.
+The extra flags save/evaluate checkpoints every 12 updates and at the end.
+`results/my-run/` contains `dynamics.csv` (checkpoint URIs, loss, AUC, sample count),
+`dynamics.svg` (AUC over updates), and `dynamics.csv.manifest.json` (evaluation provenance).
+
+## Generate test data
 
 ```
 python3 src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py \
   --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/generator/generator_config.yaml
 ```
-Your testing data should appear in `experiments/open-source-model/apps/self_rec/generator` as `honest.eval`, `honeypots.eval`, and `attacks.eval`. 
+Your testing data should appear in `experiments/open-source-model/apps/self_rec/generator` as `honest.eval`, `honeypots.eval`, and `attacks.eval`.
 
 Apply minification and paraphrasing. Run these two commands: 
 
@@ -166,18 +187,18 @@ Check that your transformed testing data has saved under `experiments/open-sourc
 
 ## Let's test the untrusted and trusted monitors!
 
-We need to pass `tinker://` paths to the fine-tuning checkpoints to our monitor config files. To do so, re-run this command: 
+We need to pass `tinker://` paths to the fine-tuning checkpoints to our monitor config files. To do so, re-run this command:
 ```
 python3 experiments/open_models/make_configs.py --checkpoints experiments/open_models/ckpts.json
 ```
 
-Run this command to test the untrusted and trusted monitors when no signal jamming is applied: 
+Run this command to test the untrusted and trusted monitors when no signal jamming is applied:
 ```
 python3 src/lasr_labs_2025_control_project/scripts/monitor_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
-To test the monitors against the signal-jammed arms, re-run the previous command, replacing the config file name with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`. 
+To test the monitors against the signal-jammed arms, re-run the previous command, replacing the config file name with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`.
 
-## Plot your results 
+## Plot your results
 ```
 python3 src/lasr_labs_2025_control_project/scripts/plot_data.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
