@@ -93,7 +93,7 @@ def process_eval_log(
 
     for sample in log.samples:
         # Check if sample has successful scores (both tasks for attacks, main task for honest)
-        if not check_sample_is_valid(sample.scores):
+        if not check_sample_is_valid(sample.scores, sample.metadata.get("eval_mode")):
             continue
 
         # Merge metadata and store (store takes precedence)
