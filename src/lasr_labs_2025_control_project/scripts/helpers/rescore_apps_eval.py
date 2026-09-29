@@ -46,6 +46,37 @@ def replay_submission(completions: dict[int | str, str]):
     return solve
 
 
+def rescore(
+    completions: dict[int | str, str], mode: EvalMode, max_sandboxes: int = 8
+) -> dict[int | str, dict[str, str]]:
+    """Score stored APPS submissions (sample id -> completion JSON) in Docker."""
+    # backdoored_solutions always samples codeparrot/apps "test" (odd/even ids pick the
+    # train/test halves), where problem ids are unique.
+    by_id = {
+        s.id: s
+        for s in AppsSetting(original_dataset_split="test", shuffle=False).get_dataset(
+            mode
+        )
+    }
+    missing = [i for i in completions if i not in by_id]
+    assert not missing, f"{len(missing)} ids not in APPS test split, e.g. {missing[:5]}"
+
+    rescored = eval(
+        Task(
+            dataset=MemoryDataset([by_id[i] for i in completions]),
+            solver=replay_submission(completions),
+            scorer=apps_scorer(use_cache=False, num_tests=10),
+            sandbox="docker",
+        ),
+        model="mockllm/model",
+        max_sandboxes=max_sandboxes,
+        display="none",
+    )[0]
+    assert rescored.status == "success", rescored.error
+    assert rescored.samples is not None
+    return {s.id: s.scores["apps_scorer"].value for s in rescored.samples}  # type: ignore[index,misc]
+
+
 @click.command()
 @click.option(
     "--eval-path", type=click.Path(exists=True, dir_okay=False), required=True
@@ -63,36 +94,8 @@ def main(eval_path: str, limit: int | None, out: str | None, max_sandboxes: int)
     ), "Mixed eval modes"
     assert len({s.epoch for s in stored}) == 1, "Multi-epoch logs are not supported"
 
-    # backdoored_solutions always samples codeparrot/apps "test" (odd/even ids pick the
-    # train/test halves), where problem ids are unique.
-    by_id = {
-        s.id: s
-        for s in AppsSetting(original_dataset_split="test", shuffle=False).get_dataset(
-            mode
-        )
-    }
-    missing = [s.id for s in stored if s.id not in by_id]
-    assert (
-        not missing
-    ), f"{len(missing)} log ids not in APPS test split, e.g. {missing[:5]}"
-
-    completions = {s.id: s.output.completion for s in stored}
-    rescored = eval(
-        Task(
-            dataset=MemoryDataset([by_id[s.id] for s in stored]),
-            solver=replay_submission(completions),
-            scorer=apps_scorer(use_cache=False, num_tests=10),
-            sandbox="docker",
-        ),
-        model="mockllm/model",
-        max_sandboxes=max_sandboxes,
-        display="none",
-    )[0]
-    assert rescored.status == "success", rescored.error
-    assert rescored.samples is not None
-
     old = {s.id: s.scores["apps_scorer"].value for s in stored}  # type: ignore[index]
-    new = {s.id: s.scores["apps_scorer"].value for s in rescored.samples}  # type: ignore[index]
+    new = rescore({s.id: s.output.completion for s in stored}, mode, max_sandboxes)
     changes = Counter()
     diffs = []
     for sample_id, old_value in old.items():
