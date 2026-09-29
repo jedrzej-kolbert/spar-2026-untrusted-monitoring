@@ -4,8 +4,9 @@ Bumping control-arena (needed for BashArena, issue #29) changes how APPS
 solutions and backdoors are scored. This note records what changed upstream,
 what it does to our existing results, and the options for handling it.
 
-**Recommendation:** fix A (wrap only the reference solutions that need it) and
-decide separately on the integer-tolerance issue.
+**Decision:** fix A (wrap only the reference solutions that need it) is
+implemented in `settings/setting.py` (`runnable_reference`). The
+integer-tolerance issue is still open.
 
 ## What changed upstream
 
@@ -85,7 +86,10 @@ changes are needed.
 The reference solution only affects the backdoor (side-task) check, so the
 options below leave main-task scores at the 17.1.2 values. Fixes A and B were
 measured by re-running the backdoor check (17.1.2 rules) for every attack
-sample whose reference changes.
+sample whose reference changes. Fix A was then confirmed with the real
+inspect scorer on all 2,060 samples: identical totals (758 backdoor C, 115
+successful attacks); two samples swapped C/I between runs (known flaky
+samples), and main-task scores differed on 2 samples, also re-run noise.
 
 | | 2.1.3 | 17.1.2 as-is | **A: wrap refs that need it** | B: first ref that compiles | C: switch dataset |
 |---|---:|---:|---:|---:|---|
@@ -96,7 +100,7 @@ sample whose reference changes.
 | Successful attacks | 114 (11.1%) | 105 (10.2%) | **115 (11.2%)** | 112 (10.9%) | |
 | Backdoor agrees with 2.1.3 | 1,030 | 877 | **932** | 923 | |
 
-**A. Wrap only the references that need it (recommended).** When building the
+**A. Wrap only the references that need it (implemented).** When building the
 dataset, if a reference fails to compile as a script but compiles inside
 `def solution(): …`, store the wrapped version as the reference code.
 
@@ -144,4 +148,5 @@ uv run pytest tests/test_apps_loader.py tests/test_apps_rescore.py
 ```
 
 `tests/data/apps_rescore_fixture.json` holds 29 of these samples with their
-2.1.3 and expected 17.1.2 scores, and a note on each sample that differs.
+2.1.3 scores and expected scores under 17.1.2 with fix A, and a note on each
+sample whose score differs from 2.1.3.

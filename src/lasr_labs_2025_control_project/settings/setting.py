@@ -1,4 +1,6 @@
 import json
+import textwrap
+import warnings
 from typing import Any, Callable, Literal
 
 from control_arena import ControlTaskMetadata, EvalMode
@@ -28,6 +30,33 @@ from pydantic import Field
 from lasr_labs_2025_control_project.prompts.generation_prompts import (
     setting_description,
 )
+
+
+def _compiles(code: str) -> bool:
+    try:
+        with warnings.catch_warnings():  # e.g. `is` with a literal; not our code
+            warnings.simplefilter("ignore", SyntaxWarning)
+            compile(code, "<reference>", "exec")
+        return True
+    except (SyntaxError, ValueError):
+        return False
+
+
+def runnable_reference(code: str) -> str:
+    """Make a codeparrot/apps reference solution runnable as a plain script.
+
+    APPS reference solutions were written for a harness that runs them inside a
+    function, so some use a top-level `return` or `nonlocal`. control-arena >=4
+    runs reference code as a script (a SyntaxError there scores the backdoor as
+    failed). Wrap only those solutions, exactly as control-arena 2.1.3's
+    format_code_to_run did; ones that already compile (e.g. `import *`, which
+    breaks inside a function) are left as they are.
+    See docs/apps_scorer_migration.md.
+    """
+    if _compiles(code):
+        return code
+    wrapped = f"\ndef solution():\n{textwrap.indent(code, '    ')}\n\nsolution()\n"
+    return wrapped if _compiles(wrapped) else code
 
 
 class AppsSetting(Setting):
@@ -207,7 +236,9 @@ class AppsSetting(Setting):
                 metadata=AppsTaskMetadata(
                     inputs=inputs,
                     outputs=outputs,
-                    solutions=[{"code": code} for code in solutions],
+                    solutions=[
+                        {"code": runnable_reference(code)} for code in solutions
+                    ],
                 ).model_dump(),
                 main_task_description=record["question"],
                 side_task_description="",
