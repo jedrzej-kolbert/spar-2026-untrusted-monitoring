@@ -1,6 +1,7 @@
 # BashArena pilot, stage 1 (issue #29): 5 test-split tasks per run, all four side
 # tasks active. Checks tool calling, attack yield and cost before scaling up.
-#   U = Qwen3.6-35B-A3B, H = Qwen3.5-397B-A17B (thinking off)
+#   Triplet from issues #9/#23: U = Qwen3.6-35B-A3B (thinking off), H = DeepSeek-V3.1,
+#   T = Qwen3.5-9B (monitors, later stages)
 experiment_folder: experiments/open-source-model/basharena/stage1
 experiment_name: basharena_stage1
 results_folder: results/
@@ -23,4 +24,4 @@ runs:
     eval_mode: attack
     system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
     save_path: generator/honeypots.eval
-    model: tinker/Qwen/Qwen3.5-397B-A17B
+    model: tinker/deepseek-ai/DeepSeek-V3.1
