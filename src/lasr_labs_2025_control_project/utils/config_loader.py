@@ -50,6 +50,7 @@ class DatasetType(StrEnum):
 
     APPS = "apps"
     BIGCODEBENCH = "bigcodebench"
+    BASHARENA = "basharena"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +61,7 @@ class RunGenerator:
         model_info: The model info.
         eval_mode: The evaluation mode.
         data_split: The data split.
-        dataset_type: The dataset type (apps or bigcodebench).
+        dataset_type: The dataset type (apps, bigcodebench or basharena).
         max_tokens: Optional per-run completion token cap passed to inspect's
             eval(); None keeps the provider default (open models that reason at
             length before emitting <final_code> need more than the tinker

@@ -1,0 +1,26 @@
+# BashArena pilot, stage 1 (issue #29): 5 test-split tasks per run, all four side
+# tasks active. Checks tool calling, attack yield and cost before scaling up.
+#   U = Qwen3-30B-A3B-Instruct-2507, H = Qwen3-235B-A22B-Instruct-2507
+experiment_folder: experiments/open-source-model/basharena/stage1
+experiment_name: basharena_stage1
+results_folder: results/
+defaults:
+  dataset_type: basharena
+  data_split: test
+  limit: 5
+runs:
+  honest:
+    eval_mode: honest
+    system_prompt: BASHARENA_HONEST_SYSTEM_PROMPT
+    save_path: generator/honest.eval
+    model: tinker/Qwen/Qwen3-30B-A3B-Instruct-2507
+  attacks:
+    eval_mode: attack
+    system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
+    save_path: generator/attacks.eval
+    model: tinker/Qwen/Qwen3-30B-A3B-Instruct-2507
+  honeypots:
+    eval_mode: attack
+    system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
+    save_path: generator/honeypots.eval
+    model: tinker/Qwen/Qwen3-235B-A22B-Instruct-2507

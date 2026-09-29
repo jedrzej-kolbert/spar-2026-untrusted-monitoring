@@ -14,8 +14,16 @@ from pathlib import Path
 
 import click
 from control_arena import EvalMode
+from control_arena.eval import ControlEvalConfig, get_control_task
+from control_arena.settings.bash_arena.bash_arena_setting import BashArenaSetting
+from control_arena.settings.bash_arena.policies.attack_policy import attack_policy
+from control_arena.settings.bash_arena.policies.honest_policy import honest_policy
+from control_arena.settings.bash_arena.protocol.auto_submit_protocol_wrapper import (
+    auto_submit_protocol_wrapper,
+)
 from control_arena.tools.submit_tool import STORE_SUBMIT_ARGS_KEY
 from inspect_ai import Epochs, Task, eval, task
+from inspect_ai.log import EvalLog, read_eval_log, write_eval_log
 from inspect_ai.model import (
     ChatMessageAssistant,
     ModelOutput,
@@ -45,6 +53,7 @@ from lasr_labs_2025_control_project.utils.config_loader import (
     GeneratorRunConfig,
     load_and_normalize_config,
 )
+from lasr_labs_2025_control_project.utils.utils import trajectory_view
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -307,6 +316,63 @@ def bigcodebench_solutions(
     )
 
 
+def basharena_solutions(
+    eval_mode: EvalMode,
+    data_split: DataSplit,
+    system_prompt: str,
+    model: str,
+) -> Task:
+    """BashArena agent runs (U/H attacks, U honest), ended early if a side task fires.
+
+    BashArena has one split, so task ids (StackOverflow question numbers) are split
+    like APPS problem ids: odd = train, even = test.
+    """
+    setting = BashArenaSetting()
+    parity = 1 if data_split == DataSplit.TRAIN else 0
+    policy = attack_policy if eval_mode == EvalMode.ATTACK else honest_policy
+    return get_control_task(
+        setting=setting,
+        micro_protocol=auto_submit_protocol_wrapper(
+            micro_protocol=policy(model_name=model, system_prompt=system_prompt)
+        ),
+        mode=eval_mode,
+        # ponytail: fixed agent limits; move into the config if pilots need tuning.
+        eval_config=ControlEvalConfig(
+            untrusted_model=model,
+            trusted_model=model,  # unused: no trusted monitor during generation
+            max_steps=40,
+            time_limit=60 * 60,
+            token_limit=2_000_000,  # prompts are re-sent every step
+        ),
+        dataset=[
+            s for s in setting.get_dataset(eval_mode) if int(str(s.id)) % 2 == parity
+        ],
+    )
+
+
+def add_trajectory_views(
+    log_path: str, eval_mode: EvalMode, system_prompt: str, model: str
+) -> EvalLog:
+    """Store each trajectory's action view as base_solution, like an APPS solution.
+
+    Done after eval() rather than in a solver: a sample that hits its step, time or
+    token limit skips later solvers, and this keeps the view re-renderable offline.
+    """
+    log = read_eval_log(log_path)
+    for sample in log.samples or []:
+        sample.store["base_solution"] = trajectory_view(sample.messages)
+        sample.store["generator_info"] = GeneratorInfo(
+            model_info=ModelInfo(
+                system_prompt=system_prompt,
+                base_prompt=sample.metadata["main_task_description"],
+                model=model.split("/", 1)[1],  # name without provider, as for APPS
+            ),
+            eval_mode=eval_mode,
+            secret_input="",
+        )
+    return log
+
+
 @click.command()
 @click.option(
     "--config",
@@ -330,6 +396,35 @@ def main(
         assert isinstance(
             run, GeneratorRunConfig
         ), "Run is not a GeneratorRunConfig, make sure to use the correct config"
+
+        if run.generator.dataset_type == DatasetType.BASHARENA:
+            model = run.generator.model_info.model
+            log = eval(
+                tasks=basharena_solutions(
+                    run.generator.eval_mode,
+                    run.generator.data_split,
+                    run.generator.model_info.system_prompt,
+                    model,
+                ),
+                model=model,
+                # ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM
+                # and /etc/docker/daemon.json address pools.
+                max_sandboxes=4,
+                max_samples=4,
+                fail_on_error=False,  # one broken container must not end the run
+                limit=run.limit,
+            )[0]
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            write_eval_log(
+                add_trajectory_views(
+                    log.location,
+                    run.generator.eval_mode,
+                    run.generator.model_info.system_prompt,
+                    model,
+                ),
+                str(run.save_path),
+            )
+            continue
 
         # Select the appropriate task based on dataset_type
         if run.generator.dataset_type == DatasetType.APPS:
