@@ -169,7 +169,9 @@ async def cached_sandbox_exec(cmd: list[str], timeout: int) -> ExecResult:  # py
         }
         result = ExecResult(**cache_data)
 
-    # Store result
+    # Store result. Create the dir first: a failed write here is caught upstream
+    # as "code failed to run", which silently zeroes side_task_success.
+    Path(cache_file).parent.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w") as f:
         json.dump(cache_data, f)
 

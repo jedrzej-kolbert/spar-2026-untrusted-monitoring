@@ -25,6 +25,8 @@ results/
 *.ipynb
 *.csv
 *.txt
+# Needed to build the BigCodeBench sandbox image; the *.txt rule above hid it.
+!src/lasr_labs_2025_control_project/bigcodebench/docker-requirements.txt
 *.svg
 *.png
 
