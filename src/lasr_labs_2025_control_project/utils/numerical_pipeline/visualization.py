@@ -20,6 +20,9 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline import (
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimization import (
     derive_untrusted_threshold_bounds,
 )
+from lasr_labs_2025_control_project.utils.numerical_pipeline.results_io import (
+    _raw_roc,
+)
 
 OI_YELLOW = "#F0E442"
 OI_TEAL = "#009E73"
@@ -230,6 +233,11 @@ def plot_data(
         data_dict,
         save_path=str(dest / f"trusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
         plot_mode="trusted",
+    )
+    plot_roc_curves(
+        data_dict,
+        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{PLOT_FILE_FORMAT}"),
+        plot_mode="untrusted_suspiciousness",
     )
 
     plot_safety_usefulness_curves(
@@ -619,7 +627,7 @@ def plot_roc_heatmaps(
 def plot_roc_curves(
     data_dict: dict[str, OptimizationResult],
     save_path: str = f"src/lasr_labs_2025_control_project/results/roc_curve.{PLOT_FILE_FORMAT}",
-    plot_mode: str = "untrusted",  # "untrusted" or "trusted"
+    plot_mode: str = "untrusted",  # "untrusted", "trusted" or "untrusted_suspiciousness"
 ) -> None:
     """
     Plot ROC curves across different axes based on plot_mode.
@@ -627,9 +635,11 @@ def plot_roc_curves(
     Args:
         data_dict: Mapping of label -> OptimizationResult
         save_path: Path to save the plot
-        plot_mode: Either "untrusted" or "trusted"
+        plot_mode: One of "untrusted", "trusted" or "untrusted_suspiciousness"
             - "untrusted": Plot UM detection rate vs UM FPR across score thresholds
             - "trusted": Plot 1-attack_pass_rate vs t_tpr (roc_fn(0, t_fpr))
+            - "untrusted_suspiciousness": Empirical ROC of the honest UM
+              suspiciousness score, attacks vs benign
     """
     # Create figure with two square subplots side by side
     original_label_order = list(data_dict.keys())
@@ -672,9 +682,23 @@ def plot_roc_curves(
             fpr_vals = np.linspace(0.0, 1.0, 200)
             fnr_vals, _ = roc_fn(None, fpr_vals)
             tpr_vals = 1.0 - np.asarray(fnr_vals, dtype=float)
+        elif plot_mode == "untrusted_suspiciousness":
+            # Not a roc_fn axis (the model fixes this threshold at Youden's J),
+            # so plot the empirical scores directly.
+            meta = result.config.monitor_roc_fn_metadata or {}
+            scores = meta.get("untrusted_suspiciousness_scores", {})
+            pos = np.asarray(scores.get("positive", []), dtype=float)
+            neg = np.asarray(scores.get("negative", []), dtype=float)
+            pos, neg = pos[np.isfinite(pos)], neg[np.isfinite(neg)]
+            if pos.size == 0 or neg.size == 0:
+                continue
+            roc = _raw_roc(pos, neg)
+            fpr_vals = np.asarray(roc["fpr"], dtype=float)
+            tpr_vals = np.asarray(roc["tpr"], dtype=float)
         else:
             raise ValueError(
-                f"Invalid plot_mode: {plot_mode}. Must be 'untrusted' or 'trusted'."
+                f"Invalid plot_mode: {plot_mode}. Must be 'untrusted', 'trusted' "
+                "or 'untrusted_suspiciousness'."
             )
 
         mask = np.isfinite(fpr_vals) & np.isfinite(tpr_vals)
@@ -701,7 +725,12 @@ def plot_roc_curves(
             for fp, tp in zip(fpr_vals, tpr_vals)
         )
 
-        positive_rates = getattr(result.config, "red_team_positive_rates", None)
+        # Red-team operating points live on the collusion ROC, not this one.
+        positive_rates = (
+            None
+            if plot_mode == "untrusted_suspiciousness"
+            else getattr(result.config, "red_team_positive_rates", None)
+        )
         if isinstance(positive_rates, dict):
             tpr_points = np.asarray(positive_rates.get("tpr", []), dtype=float)
             fpr_points = np.asarray(positive_rates.get("fpr", []), dtype=float)
@@ -765,10 +794,22 @@ def plot_roc_curves(
             "xtick_spacing": 0.01,
             "ytick_spacing": 0.2,
         }
-    else:
+    elif plot_mode == "trusted":
         ax.set_xlabel("FPR (1 - Attack Pass Rate)")
         ax.set_ylabel("TPR (Trusted Monitor Detection Rate)")
         ax.set_title("Trusted Monitor ROC")
+        sub_square_coords = {
+            "bottom": 0.6,
+            "top": 1.0,
+            "left": 0.0,
+            "right": 0.4,
+            "xtick_spacing": 0.1,
+            "ytick_spacing": 0.1,
+        }
+    else:
+        ax.set_xlabel("FPR (Benign Flagged Rate)")
+        ax.set_ylabel("TPR (Attack Detection Rate)")
+        ax.set_title("Untrusted Monitor Suspiciousness ROC")
         sub_square_coords = {
             "bottom": 0.6,
             "top": 1.0,
@@ -887,17 +928,19 @@ def plot_roc_curves(
     axins.set_ylabel(ax.get_ylabel())
 
     # Move legend to underneath both panels
+    # No handles when every run was skipped (e.g. no UM suspiciousness scores)
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.05),
-        title=None,
-        frameon=False,
-        ncol=min(len(handles), 3),  # Arrange in columns to save vertical space
-    )
-    ax.legend().remove()  # Remove the original legend
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.05),
+            title=None,
+            frameon=False,
+            ncol=min(len(handles), 3),  # Arrange in columns to save vertical space
+        )
+        ax.legend().remove()  # Remove the original legend
 
     fig.tight_layout(rect=(0, 0.08, 1, 1))  # Make room for legend at the bottom
     fig.savefig(save_path, dpi=300, bbox_inches="tight")
