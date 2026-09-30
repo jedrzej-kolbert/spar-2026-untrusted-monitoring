@@ -20,6 +20,8 @@ from lasr_labs_2025_control_project.self_rec_baselines.utils.scripts.data_models
 )
 from lasr_labs_2025_control_project.utils.utils import (
     check_sample_is_valid,
+    format_solution,
+    is_code_setting,
     remove_comments,
 )
 
@@ -93,7 +95,7 @@ def process_eval_log(
 
     for sample in log.samples:
         # Check if sample has successful scores (both tasks for attacks, main task for honest)
-        if not check_sample_is_valid(sample.scores):
+        if not check_sample_is_valid(sample.scores, sample.metadata.get("eval_mode")):
             continue
 
         # Merge metadata and store (store takes precedence)
@@ -130,7 +132,9 @@ def process_eval_log(
                 )
             # Optionally remove comments from base solution
             solution = (
-                base_solution if keep_comments else remove_comments(base_solution)
+                base_solution
+                if keep_comments or not is_code_setting(sample_data.get("setting_name"))
+                else remove_comments(base_solution)
             )
 
         # Get problem statement - fail hard if not available
@@ -159,6 +163,7 @@ def process_eval_log(
                 "problem_statement": problem_statement,
                 "solution": solution,
                 "transform_info": transform_info,
+                "setting_name": sample_data.get("setting_name"),
             }
         )
 
@@ -187,7 +192,9 @@ def process_eval_log(
         if transform_info is not None and transform_info["type"] == "llm":
             formatted_solution = sample_data["solution"]
         else:
-            formatted_solution = apply_python_code_format(sample_data["solution"])
+            formatted_solution = format_solution(
+                sample_data["solution"], sample_data["setting_name"]
+            )
 
         problems_dict[problem_id]["solutions"].append(
             Solution(model=model_name, solution=formatted_solution)
