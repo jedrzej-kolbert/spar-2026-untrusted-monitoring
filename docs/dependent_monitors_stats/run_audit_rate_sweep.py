@@ -52,19 +52,15 @@ def make_expected_win(rate):
     tmax = cfg.untrusted_threshold_max
 
     def expected_win(t, logp):
-        return sum(
-            pb
-            * float(
-                calc(
-                    {
-                        "blue_team_honeypot_fraction": np.float64(f),
-                        "red_team_roc_threshold": np.float64(t),
-                        "red_team_p_attack": np.float64(10.0**logp),
-                    }
-                )[0]
-            )
-            for f, pb in blue_mix
-        )
+        def win(f):
+            params = {
+                "blue_team_honeypot_fraction": np.float64(f),
+                "red_team_roc_threshold": np.float64(t),
+                "red_team_p_attack": np.float64(10.0**logp),
+            }
+            return float(calc(params)[0])
+
+        return sum(pb * win(f) for f, pb in blue_mix)
 
     return expected_win, tmin, tmax
 
