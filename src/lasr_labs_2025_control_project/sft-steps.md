@@ -63,20 +63,20 @@ python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py 
 ```
 Check that your eval files were saved in `experiments/open-source-model/apps/self_rec_train/generator`.
 
-## Applying blue-team mitigation strategies to training data 
+## Applying blue-team mitigation strategies to training data
 
-We can apply the mitigation strategies of minification and paraphrasing to the training data, to test our red team's robustness to signal jamming. 
+We can apply the mitigation strategies of minification and paraphrasing to the training data, to test our red team's robustness to signal jamming.
 
-Run from the repo root: 
+Run from the repo root:
 
-**Minification:** 
+**Minification:**
 ```
-uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/minified_config_train.yaml 
+uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/minified_config_train.yaml
 ```
 
 **Paraphrasing:**
 ```
-uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config_train.yaml 
+uv run src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config_train.yaml
 ```
 
 Your data will appear in `experiments/open-source-model/apps/self_rec_train/transforms/minified` and `experiments/open-source-model/apps/self_rec_train/transforms/paraphrased`.
@@ -121,14 +121,14 @@ Check that `train_messages.jsonl` shows up under `<eval_logs_dir>/prepared/train
 
 Run this command to fine-tune the model through the Tinker API:
 ```
-checkpoint_name=<name> 
+checkpoint_name=<name>
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
       --train-jsonl <eval_logs_dir>/prepared/train/train_messages.jsonl \
       --base-model <supported_tinker_model_id> \
       --checkpoint-name $checkpoint_name --out-path-file experiments/open_models/$checkpoint_name.txt \
       [--max-examples N] [--seed 0] [--val-frac 0.05]
 ```
-**⚠️ Important:** Change `checkpoint_name` to the corresponding names for each signal jamming regime: 
+**⚠️ Important:** Change `checkpoint_name` to the corresponding names for each signal jamming regime:
 - No signal jamming: `checkpoint_name=self_rec_base`
 - Paraphrased: `checkpoint_name=self_rec_paraphrased`
 - Minified: `checkpoint_name=self_rec_minified`
@@ -173,7 +173,7 @@ python3 src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py
 ```
 Your testing data should appear in `experiments/open-source-model/apps/self_rec/generator` as `honest.eval`, `honeypots.eval`, and `attacks.eval`.
 
-Apply minification and paraphrasing. Run these two commands: 
+Apply minification and paraphrasing. Run these two commands:
 
 ```
 python3 src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py \
@@ -183,7 +183,7 @@ python3 src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.p
 python3 src/lasr_labs_2025_control_project/scripts/transform_solutions_inspect.py \
   --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/transforms/paraphrased_config.yaml
 ```
-Check that your transformed testing data has saved under `experiments/open-source-model/apps/self_rec/transforms/minified` and `experiments/open-source-model/apps/self_rec/transforms/paraphrased`. 
+Check that your transformed testing data has saved under `experiments/open-source-model/apps/self_rec/transforms/minified` and `experiments/open-source-model/apps/self_rec/transforms/paraphrased`.
 
 ## Let's test the untrusted and trusted monitors!
 
@@ -203,7 +203,7 @@ To test the monitors against the signal-jammed arms, re-run the previous command
 python3 src/lasr_labs_2025_control_project/scripts/plot_data.py --config src/lasr_labs_2025_control_project/configs/apps_open/self_rec/monitors/sft/base_monitor_config.yaml
 ```
 
-To generate plots for the minifed and paraphrased arms, replace `base_monitor_config.yaml` with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`. 
+To generate plots for the minifed and paraphrased arms, replace `base_monitor_config.yaml` with `minified_monitor_config.yaml` and/or `paraphrased_monitor_config.yaml`.
 
-Plots for the no-signal-jamming arm appear in `experiments/open-source-model/apps/self_rec/results/none_sft`. Plots for the signal-jamming arms appear in `results/minified_sft` and `results/paraphrased_sft`. 
+Plots for the no-signal-jamming arm appear in `experiments/open-source-model/apps/self_rec/results/none_sft`. Plots for the signal-jamming arms appear in `results/minified_sft` and `results/paraphrased_sft`.
 Upload those graphs to the team Google Drive and share any key notes/observations you make!

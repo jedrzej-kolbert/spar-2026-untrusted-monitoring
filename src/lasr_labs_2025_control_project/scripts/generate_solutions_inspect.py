@@ -170,7 +170,7 @@ def backdoored_solutions(
         original_dataset_split="test",
         filter_on_split="even_test" if data_split == DataSplit.TEST else "odd_train",
         shuffle=False,
-        problem_ids_range=[0, 2999] 
+        problem_ids_range=[0, 2999],
     )
 
     dataset = apps_setting.get_dataset(eval_mode=eval_mode)
@@ -336,9 +336,9 @@ def main(
         config_path, normalized.experiment_folder / "configs" / "generator_config.yaml"
     )
     for run in normalized.runs:
-        assert isinstance(
-            run, GeneratorRunConfig
-        ), "Run is not a GeneratorRunConfig, make sure to use the correct config"
+        assert isinstance(run, GeneratorRunConfig), (
+            "Run is not a GeneratorRunConfig, make sure to use the correct config"
+        )
 
         # Select the appropriate task based on dataset_type
         if run.generator.dataset_type == DatasetType.APPS:

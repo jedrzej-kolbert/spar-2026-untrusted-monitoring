@@ -50,9 +50,9 @@ def minify_solution() -> Solver:
         state: TaskState,
         generate: Generate,
     ) -> TaskState:
-        assert isinstance(
-            state.input, str
-        ), "State input must be a string, check your .eval file"
+        assert isinstance(state.input, str), (
+            "State input must be a string, check your .eval file"
+        )
         code = state.input.replace("```python\n", "").replace("```", "")
         output = python_minifier.minify(
             code,
@@ -106,9 +106,9 @@ def summarize_solution(
         """Get solution from the dataset"""
         # Get the solution from messages
 
-        assert isinstance(
-            state.input, str
-        ), "State input must be a string, not list[ChatMessage], check your .eval file"
+        assert isinstance(state.input, str), (
+            "State input must be a string, not list[ChatMessage], check your .eval file"
+        )
         code = state.input
         state.output = await model.generate(
             [
@@ -184,9 +184,9 @@ def transform_solutions(
         raise ValueError("No scores found in the eval log samples' metadata")
 
     if run.transform.type == TransformType.LLM:
-        assert (
-            run.transform.model_info is not None
-        ), "Model info is required for LLM transform"
+        assert run.transform.model_info is not None, (
+            "Model info is required for LLM transform"
+        )
         solver = summarize_solution(
             run.transform.model_info,
             run.transform.remove_comments,
@@ -222,9 +222,9 @@ def main(config: str):
     )
 
     for run in normalized.runs:
-        assert isinstance(
-            run, TransformRunConfig
-        ), "Run is not a TransformRunConfig, make sure to use the correct config"
+        assert isinstance(run, TransformRunConfig), (
+            "Run is not a TransformRunConfig, make sure to use the correct config"
+        )
         result = eval(
             tasks=transform_solutions(run),
             epochs=Epochs(1, ["pass_at_1"]),

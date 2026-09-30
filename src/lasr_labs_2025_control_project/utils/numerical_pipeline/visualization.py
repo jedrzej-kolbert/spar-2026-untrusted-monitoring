@@ -1057,8 +1057,7 @@ SATURATION_LEGEND_LABEL = (
     "(safety pinned at boundary; CI width not meaningful)"
 )
 CRITICAL_LEGEND_LABEL = (
-    "Critical: <1 attack-pass event at equilibrium\n"
-    "(sub-sample support; CI unreliable)"
+    "Critical: <1 attack-pass event at equilibrium\n(sub-sample support; CI unreliable)"
 )
 
 

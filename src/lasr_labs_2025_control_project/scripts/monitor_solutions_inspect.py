@@ -464,9 +464,9 @@ def main(config: str):
     )
 
     for run in normalized.runs:
-        assert isinstance(
-            run, MonitorRunConfig
-        ), "Run is not a MonitorRunConfig, make sure to use the correct config"
+        assert isinstance(run, MonitorRunConfig), (
+            "Run is not a MonitorRunConfig, make sure to use the correct config"
+        )
         result = eval(
             tasks=monitor_solutions(run),
             max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.

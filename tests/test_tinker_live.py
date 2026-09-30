@@ -8,7 +8,12 @@ deselect with ``pytest -m 'not slow'``.
 from __future__ import annotations
 
 import pytest
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, GenerateConfig, get_model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateConfig,
+    get_model,
+)
 
 from lasr_labs_2025_control_project.utils import tinker_provider as tp
 
@@ -18,6 +23,7 @@ _ANSWER_SYSTEM = (
     "You will be given a question. Answer only in an <answer> tag, "
     "like <answer>YES</answer> or <answer>NO</answer>."
 )
+
 
 def test_capabilities_nonempty(tinker_base_model):
     import tinker

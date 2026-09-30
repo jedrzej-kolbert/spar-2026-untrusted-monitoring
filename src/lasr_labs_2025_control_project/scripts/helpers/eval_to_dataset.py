@@ -43,9 +43,9 @@ def eval_to_dataset(
             continue
 
         base_solution = metadata.get("base_solution", None)
-        assert (
-            base_solution is not None
-        ), "No base_solution found in the sample store or metadata"
+        assert base_solution is not None, (
+            "No base_solution found in the sample store or metadata"
+        )
 
         solution = metadata.get("transformed_solution", base_solution)
 
