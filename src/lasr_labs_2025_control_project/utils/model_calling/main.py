@@ -91,9 +91,9 @@ def _make_api_call_impl(
     anthropic_client: Optional[Anthropic] = None,
     google_client: Optional[genai.Client] = None,
 ) -> str:
-    assert re.match(
-        r"^[^/]+/[^/]+$", model_name
-    ), "model_name must be of the form 'model_provider/model'"
+    assert re.match(r"^[^/]+/[^/]+$", model_name), (
+        "model_name must be of the form 'model_provider/model'"
+    )
 
     model_provider, model_name = model_name.split("/")
 
@@ -246,9 +246,9 @@ def build_api_caller(
     except Exception:
         pass
 
-    assert re.match(
-        r"^[^/]+/[^/]+$", model_name
-    ), "model_name must be of the form 'model_provider/model'"
+    assert re.match(r"^[^/]+/[^/]+$", model_name), (
+        "model_name must be of the form 'model_provider/model'"
+    )
     provider, _ = model_name.split("/")
 
     openai_client: Optional[OpenAI] = None

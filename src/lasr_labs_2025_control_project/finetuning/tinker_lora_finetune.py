@@ -179,10 +179,15 @@ def finetune(
         raise ValueError("solution_field must be base_solution or transformed_solution")
     if attacks_eval is not None:
         from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
-            check_eval_manifest, load_eval_examples, record_checkpoint,
+            check_eval_manifest,
+            load_eval_examples,
+            record_checkpoint,
         )
+
         eval_examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
-        check_eval_manifest(dynamics_results / "dynamics.csv", eval_examples, solution_field)
+        check_eval_manifest(
+            dynamics_results / "dynamics.csv", eval_examples, solution_field
+        )
 
     examples = load_examples(train_jsonl)
     if max_examples is not None:
@@ -244,16 +249,34 @@ def finetune(
                 last_checkpoint = saved.path
                 logger.info("Saved update %d checkpoint: %s", step, saved.path)
                 if attacks_eval is not None:
-                    record_checkpoint(saved.path, step, loss, eval_examples, dynamics_results,
-                                      solution_field=solution_field)
+                    record_checkpoint(
+                        saved.path,
+                        step,
+                        loss,
+                        eval_examples,
+                        dynamics_results,
+                        solution_field=solution_field,
+                    )
 
     final_path = last_checkpoint
-    if final_path is None or not checkpoint_every_steps or step % checkpoint_every_steps:
-        final_path = training_client.save_weights_for_sampler(name=checkpoint_name).result().path
+    if (
+        final_path is None
+        or not checkpoint_every_steps
+        or step % checkpoint_every_steps
+    ):
+        final_path = (
+            training_client.save_weights_for_sampler(name=checkpoint_name).result().path
+        )
         logger.info("Saved sampler weights: %s", final_path)
         if attacks_eval is not None:
-            record_checkpoint(final_path, step, loss, eval_examples, dynamics_results,
-                              solution_field=solution_field)
+            record_checkpoint(
+                final_path,
+                step,
+                loss,
+                eval_examples,
+                dynamics_results,
+                solution_field=solution_field,
+            )
     if val_examples:
         evaluate_checkpoint(final_path, val_examples)
     return final_path
@@ -346,14 +369,25 @@ def evaluate_checkpoint(
     default=None,
     help="If given, write the tinker:// checkpoint path here for config generation.",
 )
-@click.option("--checkpoint-every-steps", type=int, default=0, show_default=True,
-              help="Save sampler weights every N updates (0 saves only the final checkpoint)")
+@click.option(
+    "--checkpoint-every-steps",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Save sampler weights every N updates (0 saves only the final checkpoint)",
+)
 @click.option("--attacks-eval", type=click.Path(exists=True, path_type=Path))
 @click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path))
-@click.option("--transformed", is_flag=True,
-              help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.")
-@click.option("--dynamics-results", type=click.Path(file_okay=False, path_type=Path),
-              help="Output folder for dynamics CSV, SVG, and provenance manifest")
+@click.option(
+    "--transformed",
+    is_flag=True,
+    help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.",
+)
+@click.option(
+    "--dynamics-results",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Output folder for dynamics CSV, SVG, and provenance manifest",
+)
 def main(
     train_jsonl: Path,
     base_model: str,

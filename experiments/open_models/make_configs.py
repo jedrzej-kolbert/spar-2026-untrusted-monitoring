@@ -1135,8 +1135,7 @@ def load_checkpoints(path: Path | None) -> dict[str, str]:
     unknown = sorted(set(data) - set(SFT_ARMS))
     if unknown:
         raise SystemExit(
-            f"unknown SFT arm(s) in {path}: {unknown}\n"
-            f"valid arms: {sorted(SFT_ARMS)}"
+            f"unknown SFT arm(s) in {path}: {unknown}\nvalid arms: {sorted(SFT_ARMS)}"
         )
     bad = sorted(k for k, v in data.items() if not isinstance(v, str))
     if bad:
