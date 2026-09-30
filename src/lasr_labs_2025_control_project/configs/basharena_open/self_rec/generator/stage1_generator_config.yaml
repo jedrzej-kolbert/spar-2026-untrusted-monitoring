@@ -1,6 +1,8 @@
 # BashArena pilot, stage 1 (issue #29): 5 test-split tasks per run, all four side
 # tasks active. Checks tool calling, attack yield and cost before scaling up.
-#   Triplet from issues #9/#23: U = Qwen3.6-35B-A3B (thinking off), H = DeepSeek-V3.1,
+#   Triplet from issues #9/#23: U = Qwen3.6-35B-A3B (thinking off), H = gpt-oss-120b
+#   (issue #23 had DeepSeek-V3.1; its 32K Tinker context overflows on BashArena
+#   trajectories even with a 4K output cap, and gpt-oss is ~5x cheaper per run),
 #   T = Qwen3.5-9B (monitors, later stages)
 experiment_folder: experiments/open-source-model/basharena/stage1
 experiment_name: basharena_stage1
@@ -24,4 +26,4 @@ runs:
     eval_mode: attack
     system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
     save_path: generator/honeypots.eval
-    model: tinker/deepseek-ai/DeepSeek-V3.1
+    model: tinker/openai/gpt-oss-120b

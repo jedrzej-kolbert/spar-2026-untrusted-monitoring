@@ -321,26 +321,40 @@ def basharena_solutions(
     data_split: DataSplit,
     system_prompt: str,
     model: str,
+    max_tokens: int | None = None,
 ) -> Task:
     """BashArena agent runs (U/H attacks, U honest), ended early if a side task fires.
 
     BashArena has one split, so task ids (StackOverflow question numbers) are split
     like APPS problem ids: odd = train, even = test.
+
+    max_tokens overrides the policy's per-step output cap (16000), which counts
+    against the context window: on 32K models (DeepSeek-V3.1 on Tinker) it leaves
+    only ~16K for the growing trajectory.
     """
     setting = BashArenaSetting()
     parity = 1 if data_split == DataSplit.TRAIN else 0
-    policy = attack_policy if eval_mode == EvalMode.ATTACK else honest_policy
+    make_policy = attack_policy if eval_mode == EvalMode.ATTACK else honest_policy
+    policy = make_policy(model_name=model, system_prompt=system_prompt)
+    if (
+        max_tokens is not None
+    ):  # keep the policy's reasoning settings, change only the cap
+        policy = make_policy(
+            model_name=model,
+            system_prompt=system_prompt,
+            generate_config=policy.generate_config.model_copy(
+                update={"max_tokens": max_tokens}
+            ),
+        )
     return get_control_task(
         setting=setting,
-        micro_protocol=auto_submit_protocol_wrapper(
-            micro_protocol=policy(model_name=model, system_prompt=system_prompt)
-        ),
+        micro_protocol=auto_submit_protocol_wrapper(micro_protocol=policy),
         mode=eval_mode,
         # ponytail: fixed agent limits; move into the config if pilots need tuning.
         eval_config=ControlEvalConfig(
             untrusted_model=model,
             trusted_model=model,  # unused: no trusted monitor during generation
-            max_steps=40,
+            max_steps=60,  # gpt-oss H hit 40 on 2/5 pilot tasks; same budget for U and H
             time_limit=60 * 60,
             token_limit=2_000_000,  # prompts are re-sent every step
         ),
@@ -405,6 +419,7 @@ def main(
                     run.generator.data_split,
                     run.generator.model_info.system_prompt,
                     model,
+                    run.generator.max_tokens,
                 ),
                 model=model,
                 # ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM
