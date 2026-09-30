@@ -13,7 +13,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # pyright is skipped: it fails repo-wide on pre-existing missing annotations.
+      - name: pre-commit
+        run: uvx pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: pyright
+
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -23,19 +42,8 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
-
-      # pyright is skipped: it fails repo-wide on pre-existing missing annotations.
-      - name: Lint
-        run: uvx pre-commit run --all-files --show-diff-on-failure
-        env:
-          SKIP: pyright
-
       - name: Install
         run: uv sync --frozen
 
-      - name: Test
+      - name: pytest
         run: uv run --frozen pytest
