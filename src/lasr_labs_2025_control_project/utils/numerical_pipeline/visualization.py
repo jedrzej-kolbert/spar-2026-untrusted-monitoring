@@ -928,17 +928,19 @@ def plot_roc_curves(
     axins.set_ylabel(ax.get_ylabel())
 
     # Move legend to underneath both panels
+    # No handles when every run was skipped (e.g. no UM suspiciousness scores)
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.05),
-        title=None,
-        frameon=False,
-        ncol=min(len(handles), 3),  # Arrange in columns to save vertical space
-    )
-    ax.legend().remove()  # Remove the original legend
+    if handles:
+        fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.05),
+            title=None,
+            frameon=False,
+            ncol=min(len(handles), 3),  # Arrange in columns to save vertical space
+        )
+        ax.legend().remove()  # Remove the original legend
 
     fig.tight_layout(rect=(0, 0.08, 1, 1))  # Make room for legend at the bottom
     fig.savefig(save_path, dpi=300, bbox_inches="tight")
