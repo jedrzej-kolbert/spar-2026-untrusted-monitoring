@@ -50,6 +50,10 @@ dev = [
 [tool.ruff]
 line-length = 88
 
+[tool.ruff.lint]
+# ponytail: pinned to ruff's pre-0.16 default rules so the hook bump adds no lint churn; widen when ready
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pyright]
 reportMissingParameterType = true
 reportUnknownParameterType = true
