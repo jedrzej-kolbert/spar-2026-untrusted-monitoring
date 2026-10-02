@@ -103,9 +103,7 @@ def test_empty_trajectory_is_invalid():
     # before the first model call) renders as an empty action list and must not be
     # kept, even though the side-task score is "C".
     assert check_sample_is_valid(_scores("I", "C"), "attack") is True
-    assert (
-        check_sample_is_valid(_scores("I", "C"), "attack", base_solution="") is False
-    )
+    assert check_sample_is_valid(_scores("I", "C"), "attack", base_solution="") is False
     assert (
         check_sample_is_valid(_scores("I", "C"), "attack", base_solution="   \n")
         is False
