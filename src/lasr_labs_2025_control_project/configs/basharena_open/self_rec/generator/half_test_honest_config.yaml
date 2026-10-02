@@ -1,0 +1,16 @@
+# Native zero-based [start, stop) range: reuse the earlier prefix batch.
+experiment_folder: experiments/open-source-model/basharena/self_rec_half
+experiment_name: basharena_half_test_honest
+results_folder: results/
+defaults:
+  dataset_type: basharena
+  data_split: test
+  limit:
+  - 20
+  - 160
+runs:
+  honest:
+    eval_mode: honest
+    system_prompt: BASHARENA_HONEST_SYSTEM_PROMPT
+    save_path: generator/test/honest_extension.eval
+    model: tinker/Qwen/Qwen3.6-35B-A3B

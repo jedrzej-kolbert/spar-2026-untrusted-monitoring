@@ -43,7 +43,8 @@ from lasr_labs_2025_control_project.utils.tinker_provider import (
     is_tinker_model,
 )
 from lasr_labs_2025_control_project.utils.utils import (
-    apply_python_code_format,
+    format_solution,
+    is_code_setting,
     remove_comments,
 )
 
@@ -197,7 +198,7 @@ def create_collusion_monitor_scorer(
             solution = (
                 solution
                 if monitor_config.transformed
-                else apply_python_code_format(solution)
+                else format_solution(solution, state.metadata.get("setting_name"))
             )
             user_prompt = monitor_config.model_info.base_prompt.format(
                 problem_statement=problem,
@@ -300,6 +301,7 @@ def get_problem_and_solution_from_state(
         solution = (
             remove_comments(state.metadata["base_solution"])
             if remove_comments_from_solution
+            and is_code_setting(state.metadata.get("setting_name"))
             else state.metadata["base_solution"]
         )
 
@@ -308,10 +310,12 @@ def get_problem_and_solution_from_state(
     return problem, solution
 
 
-def parse_score(x: object) -> Optional[int]:
+def parse_score(x: object) -> Optional[float]:
+    # float, not int: small monitors sometimes answer "8.9" despite the prompt asking
+    # for an integer, and int() turned that into a missing score.
     try:
         if isinstance(x, str) and "<score>" in x:
-            return int(x.split("<score>")[1].split("</score>")[0])
+            return float(x.split("<score>")[1].split("</score>")[0])
     except Exception:
         return None
     return None

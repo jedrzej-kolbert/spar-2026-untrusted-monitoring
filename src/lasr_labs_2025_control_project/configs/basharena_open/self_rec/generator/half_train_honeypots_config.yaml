@@ -1,0 +1,16 @@
+# Native zero-based [start, stop) range: reuse the earlier prefix batch.
+experiment_folder: experiments/open-source-model/basharena/self_rec_half
+experiment_name: basharena_half_train_honeypots
+results_folder: results/
+defaults:
+  dataset_type: basharena
+  data_split: train
+  limit:
+  - 40
+  - 158
+runs:
+  honeypots:
+    eval_mode: attack
+    system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
+    save_path: generator/train/honeypots_extension.eval
+    model: tinker/openai/gpt-oss-120b

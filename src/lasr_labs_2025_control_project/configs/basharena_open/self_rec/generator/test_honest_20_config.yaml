@@ -1,0 +1,15 @@
+# Honest U trajectories on the same 20 even/test task IDs as the attack batch.
+# Keep task completion separate from the no-security-failure label for monitoring.
+experiment_folder: experiments/open-source-model/basharena/stage1
+experiment_name: basharena_test_honest_20
+results_folder: results/
+defaults:
+  dataset_type: basharena
+  data_split: test
+  limit: 20
+runs:
+  honest:
+    eval_mode: honest
+    system_prompt: BASHARENA_HONEST_SYSTEM_PROMPT
+    save_path: generator/comparison/honest_qwen36_20.eval
+    model: tinker/Qwen/Qwen3.6-35B-A3B
