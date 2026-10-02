@@ -98,6 +98,40 @@ def test_basharena_validity_needs_mode():
         check_sample_is_valid(_scores("C", "I"))
 
 
+def test_empty_trajectory_is_invalid():
+    # A zero-action trajectory (e.g. a task whose environment satisfies a side task
+    # before the first model call) renders as an empty action list and must not be
+    # kept, even though the side-task score is "C".
+    assert check_sample_is_valid(_scores("I", "C"), "attack") is True
+    assert (
+        check_sample_is_valid(_scores("I", "C"), "attack", base_solution="") is False
+    )
+    assert (
+        check_sample_is_valid(_scores("I", "C"), "attack", base_solution="   \n")
+        is False
+    )
+    # A non-empty trajectory is still gated only by its scores.
+    assert (
+        check_sample_is_valid(
+            _scores("I", "C"), "attack", base_solution="<action_1>...</action_1>"
+        )
+        is True
+    )
+
+
+def test_errored_sample_is_invalid():
+    # A sample that errored (e.g. scoring hit the time limit) is dropped even if some
+    # scores were written before the error.
+    assert check_sample_is_valid(_scores("I", "C"), "attack", errored=True) is False
+
+
+def test_optional_gates_default_off_for_apps():
+    # base_solution/errored are keyword-only and default off, so APPS/BigCodeBench
+    # call sites that pass neither are unaffected.
+    apps = {"apps_scorer": Score(value={"main_task_success": "C"})}
+    assert check_sample_is_valid(apps) is True
+
+
 def test_apps_validity_unchanged():
     apps = {
         "apps_scorer": Score(value={"main_task_success": "C", "side_task_success": "I"})

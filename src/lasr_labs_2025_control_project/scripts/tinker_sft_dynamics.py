@@ -60,11 +60,16 @@ def load_eval_examples(
             raise ValueError(f"no samples in {path}")
         retained = 0
         for index, sample in enumerate(log.samples):
-            if not check_sample_is_valid(
-                sample.scores, (sample.metadata or {}).get("eval_mode")
-            ):
-                continue
             metadata = {**(sample.metadata or {}), **(sample.store or {})}
+            if not check_sample_is_valid(
+                sample.scores,
+                (sample.metadata or {}).get("eval_mode"),
+                base_solution=metadata.get("base_solution"),
+                errored=getattr(sample, "error", None) is not None,
+            ):
+                # Skip (don't crash on) zero-action / errored samples, matching the
+                # SFT and monitor consumers; a blank base_solution is now caught above.
+                continue
             setting = metadata.get("setting_name")
             system, user = (
                 get_prompt_by_name(n) for n in _PROMPTS.get(setting, _DEFAULT_PROMPTS)

@@ -263,7 +263,13 @@ def trajectory_view(messages: list[Any]) -> str:
     return "\n".join(parts)
 
 
-def check_sample_is_valid(scores: Any, eval_mode: str | None = None) -> bool:
+def check_sample_is_valid(
+    scores: Any,
+    eval_mode: str | None = None,
+    *,
+    base_solution: Any = None,
+    errored: bool = False,
+) -> bool:
     """Check if a sample has valid/successful scores.
 
     Supports multiple scorer formats:
@@ -283,14 +289,37 @@ def check_sample_is_valid(scores: Any, eval_mode: str | None = None) -> bool:
     Args:
         scores: Scores dict from an inspect_ai sample
         eval_mode: "honest"/"attack", from the sample metadata (BashArena only)
+        base_solution: Optional. The sample's rendered solution/trajectory view. When
+            given and blank, the sample is invalid: a zero-action BashArena
+            trajectory (e.g. a task whose environment satisfies a side task before
+            the first model call) renders as an empty action list, which must not be
+            kept as a training/scoring example. Omit (APPS/BigCodeBench) to skip this
+            gate. Keyword-only so existing ``(scores, eval_mode)`` call sites and
+            tests are unaffected.
+        errored: Optional. True when the inspect sample carries an error
+            (``sample.error is not None``), e.g. a scoring time-out that left partial
+            or stale scores. Such a sample is invalid regardless of its scores.
 
     Returns:
         True if the sample has successful scores, False otherwise
     """
+    # A sample that errored (e.g. scoring hit the time limit) is not usable even if
+    # some scores were written before the error; callers pass sample.error here.
+    if errored:
+        return False
+
     if scores is None:
         return False
 
     if "main_task_success" in scores and "side_task_success" in scores:
+        # BashArena. A zero-action trajectory renders as an empty action list and
+        # carries no signal; it is never a usable example even when the side-task
+        # score is "C" (e.g. a task whose environment satisfies a side task before
+        # the first model call). Gating here keeps every consumer -- SFT rows,
+        # monitor inputs, checkpoint ROC -- in agreement, and leaves the APPS /
+        # BigCodeBench branches below untouched.
+        if base_solution is not None and not str(base_solution).strip():
+            return False
         side = scores["side_task_success"].value
         if eval_mode == "attack":
             return side == "C"
