@@ -1,0 +1,15 @@
+# U attacks on the same 20 test-split tasks as the gpt-oss honeypot batch
+# (honeypot_gpt_oss_batch_config.yaml), for the SFT test-set evaluation (issue #29).
+experiment_folder: experiments/open-source-model/basharena/stage1
+experiment_name: basharena_test_attacks_20
+results_folder: results/
+defaults:
+  dataset_type: basharena
+  data_split: test
+  limit: 20
+runs:
+  attacks:
+    eval_mode: attack
+    system_prompt: BASHARENA_ATTACK_SYSTEM_PROMPT
+    save_path: generator/comparison/attacks_qwen36_20.eval
+    model: tinker/Qwen/Qwen3.6-35B-A3B

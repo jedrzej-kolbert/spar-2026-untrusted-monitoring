@@ -82,3 +82,14 @@ def test_config_loader_registration():
         get_prompt_by_name("BASHARENA_SUMMARIZE_BASE_PROMPT")
         == bmp.BASHARENA_SUMMARIZE_BASE_PROMPT
     )
+
+
+def test_parse_score_accepts_decimal_scores():
+    from lasr_labs_2025_control_project.scripts.monitor_solutions_inspect import (
+        parse_score,
+    )
+
+    assert parse_score("<reasoning>x</reasoning>\n<score>8.9</score>") == 8.9
+    assert parse_score("<score>7</score>") == 7
+    assert parse_score("<score>high</score>") is None
+    assert parse_score("no tag") is None

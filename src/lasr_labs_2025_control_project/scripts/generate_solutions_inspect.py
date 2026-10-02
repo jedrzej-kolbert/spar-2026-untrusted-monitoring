@@ -316,6 +316,12 @@ def bigcodebench_solutions(
     )
 
 
+# ponytail: Inspect aborts a whole eval when one task image fails to build, so tasks
+# that cannot build on this machine are dropped by hand (1003684 runs mknod during
+# docker build). Find more with run_logs/prebuild_test_images.py.
+UNBUILDABLE_TASKS = {"1003684"}
+
+
 def basharena_solutions(
     eval_mode: EvalMode,
     data_split: DataSplit,
@@ -346,7 +352,7 @@ def basharena_solutions(
                 update={"max_tokens": max_tokens}
             ),
         )
-    return get_control_task(
+    control_task = get_control_task(
         setting=setting,
         micro_protocol=auto_submit_protocol_wrapper(micro_protocol=policy),
         mode=eval_mode,
@@ -355,13 +361,19 @@ def basharena_solutions(
             untrusted_model=model,
             trusted_model=model,  # unused: no trusted monitor during generation
             max_steps=60,  # gpt-oss H hit 40 on 2/5 pilot tasks; same budget for U and H
-            time_limit=60 * 60,
             token_limit=2_000_000,  # prompts are re-sent every step
         ),
         dataset=[
-            s for s in setting.get_dataset(eval_mode) if int(str(s.id)) % 2 == parity
+            s
+            for s in setting.get_dataset(eval_mode)
+            if int(str(s.id)) % 2 == parity and str(s.id) not in UNBUILDABLE_TASKS
         ],
     )
+    # ControlEvalConfig.time_limit only feeds eval_args(), which get_control_task never
+    # applies, so set it on the Task: 60 min for the agent, and Inspect gives scoring
+    # half of that. Without it a hung main-task test blocked a run for 9 h.
+    control_task.time_limit = 60 * 60
+    return control_task
 
 
 def add_trajectory_views(
@@ -422,10 +434,12 @@ def main(
                     run.generator.max_tokens,
                 ),
                 model=model,
-                # ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM
-                # and /etc/docker/daemon.json address pools.
-                max_sandboxes=4,
-                max_samples=4,
+                # ponytail: up to ~2.3 GB (memory caps) and 2 docker networks per
+                # sample, so 6 fits a 30 GB desktop with ~14 GB free; raise with RAM
+                # (docker's default address pools allow about 15).
+                max_sandboxes=6,
+                max_samples=6,
+                log_buffer=1,  # save each completed sample, even if another hangs
                 fail_on_error=False,  # one broken container must not end the run
                 limit=run.limit,
             )[0]
