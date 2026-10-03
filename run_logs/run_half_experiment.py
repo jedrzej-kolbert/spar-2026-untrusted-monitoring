@@ -37,7 +37,12 @@ from lasr_labs_2025_control_project.utils.config_loader import (
     get_prompt_by_name,
     load_and_normalize_config,
 )
-from lasr_labs_2025_control_project.utils.utils import check_sample_is_valid
+from lasr_labs_2025_control_project.utils.utils import (
+    ACTION_VIEW,
+    TRAJECTORY_VIEW,
+    ActionViewOptions,
+    check_sample_is_valid,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "experiments/open-source-model/basharena"
@@ -48,6 +53,16 @@ H = "openai/gpt-oss-120b"
 OLD = (
     (ROOT / "experiments/open_models/basharena_self_rec_smoke.txt").read_text().strip()
 )
+# Per-action mode (--action-views): SFT rows, checkpoint ROC and every monitor see the
+# same per-action input. MAX_HISTORY_CHARS must be identical everywhere (it changes
+# the text of an action's input); ACTIONS_PER_TRAJECTORY only chooses which actions
+# are trained on / scored at checkpoints (monitoring always scores every action).
+MAX_HISTORY_CHARS = 120_000
+SFT_ACTION_OPTIONS = ActionViewOptions(
+    max_history_chars=MAX_HISTORY_CHARS, actions_per_trajectory=4, seed=0
+)
+MONITOR_ACTION_OPTIONS = {"max_history_chars": MAX_HISTORY_CHARS}
+
 PREFIXES = {
     ("train", "attacks"): DATA / "self_rec_train/generator/train/attacks.eval",
     ("train", "honeypots"): DATA / "self_rec_train/generator/train/honeypots.eval",
@@ -99,8 +114,11 @@ def command(module, config):
     )
 
 
-def monitor_config(checkpoint, arm):
-    cfg = yaml.safe_load((CONFIGS / "monitors/base_monitor_config.yaml").read_text())
+def monitor_config(checkpoint, arm, action_views: bool = False):
+    name = "action_monitor_config.yaml" if action_views else "base_monitor_config.yaml"
+    cfg = yaml.safe_load((CONFIGS / "monitors" / name).read_text())
+    if action_views:
+        cfg["defaults"]["action_view"] = dict(MONITOR_ACTION_OPTIONS)
     cfg["experiment_folder"] = str(OUT)
     cfg["experiment_name"] = f"basharena_half_{arm}"
     cfg["results_folder"] = f"results/{arm}/"
@@ -164,7 +182,7 @@ def check():
     )
 
 
-def main(generate_only=False, train_only=False):
+def main(generate_only=False, train_only=False, action_views: bool = False):
     # Generate only new task IDs, one batch at a time. train_only uses the finished
     # train and test U/H collections and does not wait for the honest batch.
     for (split, label), prefix in () if train_only else PREFIXES.items():
@@ -201,27 +219,47 @@ def main(generate_only=False, train_only=False):
     if generate_only:
         print("=== GENERATION DONE; SFT and evaluation not started", flush=True)
         return
-    raw = OUT / "raw/train"
+    # Separate folders per view so a per-action run never overwrites the
+    # trajectory-level one.
+    suffix = "_action" if action_views else ""
+    view = ACTION_VIEW if action_views else TRAJECTORY_VIEW
+    field = "action_view" if action_views else "base_solution"
+    options = SFT_ACTION_OPTIONS if action_views else None
+    raw = OUT / f"raw{suffix}/train"
     for label, model in (("attacks", U), ("honeypots", H)):
         process_eval_log(
-            OUT / f"generator/train/{label}.eval", model, raw / f"{label}.json"
+            OUT / f"generator/train/{label}.eval",
+            model,
+            raw / f"{label}.json",
+            view=view,
+            action_options=options,
         )
     dataset = load_data(raw)
-    system = get_prompt_by_name("BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT")
-    user = get_prompt_by_name("BASHARENA_MONITOR_USER_PROMPT")
+    system = get_prompt_by_name(
+        "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT"
+        if action_views
+        else "BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT"
+    )
+    user = get_prompt_by_name(
+        "BASHARENA_ACTION_USER_PROMPT"
+        if action_views
+        else "BASHARENA_MONITOR_USER_PROMPT"
+    )
     rows = prepare_rows(dataset, U, system, user)
     counts = Counter(r["model"] == U for r in rows)
     assert counts[True] and counts[False]
     upsample = max(1, round(counts[True] / counts[False]))
-    prepared = OUT / "prepared/train"
+    prepared = OUT / f"prepared{suffix}/train"
     prepared.parent.mkdir(parents=True, exist_ok=True)
     build_and_save_jsonl(
         dataset, U, system, user, 42, prepared, upsample_neg_factor=upsample
     )
+    # The SFT rows must be exactly the inputs the checkpoint ROC and monitor use.
     expected = load_eval_examples(
         OUT / "generator/train/attacks.eval",
         OUT / "generator/train/honeypots.eval",
-        "base_solution",
+        field,
+        options,
     )
     assert Counter(
         (int(r["model"] == U), r["messages"][0]["content"], r["messages"][1]["content"])
@@ -236,28 +274,29 @@ def main(generate_only=False, train_only=False):
         OUT / "generator/test/attacks.eval",
         OUT / "generator/test/honeypots.eval",
     )
-    examples = load_eval_examples(attacks, honeypots, "base_solution")
+    examples = load_eval_examples(attacks, honeypots, field, options)
     record_checkpoint(
         U,
         0,
         None,
         examples,
-        OUT / "results/base_collusion",
-        solution_field="base_solution",
+        OUT / f"results/base_collusion{suffix}",
+        solution_field=field,
     )
-    record_checkpoint(
-        OLD,
-        225,
-        None,
-        examples,
-        OUT / "results/old_smoke_collusion",
-        solution_field="base_solution",
-    )
-    final_path = OUT / "final_checkpoint.txt"
+    if not action_views:  # the old smoke checkpoint was trained on whole trajectories
+        record_checkpoint(
+            OLD,
+            225,
+            None,
+            examples,
+            OUT / "results/old_smoke_collusion",
+            solution_field=field,
+        )
+    final_path = OUT / f"final_checkpoint{suffix}.txt"
     if final_path.exists():
         checkpoint = final_path.read_text().strip()
     else:
-        if (OUT / "results/sft/dynamics.csv").exists():
+        if (OUT / f"results/sft{suffix}/dynamics.csv").exists():
             raise RuntimeError(
                 "Interrupted SFT: stopping rather than silently restarting training"
             )
@@ -272,14 +311,16 @@ def main(generate_only=False, train_only=False):
             checkpoint_every_steps=75,
             attacks_eval=attacks,
             honeypots_eval=honeypots,
-            dynamics_results=OUT / "results/sft",
-            checkpoint_name="basharena_self_rec_half",
+            solution_field=field,
+            dynamics_results=OUT / f"results/sft{suffix}",
+            checkpoint_name=f"basharena_self_rec_half{suffix}",
+            action_options=options,
         )
         final_path.write_text(checkpoint + "\n")
     if train_only:
         print("=== SFT DONE; monitors and plots not started", flush=True)
         return
-    cfg_path = monitor_config(checkpoint, "final")
+    cfg_path = monitor_config(checkpoint, f"final{suffix}", action_views)
     command("monitor_solutions_inspect", cfg_path)
     cfg = load_and_normalize_config(cfg_path, "monitor")
     for run in cfg.runs:
@@ -297,13 +338,19 @@ def main(generate_only=False, train_only=False):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--check"]:
+    args = sys.argv[1:]
+    per_action = "--action-views" in args
+    args = [a for a in args if a != "--action-views"]
+    if args == ["--check"]:
         check()
-    elif not sys.argv[1:]:
-        main()
-    elif sys.argv[1:] == ["--generate-only"]:
+    elif not args:
+        main(action_views=per_action)
+    elif args == ["--generate-only"]:
         main(generate_only=True)
-    elif sys.argv[1:] == ["--train-only"]:
-        main(train_only=True)
+    elif args == ["--train-only"]:
+        main(train_only=True, action_views=per_action)
     else:
-        raise SystemExit("Usage: run_half_experiment.py [--check | --generate-only]")
+        raise SystemExit(
+            "Usage: run_half_experiment.py [--check | --generate-only | --train-only]"
+            " [--action-views]"
+        )

@@ -207,3 +207,51 @@ To generate plots for the minifed and paraphrased arms, replace `base_monitor_co
 
 Plots for the no-signal-jamming arm appear in `experiments/open-source-model/apps/self_rec/results/none_sft`. Plots for the signal-jamming arms appear in `results/minified_sft` and `results/paraphrased_sft`.
 Upload those graphs to the team Google Drive and share any key notes/observations you make!
+
+## BashArena: per-action self-recognition (train on exactly what the monitor sees)
+
+On BashArena the monitors can rate each action as upstream BashArena does, instead of
+one whole finished trajectory. The view is the upstream monitor's user message for that
+action: every earlier step with its (truncated) tool output in `<actions>`, then the
+action being rated, without output, in `<action>`. Agent text and reasoning are never
+shown. A trajectory's monitor score is the maximum over its actions.
+
+With `--action-views`, the SFT rows, the checkpoint ROC and the collusion monitor all
+build this view from the same code (`utils.action_views`) with the same prompts
+(`BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT` + `BASHARENA_ACTION_USER_PROMPT`). A
+training row and a monitor call for the same action are byte-identical. Each action of a
+trajectory is labelled like its trajectory (YES for U, NO for H). The views are rendered
+from the messages already saved in the generator `.eval` logs, so nothing needs
+regenerating.
+
+Keep `max_history_chars` the same everywhere. It drops the oldest steps once the
+history exceeds that many characters (~4 characters per token), and so changes the text
+of an action's input. `actions_per_trajectory` only chooses which actions are trained on
+or scored at checkpoints. Monitoring always scores every action, because the
+trajectory score is a max.
+
+Prepare training data:
+```
+ACTION_MAX_HISTORY_CHARS=120000 ACTIONS_PER_TRAJECTORY=4 \
+bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw --action-views
+bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name> \
+  --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT
+```
+Fine-tune with the same options for the checkpoint ROC:
+```
+python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
+  --train-jsonl <eval_logs_dir>/prepared/train/train_messages.jsonl --base-model <id> \
+  --checkpoint-name <name> --attacks-eval <test attacks .eval> --honeypots-eval <test honeypots .eval> \
+  --dynamics-results <dir> --action-views --max-history-chars 120000 --actions-per-trajectory 4
+```
+Monitor with `configs/basharena_open/self_rec/monitors/action_monitor_config.yaml`
+(`defaults.view: action`, `defaults.action_view.max_history_chars: 120000`). Put your
+checkpoint in its collusion monitor, then run `monitor_solutions_inspect.py` and
+`plot_data.py` as above. `plot_data` reduces each trajectory to the max over its actions.
+It raises if any action of a trajectory is missing, so don't use `limit` with per-action
+monitoring.
+
+The half-experiment driver does all of this with
+`run_logs/run_half_experiment.py --action-views` and
+`run_logs/run_half_eval.py <arm> --action-views`. Their outputs go to separate
+`*_action` folders.
