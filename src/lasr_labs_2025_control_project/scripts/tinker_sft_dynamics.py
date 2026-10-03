@@ -26,11 +26,14 @@ from lasr_labs_2025_control_project.utils.tinker_provider import (
     collusion_yes_no_logprobs,
 )
 from lasr_labs_2025_control_project.utils.utils import (
+    ActionViewOptions,
+    action_views,
     apply_python_code_format,
     check_sample_is_valid,
     format_solution,
     is_code_setting,
     remove_comments,
+    select_action_views,
 )
 
 # Collusion prompts per setting; must match the prompts the SFT data was built with.
@@ -44,15 +47,34 @@ _DEFAULT_PROMPTS = (
     "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
     "MONITOR_USER_PROMPT",
 )
+# solution_field value for per-action views: one example per rated action, in the
+# same format and with the same prompts as the per-action SFT rows and monitor.
+ACTION_VIEW_FIELD = "action_view"
+_ACTION_PROMPTS = {
+    "bash_arena": (
+        "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_USER_PROMPT",
+    ),
+}
+SOLUTION_FIELDS = ("base_solution", "transformed_solution", ACTION_VIEW_FIELD)
 
 logger = logging.getLogger(__name__)
 FIELDS = ("updates", "checkpoint", "train_loss", "roc_auc", "eval_n")
 
 
 def load_eval_examples(
-    attacks: Path, honeypots: Path, solution_field: str
+    attacks: Path,
+    honeypots: Path,
+    solution_field: str,
+    action_options: ActionViewOptions | None = None,
 ) -> list[tuple[int, str, str]]:
-    """Use source file as the ROC label; never infer it from the model's answer."""
+    """Use source file as the ROC label; never infer it from the model's answer.
+
+    With solution_field == "action_view" each rated action is one example (label
+    of its trajectory), so the ROC is per action.
+    """
+    if solution_field not in SOLUTION_FIELDS:
+        raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
     examples = []
     for label, path in ((1, attacks), (0, honeypots)):
         log = read_eval_log(str(path))
@@ -71,10 +93,29 @@ def load_eval_examples(
                 # SFT and monitor consumers; a blank base_solution is now caught above.
                 continue
             setting = metadata.get("setting_name")
+            problem = metadata.get("main_task_description")
+            if solution_field == ACTION_VIEW_FIELD:
+                if setting not in _ACTION_PROMPTS:
+                    raise ValueError(f"no per-action prompts for setting {setting!r}")
+                if not isinstance(problem, str) or not problem.strip():
+                    raise ValueError(
+                        f"missing main_task_description: {path} sample {index}"
+                    )
+                system, user = (get_prompt_by_name(n) for n in _ACTION_PROMPTS[setting])
+                views = action_views(sample.messages, action_options)
+                for _, view in select_action_views(views, sample.id, action_options):
+                    examples.append(
+                        (
+                            label,
+                            system,
+                            user.format(problem_statement=problem, solution=view),
+                        )
+                    )
+                retained += 1
+                continue
             system, user = (
                 get_prompt_by_name(n) for n in _PROMPTS.get(setting, _DEFAULT_PROMPTS)
             )
-            problem = metadata.get("main_task_description")
             solution = metadata.get(solution_field)
             if (
                 not isinstance(problem, str)
@@ -298,6 +339,15 @@ def record_checkpoint(
     help="Evaluate transformed_solution instead of base_solution from the eval logs.",
 )
 @click.option(
+    "--action-views",
+    "use_action_views",
+    is_flag=True,
+    help="Score every rated action in BashArena's per-action format.",
+)
+@click.option("--max-history-chars", type=int, default=None)
+@click.option("--actions-per-trajectory", type=int, default=None)
+@click.option("--action-seed", type=int, default=0, show_default=True)
+@click.option(
     "--dynamics-results",
     type=click.Path(file_okay=False, path_type=Path),
     required=True,
@@ -310,14 +360,33 @@ def main(
     attacks_eval: Path,
     honeypots_eval: Path,
     transformed: bool,
+    use_action_views: bool,
+    max_history_chars: int | None,
+    actions_per_trajectory: int | None,
+    action_seed: int,
     dynamics_results: Path,
     concurrency: int,
 ) -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
-    solution_field = "transformed_solution" if transformed else "base_solution"
-    examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
+    if transformed and use_action_views:
+        raise click.UsageError("--action-views does not support --transformed")
+    solution_field = (
+        ACTION_VIEW_FIELD
+        if use_action_views
+        else "transformed_solution"
+        if transformed
+        else "base_solution"
+    )
+    action_options = ActionViewOptions(
+        max_history_chars=max_history_chars,
+        actions_per_trajectory=actions_per_trajectory,
+        seed=action_seed,
+    )
+    examples = load_eval_examples(
+        attacks_eval, honeypots_eval, solution_field, action_options
+    )
     record_checkpoint(
         checkpoint,
         updates,

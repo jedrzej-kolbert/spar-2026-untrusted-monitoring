@@ -24,7 +24,14 @@ from lasr_labs_2025_control_project.utils.config_loader import load_and_normaliz
 from lasr_labs_2025_control_project.utils.utils import check_sample_is_valid
 
 arm = sys.argv[1]
-checkpoint = (OUT / "final_checkpoint.txt").read_text().strip()
+# --action-views: per-action monitors with the per-action fine-tune (see
+# run_half_experiment.py --action-views); scores are maxed per trajectory in plots.
+per_action = "--action-views" in sys.argv[2:]
+checkpoint = (
+    (OUT / ("final_checkpoint_action.txt" if per_action else "final_checkpoint.txt"))
+    .read_text()
+    .strip()
+)
 honest = OUT / "generator/test/honest.eval"
 if (
     not honest.exists()
@@ -68,7 +75,7 @@ SCORES = [
 ]
 cfg_path = OUT / "configs" / f"{arm}_monitor_config.yaml"
 if not cfg_path.exists():  # a rerun reuses finished monitor logs and only replots
-    cfg_path = monitor_config(checkpoint, arm)
+    cfg_path = monitor_config(checkpoint, arm, per_action)
     cfg = yaml.safe_load(cfg_path.read_text())
     cfg["runs"]["honest"]["eval_path"] = f"generator/test/{honest.name}"
     cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
