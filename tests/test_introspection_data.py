@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from lasr_labs_2025_control_project.finetuning.introspection_data import (
+    harmony_final,
     extract_property,
     load_rows,
     score_accuracy,
@@ -107,3 +108,13 @@ def test_paired_bootstrap_delta_sign_and_ci():
     assert 0 < low <= delta <= high
     same, low, high = paired_bootstrap_delta(labels, base, base, n_boot=50)
     assert same == low == high == 0
+
+
+def test_harmony_final_keeps_only_the_answer():
+    raw = (
+        "<|channel|>analysis<|message|>We need next colors. Guess.<|end|>"
+        "<|start|>assistant<|channel|>final<|message|>maroon navy<|return|>"
+    )
+    assert harmony_final(raw) == "maroon navy"
+    # Cut off while still reasoning: no answer, so no label.
+    assert harmony_final("<|channel|>analysis<|message|>We") is None

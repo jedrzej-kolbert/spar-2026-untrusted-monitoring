@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -57,6 +58,20 @@ logger = logging.getLogger(__name__)
 # Object-level answers are a few words / a letter; hypotheticals a word or less.
 OBJECT_MAX_TOKENS = 64
 META_MAX_TOKENS = 16
+# gpt-oss (harmony format) reasons in an "analysis" channel before answering in
+# "final", even at low effort; this is the extra room it gets to finish reasoning.
+HARMONY_REASONING_TOKENS = 4096
+_HARMONY_FINAL = "<|channel|>final<|message|>"
+
+
+def harmony_final(raw: str) -> Optional[str]:
+    """Answer from a harmony completion decoded with its special tokens kept.
+
+    None if the model never reached the final channel (cut off while reasoning).
+    """
+    if _HARMONY_FINAL not in raw:
+        return None
+    return re.sub(r"<\|[^|]*\|>", "", raw.rsplit(_HARMONY_FINAL, 1)[1])
 
 
 def _index(i: int) -> Callable[[str], Optional[str]]:
@@ -130,21 +145,34 @@ def load_rows(
 
 async def sample_text(
     model_ref: str, messages: list[dict[str, str]], max_tokens: int
-) -> str:
-    """Greedy completion from a base model id or a ``tinker://`` checkpoint."""
+) -> Optional[str]:
+    """Greedy completion from a base model id or a ``tinker://`` checkpoint.
+
+    For gpt-oss only the final-channel answer is returned (None if it did not
+    finish reasoning within the extra token budget).
+    """
     from tinker import types
 
+    harmony = "gpt-oss" in model_ref
     prompt_ids = tp._apply_chat_template(
-        model_ref, messages, add_generation_prompt=True
+        model_ref,
+        messages,
+        add_generation_prompt=True,
+        reasoning_effort="low" if harmony else None,
     )
+    if harmony:
+        max_tokens += HARMONY_REASONING_TOKENS
     resp = await tp._sampling_client(model_ref).sample_async(
         prompt=types.ModelInput.from_ints(prompt_ids),
         num_samples=1,
         sampling_params=types.SamplingParams(max_tokens=max_tokens, temperature=0.0),
     )
-    return tp._tokenizer(model_ref).decode(
-        list(resp.sequences[0].tokens), skip_special_tokens=True
-    )
+    tokens = list(resp.sequences[0].tokens)
+    if harmony:
+        return harmony_final(
+            tp._tokenizer(model_ref).decode(tokens, skip_special_tokens=False)
+        )
+    return tp._tokenizer(model_ref).decode(tokens, skip_special_tokens=True)
 
 
 async def _gather_limited(coros: list[Any], concurrency: int) -> list[Any]:
@@ -168,7 +196,9 @@ async def object_properties(
         concurrency,
     )
     return [
-        extract_property(
+        None
+        if resp is None
+        else extract_property(
             row["behavioral_property"], resp, row.get("option_matching_ethical_stance")
         )
         for row, resp in zip(rows, responses)
@@ -195,7 +225,7 @@ def training_examples(
 def score_accuracy(
     rows: list[dict[str, Any]],
     object_labels: list[Optional[str]],
-    meta_answers: list[str],
+    meta_answers: list[Optional[str]],
 ) -> dict[str, Any]:
     """Per-task and overall self-prediction accuracy plus the mode baseline.
 
@@ -206,7 +236,7 @@ def score_accuracy(
     for row, obj, meta in zip(rows, object_labels, meta_answers):
         if obj is None:
             continue
-        by_task[row["task"]].append((obj, meta.strip()))
+        by_task[row["task"]].append((obj, (meta or "").strip()))
     per_task = {}
     hits = mode_hits = total = 0
     for task, pairs in sorted(by_task.items()):
@@ -292,7 +322,7 @@ def accuracy(
     model = tp.strip_prefix(model)
     rows = load_rows(data_dir, per_file, seed)
 
-    async def run() -> tuple[list[Optional[str]], list[str]]:
+    async def run() -> tuple[list[Optional[str]], list[Optional[str]]]:
         obj = await object_properties(model, rows, concurrency)
         meta = await _gather_limited(
             [
