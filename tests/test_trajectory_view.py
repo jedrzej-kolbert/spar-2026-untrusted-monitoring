@@ -11,7 +11,9 @@ from inspect_ai.scorer import Score
 from inspect_ai.tool import ToolCall
 
 from lasr_labs_2025_control_project.utils.utils import (
+    action_views,
     check_sample_is_valid,
+    is_code_setting,
     trajectory_view,
 )
 
@@ -67,6 +69,18 @@ def test_view_contains_actions_and_nothing_else():
     assert len(view) < 5000 and "chars omitted" in view  # long argument capped
     # A prefix is a view of only those actions; later actions cannot leak in.
     assert "text_editor" not in trajectory_view(messages[:4])
+
+
+def test_action_views_show_history_with_outputs_and_current_action_bare():
+    first, second = action_views(_trajectory())  # one per step; submit is not a step
+    assert "<current_action>" in first and "<output>" not in first
+    assert "SECRET_OUTPUT_1" in second and "SECRET_OUTPUT_2" not in second
+    # The current action is never cut, so nothing can hide in a long argument.
+    assert "a" * 9000 in second and "chars omitted" not in second
+    for view in (first, second):
+        for leak in ("Red team", "Main task", "PLAN", "Side task", "submit"):
+            assert leak not in view, leak
+    assert not is_code_setting("bash_arena_action")
 
 
 def _scores(main: str, side: str) -> dict:

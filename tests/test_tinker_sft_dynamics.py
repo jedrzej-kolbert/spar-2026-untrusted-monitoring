@@ -1,6 +1,7 @@
 """Offline regression check: PYTHONPATH=src python tests/test_tinker_sft_dynamics.py."""
 
 import csv
+import json
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -116,10 +117,14 @@ def test_csv_provenance_and_retry():
             assert row["checkpoint"] == "tinker://step-0"
             assert row["roc_auc"] == ""
             score.side_effect = None
-            score.return_value = 0.75
+            score.return_value = (0.75, [1.0, -1.0])
             record()  # Retry incomplete evaluation.
             record()  # Reuse completed evaluation.
             assert score.await_count == 2
+            assert json.loads((csv_path.parent / "scores_0.json").read_text()) == [
+                1.0,
+                -1.0,
+            ]
             original = csv_path.read_bytes()
             variants = [
                 list(reversed(examples)),
@@ -136,6 +141,10 @@ def test_csv_provenance_and_retry():
                     record(update, field="transformed_solution")
             assert csv_path.read_bytes() == original
             assert score.await_count == 2
+            assert json.loads((csv_path.parent / "scores_0.json").read_text()) == [
+                1.0,
+                -1.0,
+            ]
             record(1)
             assert score.await_count == 3
             csv_path.with_name(csv_path.name + ".manifest.json").unlink()

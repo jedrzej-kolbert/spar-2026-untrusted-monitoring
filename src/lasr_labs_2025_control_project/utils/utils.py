@@ -26,7 +26,7 @@ def apply_python_code_format(x: str) -> str:
 def is_code_setting(setting_name: str | None) -> bool:
     """BashArena solutions are action trajectories, not Python: no comment
     stripping (Python tokenizer) and no ```python fence."""
-    return setting_name != "bash_arena"
+    return not str(setting_name).startswith("bash_arena")
 
 
 def format_solution(x: str, setting_name: str | None) -> str:
@@ -238,6 +238,16 @@ def _cap(text: str) -> str:
     return f"{text[:half]}\n...[{len(text) - _MAX_ARG_CHARS} chars omitted]...\n{text[-half:]}"
 
 
+def _action(call: Any, tag: str, cap: Any = _cap, output: str | None = None) -> str:
+    body = "".join(
+        f"<{k}>{cap(v if isinstance(v, str) else json.dumps(v))}</{k}>\n"
+        for k, v in call.arguments.items()
+    )
+    if output is not None:
+        body += f"<output>{_cap(output)}</output>\n"
+    return f"<{tag}>\n<tool>{call.function}</tool>\n{body}</{tag}>"
+
+
 def trajectory_view(messages: list[Any]) -> str:
     """Render an agent trajectory as the actions it took, for monitors and SFT.
 
@@ -253,14 +263,35 @@ def trajectory_view(messages: list[Any]) -> str:
         for call in (m.tool_calls or [])
         if call.function != "submit"
     ]
-    parts = []
-    for i, call in enumerate(actions, 1):
-        args = "".join(
-            f"<{k}>{_cap(v if isinstance(v, str) else json.dumps(v))}</{k}>\n"
-            for k, v in call.arguments.items()
-        )
-        parts.append(f"<action_{i}>\n<tool>{call.function}</tool>\n{args}</action_{i}>")
-    return "\n".join(parts)
+    return "\n".join(_action(call, f"action_{i}") for i, call in enumerate(actions, 1))
+
+
+def action_views(messages: list[Any]) -> list[str]:
+    """One view per agent step, as an online monitor sees it before the step runs.
+
+    Earlier steps are shown with their tool outputs (arguments and outputs capped);
+    the current step's tool calls are shown in full, without output. Like
+    `trajectory_view`, drops prompts, assistant text and `submit` calls.
+    """
+    outputs = {
+        m.tool_call_id: m.text or (m.error.message if m.error else "")
+        for m in messages
+        if m.role == "tool"
+    }
+    views, history = [], []
+    for m in messages:
+        calls = [
+            c for c in (getattr(m, "tool_calls", None) or []) if c.function != "submit"
+        ]
+        if m.role != "assistant" or not calls:
+            continue
+        current = [_action(c, "current_action", cap=str) for c in calls]
+        views.append("\n".join(history + current))
+        history += [
+            _action(c, f"action_{len(history) + i}", output=outputs.get(c.id, ""))
+            for i, c in enumerate(calls, 1)
+        ]
+    return views
 
 
 def check_sample_is_valid(
