@@ -38,9 +38,8 @@ the control was scored once. Control minus self-trained: +0.053 [+0.028, +0.080]
   than a pure format effect; a control labelled by a third model would separate
   the two.
 
-![results](results.svg)
-
-Regenerate with `uv run python experiments/introspection_deepseek/plot_results.py`.
+Figure: `uv run python experiments/introspection_deepseek/plot_results.py` writes
+`runs/figures/results.{png,svg}` from the run outputs (figures are gitignored).
 
 ## Design
 
