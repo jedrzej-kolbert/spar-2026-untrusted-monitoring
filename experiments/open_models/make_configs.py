@@ -922,12 +922,18 @@ def experiment_folder(model_class: str, setting: str, experiment: str) -> str:
 
 
 def build_generator(
-    spec: Generator, models: ModelResolver, setting: str, max_tokens: int | None
+    spec: Generator,
+    models: ModelResolver,
+    setting: str,
+    max_tokens: int | None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     defaults: dict[str, Any] = {"data_split": spec.data_split}
     defaults.update(spec.extra_defaults)
     if max_tokens is not None:
         defaults["max_tokens"] = max_tokens
+    if limit is not None:
+        defaults["limit"] = limit
     runs = {
         run.label: {
             "eval_mode": run.eval_mode,
@@ -1073,14 +1079,18 @@ def target_dir(model_class: str, setting: str) -> Path:
 
 
 def generate_setting(
-    model_class: str, setting: str, models: ModelResolver, max_tokens: int | None
+    model_class: str,
+    setting: str,
+    models: ModelResolver,
+    max_tokens: int | None,
+    limit: int | None = None,
 ) -> tuple[list[Path], list[Path]]:
     """Write one (model_class, setting) tree. Returns (written, pruned) paths."""
     spec = SPEC[setting]
     root = target_dir(model_class, setting)
     documents: dict[str, dict[str, Any]] = {}
     for gen in spec.generators:
-        documents[gen.path] = build_generator(gen, models, setting, max_tokens)
+        documents[gen.path] = build_generator(gen, models, setting, max_tokens, limit)
     for tr in spec.transforms:
         documents[tr.path] = build_transform(tr, models, setting)
     for mon in spec.monitors:
@@ -1179,6 +1189,14 @@ def main() -> None:
         help="completion cap injected into OPEN generator configs "
         f"(default: {DEFAULT_MAX_TOKENS})",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="dry run: cap every generator run at the first N problems "
+        "(transforms and monitors follow the generated .eval files). "
+        "Re-run without it to restore full-size configs.",
+    )
     for role, desc in (("U", "untrusted"), ("T", "trusted"), ("H", "honeypot")):
         parser.add_argument(
             f"--{role}",
@@ -1219,6 +1237,7 @@ def main() -> None:
                 setting,
                 models,
                 args.max_tokens if model_class == "open" else None,
+                args.limit,
             )
             root = target_dir(model_class, setting).relative_to(REPO_ROOT)
             print(f"{model_class:>6}  {root}: {len(written)} files")
