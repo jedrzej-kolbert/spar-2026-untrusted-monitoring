@@ -30,7 +30,7 @@ SURFACE, INK, INK2, MUTED, GRID, AXIS = (
 BASE = "#898781"
 ARMS = {
     "self": ("Trained on its own answers", "#2a78d6"),
-    "cross": ("Trained on gpt-oss-120b's answers (control)", "#eb6834"),
+    "cross": ("Control: trained on gpt-oss-120b's answers", "#eb6834"),
 }
 
 
@@ -284,7 +284,7 @@ def main() -> None:
         width_ratios=[1, 1.05],
         hspace=0.75,
         wspace=0.62,
-        left=0.2,
+        left=0.235,
         right=0.97,
         top=0.92,
         bottom=0.06,
@@ -300,7 +300,7 @@ def main() -> None:
             for label, colour in keys
         ],
         loc="upper left",
-        bbox_to_anchor=(0.19, 0.995),
+        bbox_to_anchor=(0.225, 0.995),
         ncols=len(keys),
         frameon=False,
         fontsize=10,
