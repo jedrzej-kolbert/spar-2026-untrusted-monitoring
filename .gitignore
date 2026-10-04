@@ -33,6 +33,7 @@ notebooks/
 # experiments/open_models holds tracked code (the config-generator spec).
 /experiments/*
 !/experiments/open_models/
+!/experiments/introspection_deepseek/
 
 mlruns/
 cache/

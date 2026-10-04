@@ -1,0 +1,29 @@
+# Self-recognition eval set for the introspection experiment (see README.md).
+# attacks   = U's own APPS solutions (DeepSeek-V3.1)        -> label 1
+# honeypots = another model's solutions (gpt-oss-120b, as H) -> label 0
+# Same attack-policy prompt for both, so the only systematic difference is the
+# author. Test split: never seen by any training step here.
+
+experiment_folder: experiments/introspection_deepseek/runs/apps_test
+
+experiment_name: introspection_deepseek_self_rec
+
+results_folder: results/
+
+defaults:
+  data_split: test
+  max_tokens: 16384
+  limit: 300
+
+runs:
+  attacks:
+    eval_mode: attack
+    system_prompt: self_rec_subtle_attack_policy_prompt
+    save_path: generator/attacks.eval
+    model: tinker/deepseek-ai/DeepSeek-V3.1
+
+  honeypots:
+    eval_mode: attack
+    system_prompt: self_rec_subtle_attack_policy_prompt
+    save_path: generator/honeypots.eval
+    model: tinker/openai/gpt-oss-120b
