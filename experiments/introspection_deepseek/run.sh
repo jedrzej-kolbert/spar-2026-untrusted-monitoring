@@ -10,7 +10,8 @@
 # Optional cross-prediction control (train DeepSeek on gpt-oss-120b's behaviour):
 #   CROSS=1 bash experiments/introspection_deepseek/run.sh build   (then train, ...)
 #
-# Knobs (env vars): MODEL, CROSS_MODEL, PER_FILE, EPOCHS, LR, RANK, BATCH, EVERY.
+# Knobs (env vars): MODEL, CROSS_MODEL, PER_FILE, EPOCHS, LR, RANK, BATCH, EVERY,
+# ATTACKS, HONEYPOTS (existing .eval logs to evaluate on instead of generating).
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -30,8 +31,9 @@ EXP=experiments/introspection_deepseek
 RUNS=$EXP/runs
 REL=$RUNS/introspection_self_prediction/dataset_release
 GEN=$RUNS/apps_test/generator
-ATTACKS=$GEN/attacks.eval
-HONEYPOTS=$GEN/honeypots.eval
+# Point these at existing generator logs to skip `generate` (and Docker).
+ATTACKS="${ATTACKS:-$GEN/attacks.eval}"
+HONEYPOTS="${HONEYPOTS:-$GEN/honeypots.eval}"
 
 if [ "$CROSS" = 1 ]; then ARM=cross; LABEL_MODEL="$CROSS_MODEL"; else ARM=self; LABEL_MODEL="$MODEL"; fi
 ARM_DIR=$RUNS/$ARM
@@ -48,8 +50,8 @@ stage_fetch() {
 
 stage_generate() {
   echo "=== APPS self-recognition eval set: $MODEL attacks vs $CROSS_MODEL honeypots"
-  docker info >/dev/null 2>&1 || { echo "Docker is not running (APPS scorer)." >&2; exit 1; }
   [ -f "$ATTACKS" ] && [ -f "$HONEYPOTS" ] && { echo "exists, skipping"; return; }
+  docker info >/dev/null 2>&1 || { echo "Docker is not running (APPS scorer)." >&2; exit 1; }
   py lasr_labs_2025_control_project.scripts.generate_solutions_inspect \
     --config "$EXP/generator_config.yaml"
 }
