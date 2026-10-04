@@ -15,6 +15,26 @@ Save their model strings. Make sure you select models that are sampleable.
 
 Configure the Tinker API key in the .env file.
 
+Docker must be running: generated solutions are executed in a sandbox.
+
+## Choosing the dataset: APPS or BigCodeBench
+
+The commands in this guide are written for APPS. To run the same experiment on BigCodeBench, run exactly the same commands and swap these paths and names:
+
+| In the commands below | APPS (as written) | BigCodeBench |
+|---|---|---|
+| Config tree | `configs/apps_open/` | `configs/bigcodebench_open/` |
+| Training generator config | `self_rec/generator/train_generator_config.yaml` | `self_rec/generator/generator_config_train.yaml` |
+| Training data folder | `experiments/open-source-model/apps/self_rec_train/` | `experiments/open-source-model/bigcodebench/bcb_train/` |
+| Test data, monitor outputs and plots | `experiments/open-source-model/apps/self_rec/` | `experiments/open-source-model/bigcodebench/self_rec/` |
+| Checkpoint names (`--checkpoint-name` and `ckpts.json` keys) | `self_rec_base`, `self_rec_minified`, `self_rec_paraphrased` | `bcb_self_rec_base`, `bcb_self_rec_minified`, `bcb_self_rec_paraphrased` |
+
+Everything else is identical: the transform and monitor config file names, the data-preparation scripts, the fine-tuning command and the plot command. `make_configs.py` needs no extra flag, it writes both trees by default (`--settings bigcodebench` restricts it to BigCodeBench).
+
+BigCodeBench specifics:
+- The first generation run builds a sandbox image of about 8.5 GB, which takes several minutes. Generation starts 8 sandboxes at once; if the run fails with `no space left on device`, free up disk space, build the image once with `docker compose -f src/lasr_labs_2025_control_project/bigcodebench/compose.yaml -p bcb-prebuild build`, and re-run.
+- There is no `problem_ids_range`: all 1140 problems are used, odd-numbered ones for training and even-numbered ones for testing. Use `--limit` (below) to run fewer.
+
 ## Configs
 
 Before making your config files, open `experiments/open_models/make_configs.py` to line 142:
@@ -53,6 +73,16 @@ You don't have to change anything here for now: just know changing this setting 
 For training, the models will get all the odd problems in the range you specify, and for testing, the models will get all the even problems.
 
 **Note:** If trying to conserve tokens, I'd recommend lowering the upper limit of `problem_ids_range` to maybe 2000, but **only when you are generating training data** because usually fewer problems are enough to still achieve high self-rec accuracy.
+
+### Dry run
+
+To check the whole pipeline end to end before a full run, generate the configs with a cap on the number of problems per generation run (works for both datasets):
+```
+python experiments/open_models/make_configs.py --model-class open --limit 10
+```
+Then follow every step below unchanged. Transforms, data preparation and monitors simply process whatever was generated. Re-running `make_configs.py` without `--limit` restores the full-size configs.
+
+Only solutions that pass their tests (and, for attacks and honeypots, whose backdoor works) are kept by the later steps, so expect fewer usable samples than you generate. A 10-problem BigCodeBench dry run with U=DeepSeek-V3.1 and H=gpt-oss-120b kept 5 attacks and 3 honeypots for training, and 1 attack, 8 honest and 4 honeypots for testing: enough to exercise every step, far too few to interpret the plots.
 
 ## Training data generation
 
@@ -114,6 +144,8 @@ bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_t
 ```
 Repeat thrice for each arm.
 
+`<untrusted_generator_model_name>` is the raw Tinker model ID without the `tinker/` prefix (for example `deepseek-ai/DeepSeek-V3.1`). The first script logs the name it detected (`Auto-detected generator model ...`); the second one stops with the list of names present if yours does not match.
+
 Check out `src/lasr_labs_2025_control_project/finetuning/binary_tuning/README.md` for more info on how these two commands work.
 Check that `train_messages.jsonl` shows up under `<eval_logs_dir>/prepared/train` for each arm.
 
@@ -132,6 +164,8 @@ python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
 - No signal jamming: `checkpoint_name=self_rec_base`
 - Paraphrased: `checkpoint_name=self_rec_paraphrased`
 - Minified: `checkpoint_name=self_rec_minified`
+
+On BigCodeBench use `bcb_self_rec_base`, `bcb_self_rec_paraphrased` and `bcb_self_rec_minified` instead; the monitor configs look the checkpoints up under those names.
 
 Pass the raw Tinker model ID to `--base-model` (for example, `Qwen/Qwen3-8B`), without the `tinker/` provider prefix used in generated monitor configs. Check Tinker's supported model list if the ID is rejected.
 
