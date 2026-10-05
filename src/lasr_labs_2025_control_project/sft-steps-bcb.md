@@ -21,6 +21,7 @@ Select three Tinker models to use as:
 -  untrusted generator (this will double as untrusted monitor) U
 -  honeypot generator H
 -  trusted monitor T
+
 Save their model strings. Make sure you select models that are sampleable.
 
 Configure the Tinker API key in the .env file.
