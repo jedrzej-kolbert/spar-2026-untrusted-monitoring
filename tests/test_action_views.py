@@ -253,11 +253,19 @@ def test_sft_rows_monitor_inputs_and_checkpoint_examples_are_identical(
     assert len(rows) == 6  # 3 trajectories x 2 selected actions
 
     # Checkpoint ROC examples.
+    keys: list = []
     examples = dyn.load_eval_examples(
-        tmp_path / "attacks.eval", tmp_path / "honeypots.eval", "action_view", OPTIONS
+        tmp_path / "attacks.eval",
+        tmp_path / "honeypots.eval",
+        "action_view",
+        OPTIONS,
+        keys,
     )
     assert {(bool(label), s, u) for label, s, u in examples} == sft
     assert len(examples) == 6
+    # One (sample id, action index) per example: 3 trajectories, 2 actions each.
+    assert len(keys) == 6 and len({sample for sample, _ in keys}) == 3
+    assert all(isinstance(k, int) and k >= 1 for _, k in keys)
 
     # Collusion monitor: run the real Inspect task, recording each Tinker call.
     calls = []

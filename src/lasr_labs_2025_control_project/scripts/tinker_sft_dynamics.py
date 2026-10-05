@@ -67,11 +67,13 @@ def load_eval_examples(
     honeypots: Path,
     solution_field: str,
     action_options: ActionViewOptions | None = None,
+    keys: list[tuple[str, int | None]] | None = None,
 ) -> list[tuple[int, str, str]]:
     """Use source file as the ROC label; never infer it from the model's answer.
 
     With solution_field == "action_view" each rated action is one example (label
-    of its trajectory), so the ROC is per action.
+    of its trajectory), so the ROC is per action. `keys`, if given, receives one
+    (sample id, 1-based action index or None) per example, in the same order.
     """
     if solution_field not in SOLUTION_FIELDS:
         raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
@@ -103,7 +105,7 @@ def load_eval_examples(
                     )
                 system, user = (get_prompt_by_name(n) for n in _ACTION_PROMPTS[setting])
                 views = action_views(sample.messages, action_options)
-                for _, view in select_action_views(views, sample.id, action_options):
+                for k, view in select_action_views(views, sample.id, action_options):
                     examples.append(
                         (
                             label,
@@ -111,6 +113,8 @@ def load_eval_examples(
                             user.format(problem_statement=problem, solution=view),
                         )
                     )
+                    if keys is not None:
+                        keys.append((str(sample.id), k))
                 retained += 1
                 continue
             system, user = (
@@ -139,6 +143,8 @@ def load_eval_examples(
                     user.format(problem_statement=problem, solution=solution),
                 )
             )
+            if keys is not None:
+                keys.append((str(sample.id), None))
             retained += 1
         if not retained:
             raise ValueError(f"no valid samples in {path}")
@@ -179,24 +185,33 @@ def check_eval_manifest(
 
 async def _score(
     checkpoint: str, examples: list[tuple[int, str, str]], concurrency: int
-) -> float:
+) -> tuple[float, list[float]]:
     semaphore = asyncio.Semaphore(concurrency)
 
     async def margin(system: str, user: str) -> float:
-        async with semaphore:
-            result = await collusion_yes_no_logprobs(
-                model_name=f"tinker/{checkpoint}",
-                system_prompt=system,
-                user_prompt=user,
-            )
-        if result.get("YES") is None or result.get("NO") is None:
-            raise ValueError("Tinker returned no YES/NO logprobs")
-        return float(result["YES"]) - float(result["NO"])
+        # One transient failure must not abort a checkpoint (or the training run
+        # that called it), so ask up to three times before giving up.
+        for attempt in range(3):
+            try:
+                async with semaphore:
+                    result = await collusion_yes_no_logprobs(
+                        model_name=f"tinker/{checkpoint}",
+                        system_prompt=system,
+                        user_prompt=user,
+                    )
+                if result.get("YES") is None or result.get("NO") is None:
+                    raise ValueError("Tinker returned no YES/NO logprobs")
+                return float(result["YES"]) - float(result["NO"])
+            except Exception:
+                if attempt == 2:
+                    raise
+                logger.warning("collusion score attempt %d failed", attempt + 1)
+        raise AssertionError("unreachable")
 
     scores = await asyncio.gather(
         *(margin(system, user) for _, system, user in examples)
     )
-    return float(roc_auc_score([label for label, _, _ in examples], scores))
+    return float(roc_auc_score([label for label, _, _ in examples], scores)), scores
 
 
 def _write_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
@@ -309,7 +324,9 @@ def record_checkpoint(
             }
         )
         _write_rows(csv_path, rows)
-    auc = asyncio.run(_score(checkpoint, examples, concurrency))
+    auc, scores = asyncio.run(_score(checkpoint, examples, concurrency))
+    # Per-example YES-NO margins, in `examples` order, for analysis beyond the AUC.
+    (results_dir / f"scores_{updates}.json").write_text(json.dumps(scores))
     row = next(row for row in rows if int(row["updates"]) == updates)
     row["roc_auc"] = str(auc)
     row["eval_n"] = str(len(examples))

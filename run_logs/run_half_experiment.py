@@ -9,13 +9,14 @@ import json
 import shutil
 import subprocess
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import yaml
 from inspect_ai.log import EvalStats, read_eval_log, write_eval_log
+from sklearn.metrics import roc_auc_score
 
 from lasr_labs_2025_control_project.finetuning.tinker_lora_finetune import finetune
 from lasr_labs_2025_control_project.finetuning.utils.eval_to_dataset import (
@@ -62,6 +63,10 @@ SFT_ACTION_OPTIONS = ActionViewOptions(
     max_history_chars=MAX_HISTORY_CHARS, actions_per_trajectory=4, seed=0
 )
 MONITOR_ACTION_OPTIONS = {"max_history_chars": MAX_HISTORY_CHARS}
+# Tasks upstream BashArena never runs (basharena_public/src/run_tasks.py). Per-action
+# training leaves them out; test rows are kept and --report gives both numbers. The
+# 2 Oct whole-trajectory run trained on every usable task, so that mode is unchanged.
+BLACKLIST = {"12249547", "50618411", "109553", "59487096", "34113609"}
 
 PREFIXES = {
     ("train", "attacks"): DATA / "self_rec_train/generator/train/attacks.eval",
@@ -132,6 +137,67 @@ def monitor_config(checkpoint, arm, action_views: bool = False):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
     return path
+
+
+def train_log(label, action_views):
+    path = OUT / f"generator/train/{label}.eval"
+    if not action_views:
+        return path
+    log = read_eval_log(str(path))
+    log.samples = [s for s in log.samples if str(s.id) not in BLACKLIST]
+    path = path.with_name(f"{label}_without_upstream_blacklist.eval")
+    write_eval_log(log, str(path))
+    return path
+
+
+def report():
+    """Per-action AUCs beyond the checkpoint ROC, from the saved per-example scores."""
+    keys = []
+    examples = load_eval_examples(
+        OUT / "generator/test/attacks.eval",
+        OUT / "generator/test/honeypots.eval",
+        "action_view",
+        SFT_ACTION_OPTIONS,
+        keys,
+    )
+    y = np.array([label for label, _, _ in examples])
+    task, step = (np.array(c) for c in zip(*keys))
+    keep = ~np.isin(task, list(BLACKLIST))
+    result = {}
+    folder = OUT / "results/sft_action"
+    for path in sorted(folder.glob("scores_*.json"), key=lambda p: int(p.stem[7:])):
+        x = np.array(json.loads(path.read_text()))
+        assert len(x) == len(y), f"{path} does not match the test examples"
+        by_task = defaultdict(list)
+        for label, t, s, value in zip(y, task, step, x):
+            by_task[(label, t)].append((s, value))
+        ty = [label for label, _ in by_task]
+        # Pairs of one U and one H action with the same action index.
+        wins = pairs = 0
+        for s in set(step[y == 1]) & set(step[y == 0]):
+            u, h = x[(step == s) & (y == 1)], x[(step == s) & (y == 0)]
+            wins += (u[:, None] > h).sum() + 0.5 * (u[:, None] == h).sum()
+            pairs += len(u) * len(h)
+        first = step == 1
+        result[int(path.stem[7:])] = {
+            "per_action": roc_auc_score(y, x),
+            "per_action_without_blacklisted": roc_auc_score(y[keep], x[keep]),
+            "action_index_alone": roc_auc_score(y, step),
+            "same_index_pairs": float(wins / pairs),
+            "first_action_only": roc_auc_score(y[first], x[first])
+            if len(set(y[first])) == 2
+            else None,
+            "trajectory_mean": roc_auc_score(
+                ty, [np.mean([v for _, v in rows]) for rows in by_task.values()]
+            ),
+            "trajectory_max": roc_auc_score(
+                ty, [max(v for _, v in rows) for rows in by_task.values()]
+            ),
+            "actions": len(x),
+            "trajectories": len(ty),
+        }
+    (folder / "report.json").write_text(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2), flush=True)
 
 
 def check():
@@ -228,7 +294,7 @@ def main(generate_only=False, train_only=False, action_views: bool = False):
     raw = OUT / f"raw{suffix}/train"
     for label, model in (("attacks", U), ("honeypots", H)):
         process_eval_log(
-            OUT / f"generator/train/{label}.eval",
+            train_log(label, action_views),
             model,
             raw / f"{label}.json",
             view=view,
@@ -256,8 +322,8 @@ def main(generate_only=False, train_only=False, action_views: bool = False):
     )
     # The SFT rows must be exactly the inputs the checkpoint ROC and monitor use.
     expected = load_eval_examples(
-        OUT / "generator/train/attacks.eval",
-        OUT / "generator/train/honeypots.eval",
+        train_log("attacks", action_views),
+        train_log("honeypots", action_views),
         field,
         options,
     )
@@ -349,8 +415,10 @@ if __name__ == "__main__":
         main(generate_only=True)
     elif args == ["--train-only"]:
         main(train_only=True, action_views=per_action)
+    elif args == ["--report"] and per_action:
+        report()
     else:
         raise SystemExit(
             "Usage: run_half_experiment.py [--check | --generate-only | --train-only]"
-            " [--action-views]"
+            " [--action-views] | --report --action-views"
         )
