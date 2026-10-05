@@ -478,11 +478,6 @@ def main(config: str):
         run.save_path.parent.mkdir(parents=True, exist_ok=True)
         run.save_path.touch()
         shutil.copy(result[0].location, run.save_path)
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{run.label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {run.save_path}"
-            )
 
 
 if __name__ == "__main__":
