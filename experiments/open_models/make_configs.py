@@ -1179,9 +1179,35 @@ def main() -> None:
         help="completion cap injected into OPEN generator configs "
         f"(default: {DEFAULT_MAX_TOKENS})",
     )
+    for role, desc in (("U", "untrusted"), ("T", "trusted"), ("H", "honeypot")):
+        parser.add_argument(
+            f"--{role}",
+            dest=role,
+            default=None,
+            metavar="MODEL",
+            help=f"override the OPEN {desc} model ({role}); the tinker/ prefix is "
+            f"optional (default: {ROLE_MODELS['open'][role]})",
+        )
     args = parser.parse_args()
 
+    overrides = {r: getattr(args, r) for r in ("U", "T", "H") if getattr(args, r)}
+    if overrides:
+        if "closed" in args.model_class:
+            parser.error(
+                "--U/--T/--H only apply to open models; pass --model-class open"
+            )
+        for role, model in overrides.items():
+            ROLE_MODELS["open"][role] = (
+                model if model.startswith("tinker/") else f"tinker/{model}"
+            )
+
     checkpoints = load_checkpoints(args.checkpoints)
+
+    if "open" in args.model_class:
+        # The overrides are per-invocation, so a re-run without them silently
+        # reverts to ROLE_MODELS -- always show which models went into the tree.
+        roles = ", ".join(f"{r}={m}" for r, m in ROLE_MODELS["open"].items())
+        print(f"open roles: {roles}")
 
     pending: set[str] = set()
     for model_class in args.model_class:
