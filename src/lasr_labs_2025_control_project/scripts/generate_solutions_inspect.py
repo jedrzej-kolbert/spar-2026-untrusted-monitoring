@@ -322,8 +322,15 @@ def bigcodebench_solutions(
     type=str,
     required=True,
 )
+@click.option(
+    "--skip-existing",
+    is_flag=True,
+    help="Skip runs whose save_path already exists, so an interrupted config resumes "
+    "without regenerating finished runs.",
+)
 def main(
     config: str,
+    skip_existing: bool,
 ):
     from dotenv import load_dotenv
 
@@ -339,6 +346,9 @@ def main(
         assert isinstance(run, GeneratorRunConfig), (
             "Run is not a GeneratorRunConfig, make sure to use the correct config"
         )
+        if skip_existing and run.save_path.exists() and run.save_path.stat().st_size:
+            logger.info(f"Skipping run, {run.save_path} already exists")
+            continue
 
         # Select the appropriate task based on dataset_type
         if run.generator.dataset_type == DatasetType.APPS:

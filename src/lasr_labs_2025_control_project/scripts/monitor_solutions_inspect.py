@@ -452,7 +452,13 @@ def monitor_solutions(
 
 @click.command()
 @click.option("--config", type=str, required=True)
-def main(config: str):
+@click.option(
+    "--skip-existing",
+    is_flag=True,
+    help="Skip runs whose save_path already exists, so an interrupted config resumes "
+    "without redoing finished runs.",
+)
+def main(config: str, skip_existing: bool):
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -467,6 +473,9 @@ def main(config: str):
         assert isinstance(run, MonitorRunConfig), (
             "Run is not a MonitorRunConfig, make sure to use the correct config"
         )
+        if skip_existing and run.save_path.exists() and run.save_path.stat().st_size:
+            print(f"Skipping run, {run.save_path} already exists")
+            continue
         result = eval(
             tasks=monitor_solutions(run),
             max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.

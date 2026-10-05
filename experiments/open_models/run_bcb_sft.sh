@@ -23,8 +23,8 @@
 #
 # stage is one of: configs | train-gen | train-transform | prepare | finetune |
 # configure | test-gen | test-transform | monitor | plot | all (default).
-# Each stage skips work whose outputs already exist, so a crashed run resumes
-# by re-running the same command. Delete an output to redo it.
+# Each stage skips files that already exist (down to the single .eval), so an
+# interrupted run resumes by re-running the same command. Delete a file to redo it.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -99,7 +99,7 @@ stage_train_gen() {
     echo "  outputs exist, skipping"; return
   fi
   need_docker
-  uv run python "$SCRIPTS/generate_solutions_inspect.py" \
+  uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
     --config "$CFG/generator/generator_config_train.yaml"
 }
 
@@ -111,7 +111,7 @@ stage_train_transform() {
                  "$TRAIN_EXP/transforms/$kind/honeypots_transformed.eval"; then
       echo "  $kind exists, skipping"; continue
     fi
-    uv run python "$SCRIPTS/transform_solutions_inspect.py" \
+    uv run python "$SCRIPTS/transform_solutions_inspect.py" --skip-existing \
       --config "$CFG/transforms/${kind}_config_train.yaml"
   done
 }
@@ -187,7 +187,7 @@ stage_test_gen() {
     echo "  outputs exist, skipping"; return
   fi
   need_docker
-  uv run python "$SCRIPTS/generate_solutions_inspect.py" \
+  uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
     --config "$CFG/generator/generator_config.yaml"
 }
 
@@ -200,7 +200,7 @@ stage_test_transform() {
                  "$TEST_EXP/transforms/$kind/honeypots_transformed.eval"; then
       echo "  $kind exists, skipping"; continue
     fi
-    uv run python "$SCRIPTS/transform_solutions_inspect.py" \
+    uv run python "$SCRIPTS/transform_solutions_inspect.py" --skip-existing \
       --config "$CFG/transforms/${kind}_config.yaml"
   done
 }
@@ -214,7 +214,7 @@ stage_monitor() {
                  "$out/honeypots_monitor_results.eval"; then
       echo "  $arm exists, skipping"; continue
     fi
-    uv run python "$SCRIPTS/monitor_solutions_inspect.py" --config "$(monitor_cfg "$arm")"
+    uv run python "$SCRIPTS/monitor_solutions_inspect.py" --skip-existing --config "$(monitor_cfg "$arm")"
   done
 }
 
