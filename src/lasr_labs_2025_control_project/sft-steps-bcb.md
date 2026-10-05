@@ -8,7 +8,8 @@ bash experiments/open_models/run_bcb_sft.sh --U deepseek-ai/DeepSeek-V3.1 --T Qw
 ```
 It runs every step below in order, and you can run a single step by naming it (for example `... finetune`). See `--help` for the step names.
 
-Generation and monitoring run 8 samples in parallel by default, and each one holds a Docker sandbox. On a machine with more memory, add `--max-connections 32` (or 48) to the script, or to `generate_solutions_inspect.py` / `monitor_solutions_inspect.py` when running steps by hand. That roughly quarters generation time. Each sandbox may use up to 0.5 GB. An overloaded machine turns correct code into test timeouts without any error, so check that `main_task_success` looks similar to an 8-connection run.
+> [!TIP]
+Generation and monitoring run 8 samples in parallel by default, and each one holds a Docker sandbox. On a machine with more memory, to run X samples in parallel, add `--max-connections X` to the script, or to `generate_solutions_inspect.py` / `monitor_solutions_inspect.py` when running the pipeline step by step (32 and 48 are good Xs). Each sandbox may use up to 0.5 GB. An overloaded machine turns correct code into test timeouts without any error, so check that `main_task_success` looks similar to an 8-connection run.
 
 ## Setup
 
