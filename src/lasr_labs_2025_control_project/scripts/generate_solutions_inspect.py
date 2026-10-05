@@ -33,6 +33,9 @@ from inspect_ai.solver import (
 from inspect_ai.tool import ToolCall
 from inspect_ai.util import store
 
+from lasr_labs_2025_control_project.scripts.helpers.eval_status import (
+    finished_successfully,
+)
 from lasr_labs_2025_control_project.bigcodebench.bigcodebench import (
     bigcodebench,
 )
@@ -325,8 +328,8 @@ def bigcodebench_solutions(
 @click.option(
     "--skip-existing",
     is_flag=True,
-    help="Skip runs whose save_path already exists, so an interrupted config resumes "
-    "without regenerating finished runs.",
+    help="Skip runs whose save_path already holds a successful log, so an "
+    "interrupted config resumes without regenerating finished runs.",
 )
 def main(
     config: str,
@@ -346,8 +349,8 @@ def main(
         assert isinstance(run, GeneratorRunConfig), (
             "Run is not a GeneratorRunConfig, make sure to use the correct config"
         )
-        if skip_existing and run.save_path.exists() and run.save_path.stat().st_size:
-            logger.info(f"Skipping run, {run.save_path} already exists")
+        if skip_existing and finished_successfully(run.save_path):
+            logger.info(f"Skipping run, {run.save_path} already finished")
             continue
 
         # Select the appropriate task based on dataset_type

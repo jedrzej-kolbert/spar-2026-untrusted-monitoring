@@ -23,7 +23,12 @@ Save their model strings. Make sure you select models that are sampleable.
 
 Configure the Tinker API key in the .env file.
 
-**BCB: Docker must be running.** Every generated solution is run in a Docker sandbox to check whether it passes the tests and whether its backdoor works. The first generation run builds the sandbox image from `bigcodebench/Dockerfile`. This takes several minutes and needs `bigcodebench/docker-requirements.txt` (that file was added on the `bcb-fixes` branch; older checkouts of main lack it and the build fails).
+**BCB: Docker must be running.** Every generated solution is run in a Docker sandbox to check whether it passes the tests and whether its backdoor works. The first generation run builds the sandbox image from `bigcodebench/Dockerfile`. The image is about 8.5 GB and takes several minutes to build. It needs `bigcodebench/docker-requirements.txt` (that file was added on the `bcb-fixes` branch; older checkouts of main lack it and the build fails).
+
+Generation starts 8 sandboxes at once. If it fails with `no space left on device`, free up disk space, build the image once, and re-run:
+```
+docker compose -f src/lasr_labs_2025_control_project/bigcodebench/compose.yaml -p bcb-prebuild build
+```
 
 ## Configs
 
@@ -41,6 +46,12 @@ The configs are written to `src/lasr_labs_2025_control_project/configs/bigcodebe
 ## A note about the number of code samples
 
 **BCB:** There is no `problem_ids_range` to change. BCB has 1140 problems (v0.1.2). Training uses the 570 odd-indexed problems and testing uses the 570 even-indexed ones (see `bigcodebench/bigcodebench.py`).
+
+### Dry run
+
+To check the whole pipeline before a full run, add `--limit N` to the `make_configs.py` command. Every generator then stops after the first N problems; the later steps process whatever was generated. Re-running `make_configs.py` without `--limit` restores the full-size configs.
+
+**⚠️ Delete the dry run's outputs before the full run** (`experiments/open-source-model/bigcodebench/`). The generator, transform and monitor scripts accept `--skip-existing`, which `run_bcb_sft.sh` always passes. With it, they skip any run whose `.eval` already holds a successful log, including a 10-problem one.
 
 ## Training data generation
 
@@ -109,7 +120,7 @@ Then run:
 ```
 bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh $arm_root/raw <untrusted_generator_model_name> $arm_root/prepared
 ```
-Repeat for each arm. The model name is U's bare Tinker id, with no `tinker/` prefix (e.g. `deepseek-ai/DeepSeek-V3.1`). If the name matches none of the solutions, the script stops with an error that lists the models it found.
+Repeat for each arm. The model name is U's bare Tinker id, with no `tinker/` prefix (e.g. `deepseek-ai/DeepSeek-V3.1`). `transform_logs_to_raw.sh` logs the name it found (`Auto-detected generator model ...`). If the name you pass matches none of the solutions, `transform_raw_to_prepared.sh` stops with an error that lists the models it found.
 
 The script prints the number of positives (U's attacks) and negatives (H's honeypots). Only attacks and honeypots that pass the tests *and* have a working backdoor are kept, so expect far fewer examples than the 570 problems.
 

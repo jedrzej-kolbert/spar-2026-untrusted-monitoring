@@ -23,8 +23,10 @@
 #
 # stage is one of: configs | train-gen | train-transform | prepare | finetune |
 # configure | test-gen | test-transform | monitor | plot | all (default).
-# Each stage skips files that already exist (down to the single .eval), so an
-# interrupted run resumes by re-running the same command. Delete a file to redo it.
+# Each stage skips work already done: an .eval counts as done only if its log
+# reports success (a failed run's log is redone), and data prep / finetunes skip
+# when their output file exists. An interrupted run resumes by re-running the
+# same command. Delete a file to redo it.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -38,7 +40,7 @@ while [ $# -gt 0 ]; do
     --U) U="$2"; shift 2 ;;
     --T) T="$2"; shift 2 ;;
     --H) H="$2"; shift 2 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) STAGE="$1"; shift ;;
   esac
 done
@@ -95,9 +97,6 @@ stage_configs() {
 
 stage_train_gen() {
   echo "=== [train-gen] U attacks + H honeypots on the odd (train) split"
-  if all_exist "$TRAIN_EXP/generator/attacks.eval" "$TRAIN_EXP/generator/honeypots.eval"; then
-    echo "  outputs exist, skipping"; return
-  fi
   need_docker
   uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
     --config "$CFG/generator/generator_config_train.yaml"
@@ -107,10 +106,6 @@ stage_train_transform() {
   echo "=== [train-transform] minify + paraphrase (T) the train generations"
   local kind
   for kind in minified paraphrased; do
-    if all_exist "$TRAIN_EXP/transforms/$kind/attack_transformed.eval" \
-                 "$TRAIN_EXP/transforms/$kind/honeypots_transformed.eval"; then
-      echo "  $kind exists, skipping"; continue
-    fi
     uv run python "$SCRIPTS/transform_solutions_inspect.py" --skip-existing \
       --config "$CFG/transforms/${kind}_config_train.yaml"
   done
@@ -127,8 +122,8 @@ stage_prepare() {
     logs="$SFT_DATA/$arm/eval_logs"
     rm -rf "$logs" "$SFT_DATA/$arm/raw" "$SFT_DATA/$arm/prepared"
     mkdir -p "$logs/train"
-    # Copy (not move) so the generator/transform outputs stay where the
-    # other stages' skip checks look for them.
+    # Copy (not move) so the generator/transform outputs stay where
+    # --skip-existing looks for them.
     if [ "$arm" = none ]; then
       cp "$TRAIN_EXP/generator/attacks.eval" "$TRAIN_EXP/generator/honeypots.eval" "$logs/train/"
       extra=()
@@ -182,10 +177,6 @@ stage_configure() {
 
 stage_test_gen() {
   echo "=== [test-gen] U attacks + U honest + H honeypots on the even (test) split"
-  if all_exist "$TEST_EXP/generator/attacks.eval" "$TEST_EXP/generator/honest.eval" \
-               "$TEST_EXP/generator/honeypots.eval"; then
-    echo "  outputs exist, skipping"; return
-  fi
   need_docker
   uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
     --config "$CFG/generator/generator_config.yaml"
@@ -195,11 +186,6 @@ stage_test_transform() {
   echo "=== [test-transform] minify + paraphrase (T) the test generations"
   local kind
   for kind in minified paraphrased; do
-    if all_exist "$TEST_EXP/transforms/$kind/attack_transformed.eval" \
-                 "$TEST_EXP/transforms/$kind/honest_transformed.eval" \
-                 "$TEST_EXP/transforms/$kind/honeypots_transformed.eval"; then
-      echo "  $kind exists, skipping"; continue
-    fi
     uv run python "$SCRIPTS/transform_solutions_inspect.py" --skip-existing \
       --config "$CFG/transforms/${kind}_config.yaml"
   done
@@ -207,13 +193,8 @@ stage_test_transform() {
 
 stage_monitor() {
   echo "=== [monitor] U-SFT collusion + T and U backdoor monitors, per arm"
-  local arm out
+  local arm
   for arm in "${ARMS[@]}"; do
-    out="$TEST_EXP/outputs/${arm}_sft"
-    if all_exist "$out/attack_monitor_results.eval" "$out/honest_monitor_results.eval" \
-                 "$out/honeypots_monitor_results.eval"; then
-      echo "  $arm exists, skipping"; continue
-    fi
     uv run python "$SCRIPTS/monitor_solutions_inspect.py" --skip-existing --config "$(monitor_cfg "$arm")"
   done
 }
