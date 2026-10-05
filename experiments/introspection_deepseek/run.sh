@@ -7,11 +7,14 @@
 #
 # USAGE: bash experiments/introspection_deepseek/run.sh [stage]
 #   stage: fetch | generate | build | train | accuracy | compare | all (default)
+#          | monitor | plot   (standard pipeline; not part of `all`, need MONITORED)
 # Optional cross-prediction control (train DeepSeek on gpt-oss-120b's behaviour):
 #   CROSS=1 bash experiments/introspection_deepseek/run.sh build   (then train, ...)
 #
 # Knobs (env vars): MODEL, CROSS_MODEL, PER_FILE, EPOCHS, LR, RANK, BATCH, EVERY,
-# ATTACKS, HONEYPOTS (existing .eval logs to evaluate on instead of generating).
+# ATTACKS, HONEYPOTS (existing .eval logs to evaluate on instead of generating),
+# MONITORED (dir of existing monitor logs attacks/honest/honeypots.eval that
+# already carry the trusted/untrusted suspiciousness scores).
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -98,8 +101,44 @@ stage_compare() {
     "${args[@]}" --out "$RUNS/compare"
 }
 
+PIPE=$RUNS/pipeline
+read -ra PIPE_ARMS <<< "${PIPE_ARMS:-base self cross}"   # e.g. PIPE_ARMS=self to run one arm
+
+arm_model() { if [ "$1" = base ]; then echo "$MODEL"; else cat "$RUNS/$1/checkpoint_path.txt"; fi; }
+arm_name() {
+  case "$1" in
+    base) echo "Base $MODEL" ;;
+    self) echo "Introspection SFT (own answers)" ;;
+    cross) echo "Control SFT ($CROSS_MODEL answers)" ;;
+  esac
+}
+
+stage_monitor() {
+  echo "=== standard pipeline: score each arm as the collusion monitor on $MONITORED"
+  [ -d "${MONITORED:-}" ] || { echo "set MONITORED=<dir of existing monitor logs>" >&2; exit 2; }
+  for arm in "${PIPE_ARMS[@]}"; do
+    [ "$arm" = base ] || [ -f "$RUNS/$arm/checkpoint_path.txt" ] || continue
+    [ -f "$PIPE/$arm/honeypots.eval" ] && { echo "[$arm] exists, skipping"; continue; }
+    mkdir -p "$PIPE/$arm"
+    sed -e "s|__ARM__|$arm|g" -e "s|__NAME__|$(arm_name "$arm")|" \
+      -e "s|__MODEL__|$(arm_model "$arm")|" -e "s|__MONITORED__|$(realpath "$MONITORED")|" \
+      "$EXP/monitor_config.template.yaml" > "$PIPE/$arm/monitor_config.yaml"
+    py lasr_labs_2025_control_project.scripts.monitor_solutions_inspect \
+      --config "$PIPE/$arm/monitor_config.yaml"
+  done
+}
+
+stage_plot() {
+  echo "=== standard pipeline plots (histograms, ROC, safety-usefulness) across arms"
+  local cfgs=()
+  for arm in "${PIPE_ARMS[@]}"; do
+    [ -f "$PIPE/$arm/honeypots.eval" ] && cfgs+=("$PIPE/$arm/monitor_config.yaml")
+  done
+  py lasr_labs_2025_control_project.scripts.plot_data --config "${cfgs[@]}" --grouped-path arms
+}
+
 case "$STAGE" in
-  fetch|generate|build|train|accuracy|compare) "stage_$STAGE" ;;
+  fetch|generate|build|train|accuracy|compare|monitor|plot) "stage_$STAGE" ;;
   all) stage_fetch; stage_generate; stage_build; stage_train; stage_accuracy; stage_compare ;;
   *) echo "unknown stage: $STAGE" >&2; exit 2 ;;
 esac

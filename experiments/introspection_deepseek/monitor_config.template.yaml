@@ -1,0 +1,45 @@
+# Standard-pipeline monitor config for one arm of the introspection experiment.
+# run.sh stage `monitor` fills in the __PLACEHOLDERS__ and writes
+# runs/pipeline/<arm>/monitor_config.yaml, which is also what `plot` reads.
+#
+# Only the untrusted collusion monitor is scored. The eval_path logs are
+# existing monitor outputs: their trusted/untrusted suspiciousness scores are
+# carried over unchanged, so every arm is compared on identical backdoor-monitor
+# scores and only the collusion monitor's model differs. The input logs' own
+# collusion scores stay in the output as `untrusted_collusion_score1` (inspect
+# suffixes the duplicate name); plot_data reads the new one.
+
+experiment_folder: experiments/introspection_deepseek/runs/pipeline
+
+experiment_name: "__NAME__"
+
+results_folder: results/__ARM__/
+
+defaults:
+  monitors:
+    - untrusted_collusion_monitor:
+        model_info:
+          model: tinker/__MODEL__
+          system_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+          base_prompt: MONITOR_USER_PROMPT
+        remove_comments: true
+        transformed: false
+
+runs:
+  attacks:
+    eval_path: __MONITORED__/attacks.eval
+    save_path: __ARM__/attacks.eval
+    monitors:
+      - untrusted_collusion_monitor
+
+  honest:
+    eval_path: __MONITORED__/honest.eval
+    save_path: __ARM__/honest.eval
+    monitors:
+      - untrusted_collusion_monitor
+
+  honeypots:
+    eval_path: __MONITORED__/honeypots.eval
+    save_path: __ARM__/honeypots.eval
+    monitors:
+      - untrusted_collusion_monitor

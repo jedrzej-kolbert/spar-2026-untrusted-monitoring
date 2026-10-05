@@ -41,6 +41,29 @@ the control was scored once. Control minus self-trained: +0.053 [+0.028, +0.080]
 Figure: `uv run python experiments/introspection_deepseek/plot_results.py` writes
 `runs/figures/results.{png,svg}` from the run outputs (figures are gitignored).
 
+### Standard pipeline (`plot_data.py`, 2026-10-05)
+
+Each arm as the untrusted collusion monitor on the full APPS test set (114
+attacks, 246 honeypots, 751 honest). The trusted (Qwen3.5-4B) and untrusted
+(base DeepSeek-V3.1) suspiciousness scores are reused unchanged from
+`experiments/exports/attack_SFT_full_test_batch64/self_rec_attack_test/monitor/sft/`,
+so the arms differ only in the collusion monitor. Safety is the blue-team win
+rate at the Nash equilibrium; lower means the red team colludes better.
+
+| Collusion monitor | Collusion AUC | Safety at usefulness 1.0 | 0.95 | 0.80 | 0.50 |
+|---|---|---|---|---|---|
+| Base DeepSeek-V3.1 | 0.542 | 0.558 | 0.605 | 0.696 | 0.791 |
+| Trained on its own answers | 0.562 | 0.545 | 0.600 | 0.701 | 0.797 |
+| Control: trained on gpt-oss-120b's answers | 0.622 | 0.533 | 0.590 | 0.690 | 0.787 |
+| Reference: self-rec attack SFT (that export) | — | 0.188 | 0.289 | 0.359 | 0.419 |
+
+Introspection training moves safety by about 0.01, against a drop to 0.19 for a
+monitor fine-tuned directly on self-recognition. This pipeline gives no
+interval, and one scoring pass carries the noise described under Caveats, so the
+differences between the first three rows are not evidence of an effect. 12 of
+the 865 reused trusted-monitor scores (attacks + honest) are missing in the
+source logs.
+
 ## Design
 
 | Step | What | Code |
@@ -79,6 +102,18 @@ bash experiments/introspection_deepseek/run.sh compare    # picks up both arms
 
 To evaluate on existing generator logs instead of generating (no Docker), set
 `ATTACKS=<attacks.eval> HONEYPOTS=<honeypots.eval>` on every stage.
+
+Standard pipeline (histograms, ROC, safety-usefulness curves). `monitor` scores
+each arm as the collusion monitor on top of existing monitor logs, reusing their
+backdoor-monitor scores (`monitor_config.template.yaml`); `plot` runs
+`scripts/plot_data.py` over the arms and takes about five minutes per arm:
+
+```bash
+MONITORED=<dir with monitored attacks/honest/honeypots.eval> \
+  bash experiments/introspection_deepseek/run.sh monitor   # PIPE_ARMS=self for one arm
+bash experiments/introspection_deepseek/run.sh plot
+# -> runs/pipeline/results/grouped/all_monitors/arms/
+```
 
 Outputs go to `experiments/introspection_deepseek/runs/` (gitignored):
 `compare/summary.json` (AUCs and ΔAUC CIs), `compare/margins.csv`,
