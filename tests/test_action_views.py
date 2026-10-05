@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import numpy as np
 import pytest
 from inspect_ai import eval
 from inspect_ai.model import (
@@ -335,7 +334,7 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     samples = [
         action_sample("1", 1, 2, (0.5, 1, 2)),
         action_sample("1", 2, 2, (-0.5, 7, 3)),
-        action_sample("2", 1, 1, (0.1, float("nan"), 4)),
+        action_sample("2", 1, 1, (0.1, 5, 4)),
     ]
     monkeypatch.setattr(
         plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=samples)
@@ -346,8 +345,16 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     assert list(df.index) == ["1", "2"]
     scores = df["trusted_suspiciousness_score"].to_numpy(dtype=float)
     assert df["untrusted_collusion_score"].to_numpy(dtype=float)[0] == 0.5
-    assert scores[0] == 7 and np.isnan(scores[1])  # a NaN action is not skipped
+    assert scores.tolist() == [7, 5]
     assert df["n_actions_scored"].tolist() == [2, 1]
+
+    # An unscored action is an error, not a NaN trajectory the ROC builders drop.
+    unscored = samples[:2] + [action_sample("2", 1, 1, (0.1, float("nan"), 4))]
+    monkeypatch.setattr(
+        plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=unscored)
+    )
+    with pytest.raises(ValueError, match="have no score"):
+        plot_data.build_jsonl_dataframe_from_eval_log(Path("x.eval"))
 
     monkeypatch.setattr(
         plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=samples[:1])
@@ -411,3 +418,129 @@ def test_monitor_config_view_validation(tmp_path: Path):
         load_and_normalize_config(write({"view": "action"}, transformed=True))
     with pytest.raises(ValueError, match="view"):
         load_and_normalize_config(write({"view": "per_step"}))
+    # A trajectory's score is the max over its actions, so monitors score all of them.
+    with pytest.raises(ValueError, match="actions_per_trajectory"):
+        load_and_normalize_config(
+            write({"view": "action", "action_view": {"actions_per_trajectory": 4}})
+        )
+
+
+def test_failed_monitor_run_is_not_saved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A monitor call that errors (e.g. a prompt over the context window) fails the
+    Inspect eval; main must stop instead of saving the partial log as results."""
+    import yaml
+
+    from lasr_labs_2025_control_project.scripts import monitor_solutions_inspect as mon
+    from lasr_labs_2025_control_project.scripts.helpers import (
+        eval_to_dataset as mon_data,
+    )
+
+    async def too_long(**kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("Prompt length exceeds the model's context window")
+
+    monkeypatch.setattr(
+        mon_data, "read_eval_log", lambda *a, **k: SimpleNamespace(samples=ATTACKS)
+    )
+    monkeypatch.setattr(mon, "collusion_yes_no_logprobs", too_long)
+    monkeypatch.setenv("INSPECT_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("INSPECT_DISPLAY", "none")
+    (tmp_path / "a.eval").touch()
+    config = tmp_path / "c.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "experiment_folder": str(tmp_path),
+                "experiment_name": "x",
+                "results_folder": "r/",
+                "defaults": {
+                    "view": "action",
+                    "monitors": [
+                        {
+                            "untrusted_collusion_monitor": {
+                                "model_info": {
+                                    "model": "tinker/stub",
+                                    "system_prompt": "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+                                    "base_prompt": "BASHARENA_ACTION_USER_PROMPT",
+                                },
+                                "remove_comments": False,
+                                "transformed": False,
+                            }
+                        }
+                    ],
+                },
+                "runs": {
+                    "attacks": {
+                        "eval_path": "a.eval",
+                        "save_path": "out.eval",
+                        "monitors": ["untrusted_collusion_monitor"],
+                    }
+                },
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="status 'error'"):
+        mon.main.callback(config=str(config))
+    assert not (tmp_path / "out.eval").exists()
+
+
+def test_readers_resolve_attachments(tmp_path: Path):
+    """Inspect saves tool output that looks like a data URI as an attachment://
+    reference; the SFT, monitor and checkpoint readers must show the real output."""
+    from inspect_ai import Task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.log import write_eval_log
+    from inspect_ai.solver import Generate, TaskState, solver
+
+    from lasr_labs_2025_control_project.finetuning.utils import (
+        eval_to_dataset as sft_data,
+    )
+    from lasr_labs_2025_control_project.scripts import tinker_sft_dynamics as dyn
+    from lasr_labs_2025_control_project.scripts.helpers import (
+        eval_to_dataset as mon_data,
+    )
+
+    uri = "data:image/png;base64,iVBORw0KGgo="
+    messages = _trajectory()
+    messages[3] = ChatMessageTool(content=uri, tool_call_id="c0", function="bash")
+
+    @solver
+    def replay():
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            state.messages = messages
+            state.store.set("base_solution", trajectory_view(messages))
+            return state
+
+        return solve
+
+    sample = Sample(
+        id="101",
+        input="x",
+        metadata={
+            "eval_mode": "attack",
+            "setting_name": "bash_arena",
+            "main_task_description": TASK,
+        },
+    )
+    log = eval(
+        Task(dataset=[sample], solver=replay()),
+        model="mockllm/model",
+        display="none",
+        log_dir=str(tmp_path),
+    )[0]
+    log.samples[0].scores = _bash_scores("C")
+    path = tmp_path / "attacks.eval"
+    write_eval_log(log, str(path))
+    expected = action_views(messages)
+    assert uri in expected[1]
+
+    sft = sft_data.process_eval_log(path, "U", tmp_path / "raw.json", view="action")
+    assert [s.solution for p in sft for s in p.solutions] == expected
+    monitor = mon_data.eval_to_dataset(path, view="action")
+    assert [s.metadata["base_solution"] for s in monitor] == expected
+    examples = dyn.load_eval_examples(path, path, "action_view")
+    assert [user for _, _, user in examples[:3]] == [
+        BASHARENA_ACTION_USER_PROMPT.format(problem_statement=TASK, solution=view)
+        for view in expected
+    ]

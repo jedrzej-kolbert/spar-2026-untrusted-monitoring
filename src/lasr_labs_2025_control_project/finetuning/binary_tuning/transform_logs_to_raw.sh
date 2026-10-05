@@ -12,9 +12,10 @@
 # By default, comments are removed from base solutions. If --keep-comments is given, comments are kept. Ignored if --transformed is given.
 # If --transformed is given as an argument, transformed solutions from .eval files are used.
 # If --action-views is given (BashArena), each trajectory becomes one row per rated action, in
-# the same per-action format the monitor uses (view: action). Optional env vars, which must
-# match the monitor config's defaults.action_view: ACTION_MAX_HISTORY_CHARS,
-# ACTIONS_PER_TRAJECTORY, ACTION_SEED. Then run transform_raw_to_prepared.sh with
+# the same per-action format the monitor uses (view: action). Optional env vars:
+# ACTION_MAX_HISTORY_CHARS, which must match the monitor config's
+# defaults.action_view.max_history_chars, and ACTIONS_PER_TRAJECTORY / ACTION_SEED, which
+# only pick the training rows (monitoring scores every action). Then run transform_raw_to_prepared.sh with
 # --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT.
 
 set -euo pipefail

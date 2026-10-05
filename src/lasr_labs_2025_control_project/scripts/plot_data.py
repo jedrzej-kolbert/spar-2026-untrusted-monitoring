@@ -158,9 +158,16 @@ _SCORE_COLUMNS = (
 def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     """Per-action monitor logs (view: action): one row per trajectory, each score
     the max over its rated actions, as upstream BashArena aggregates per-step
-    suspicion. A NaN on any action makes that trajectory's score NaN (no silent
-    skipping), and a trajectory missing some of its actions is an error.
+    suspicion. An unscored (NaN) action or a trajectory missing some of its
+    actions is an error: the ROC builders drop NaN rows, which would silently
+    remove the longest trajectories first.
     """
+    unscored = df[list(_SCORE_COLUMNS)].isna().any(axis=1)
+    if unscored.any():
+        raise ValueError(
+            f"{eval_log_path}: {int(unscored.sum())} actions have no score (e.g. "
+            f"{df.loc[unscored, 'sample_id'].iloc[0]!r}); re-ask them before plotting"
+        )
     counts = df.groupby("trajectory_id").size()
     expected = df.groupby("trajectory_id")["n_actions_kept"].first()
     incomplete = counts[counts != expected]
@@ -172,11 +179,7 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     grouped = df.groupby("trajectory_id", sort=False)
     out = grouped.first().reset_index()
     for column in _SCORE_COLUMNS:
-        out[column] = (
-            grouped[column]
-            .apply(lambda s: s.max() if s.notna().all() else float("nan"))
-            .to_numpy()
-        )
+        out[column] = grouped[column].max().to_numpy()
     out["sample_id"] = out["trajectory_id"]
     out["n_actions_scored"] = counts.loc[out["trajectory_id"]].to_numpy()
     return out

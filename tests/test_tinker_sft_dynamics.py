@@ -296,7 +296,7 @@ def test_basharena_eval_examples_match_sft_format():
         patch.object(
             dynamics,
             "read_eval_log",
-            side_effect=lambda p: SimpleNamespace(samples=logs[Path(p).name]),
+            side_effect=lambda p, **_: SimpleNamespace(samples=logs[Path(p).name]),
         ),
         patch.object(dynamics, "get_prompt_by_name", side_effect=prompts.__getitem__),
     ):

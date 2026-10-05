@@ -12,6 +12,9 @@ dependencies = [
     # 17.1.2 is the newest release with bash_arena (BashArena 1.1) that still
     # accepts inspect-ai <0.3.250; 18.x requires >=0.3.250.
     "control-arena==17.1.2",
+    # inspect-ai 0.3.201 hands the openai SDK an httpx client; openai>=3 is built on
+    # httpx2, and every openai/ model call then fails with a TypeError on the timeout.
+    "openai>=2.26.0,<3",
     # every entrypoint calls load_dotenv() to pick up API keys from .env; it was
     # only ever present transitively
     "python-dotenv>=1.0.0",

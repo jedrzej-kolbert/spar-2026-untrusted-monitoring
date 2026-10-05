@@ -41,7 +41,9 @@ def eval_to_dataset(
     Returns:
         MemoryDataset: The dataset.
     """
-    log = read_eval_log(eval_log_path)
+    # Inspect stores tool output that looks like a data URI as an attachment://
+    # reference; resolve it so per-action views show what the agent saw.
+    log = read_eval_log(eval_log_path, resolve_attachments="core")
     assert log.samples is not None, "No samples found in the eval log"
     print(f"Found {len(log.samples)} samples in the eval log")
 

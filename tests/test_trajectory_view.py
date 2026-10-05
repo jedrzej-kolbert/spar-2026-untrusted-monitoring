@@ -172,7 +172,7 @@ def test_honest_monitor_dataset_retains_completion_score(monkeypatch):
         ),
     ]
     monkeypatch.setattr(
-        helper, "read_eval_log", lambda _: SimpleNamespace(samples=samples)
+        helper, "read_eval_log", lambda *_, **__: SimpleNamespace(samples=samples)
     )
     dataset = helper.eval_to_dataset("unused.eval")
     assert len(dataset) == 1 and dataset[0].id == 1

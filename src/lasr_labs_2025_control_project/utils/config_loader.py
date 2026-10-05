@@ -300,6 +300,13 @@ def normalize_monitor_defaults(config: dict[str, Any]) -> dict[str, Any]:
                 "transformed monitors are not supported"
             )
         action_options = ActionViewOptions(**(defaults.get("action_view") or {}))
+        if action_options.actions_per_trajectory is not None:
+            # plot_data takes the max over the scored actions, so a subset would
+            # silently lower trajectory scores.
+            raise ValueError(
+                "defaults.action_view.actions_per_trajectory is for SFT and "
+                "checkpoint scoring only; monitoring scores every action"
+            )
     elif defaults.get("action_view"):
         raise ValueError("defaults.action_view is only used with view: action")
 

@@ -79,7 +79,7 @@ def load_eval_examples(
         raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
     examples = []
     for label, path in ((1, attacks), (0, honeypots)):
-        log = read_eval_log(str(path))
+        log = read_eval_log(str(path), resolve_attachments="core")
         if not log.samples:
             raise ValueError(f"no samples in {path}")
         retained = 0

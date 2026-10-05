@@ -481,6 +481,14 @@ def main(config: str):
             reasoning_effort="minimal",  # openai models
             limit=run.limit,
         )
+        # A failed eval (e.g. one prompt over the context window) keeps only some
+        # samples; never save it as this run's results.
+        if result[0].status != "success":
+            raise RuntimeError(
+                f"monitor run {run.label} ended with status {result[0].status!r}: "
+                f"{result[0].error.message if result[0].error else ''} "
+                f"(log: {result[0].location})"
+            )
         run.save_path.parent.mkdir(parents=True, exist_ok=True)
         run.save_path.touch()
         shutil.copy(result[0].location, run.save_path)

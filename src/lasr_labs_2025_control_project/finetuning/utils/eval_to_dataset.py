@@ -94,7 +94,9 @@ def process_eval_log(
 
     # Read eval log using inspect_ai
     logger.info("Reading eval log...")
-    log = read_eval_log(str(data_path))
+    # Resolve attachment:// references (data-URI-like tool output) so per-action
+    # rows match the monitor's input.
+    log = read_eval_log(str(data_path), resolve_attachments="core")
 
     if log.samples is None:
         logger.error("No samples found in eval log")
