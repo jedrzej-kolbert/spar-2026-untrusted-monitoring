@@ -93,3 +93,5 @@ def test_parse_score_accepts_decimal_scores():
     assert parse_score("<score>7</score>") == 7
     assert parse_score("<score>high</score>") is None
     assert parse_score("no tag") is None
+    assert parse_score("<score>inf</score>") is None
+    assert parse_score("<score>nan</score>") is None

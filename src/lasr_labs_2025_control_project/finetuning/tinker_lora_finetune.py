@@ -44,6 +44,7 @@ AUC near chance that reads as a null result rather than a failed training run.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import random
@@ -194,9 +195,17 @@ def finetune(
         eval_examples = load_eval_examples(
             attacks_eval, honeypots_eval, solution_field, action_options
         )
-        check_eval_manifest(
-            dynamics_results / "dynamics.csv", eval_examples, solution_field
-        )
+        csv_path = dynamics_results / "dynamics.csv"
+        check_eval_manifest(csv_path, eval_examples, solution_field)
+        # Training always restarts at update 0, so rows from an earlier run would
+        # be mixed into this curve, or collide after paying for those updates.
+        if csv_path.exists():
+            with csv_path.open(newline="", encoding="utf-8") as file:
+                if any(int(row["updates"]) > 0 for row in csv.DictReader(file)):
+                    raise ValueError(
+                        f"{csv_path} already has trained checkpoints; "
+                        "use a fresh --dynamics-results folder"
+                    )
 
     examples = load_examples(train_jsonl)
     if max_examples is not None:
@@ -245,9 +254,7 @@ def finetune(
             dynamics_results,
             solution_field=solution_field,
         )
-        loss_csv = dynamics_results / "train_loss.csv"
-        if not loss_csv.exists():
-            loss_csv.write_text("step,epoch,loss\n")
+        (dynamics_results / "train_loss.csv").write_text("step,epoch,loss\n")
     for epoch in range(epochs):
         rng.shuffle(data)
         for batch in _batches(data, batch_size):

@@ -260,6 +260,62 @@ def test_transformed_cli():
                 assert record.call_args.kwargs["solution_field"] == field
 
 
+def test_rerun_into_trained_folder_is_refused():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        train = root / "train.jsonl"
+        train.write_text('{"messages": [{"role": "system", "content": "s"}]}\n' * 4)
+        results = root / "results"
+
+        def run(aucs):
+            client = Mock()
+            client.save_weights_for_sampler.side_effect = lambda name: Mock(
+                result=Mock(return_value=SimpleNamespace(path=f"tinker://{name}"))
+            )
+            with (
+                patch("tinker.ServiceClient") as service,
+                patch.object(ft, "build_datum"),
+                patch.object(ft, "_mean_loss", return_value=0.5),
+                patch.object(
+                    dynamics,
+                    "load_eval_examples",
+                    return_value=[(1, "s", "a"), (0, "s", "h")],
+                ),
+                patch.object(
+                    dynamics, "_score", side_effect=[(a, [a, 0.0]) for a in aucs]
+                ),
+                patch.object(dynamics, "_plot"),
+            ):
+                service.return_value.create_lora_training_client.return_value = client
+                ft.finetune(
+                    train,
+                    epochs=1,
+                    batch_size=1,
+                    val_frac=0,
+                    checkpoint_every_steps=2,
+                    attacks_eval=root / "a.eval",
+                    honeypots_eval=root / "h.eval",
+                    dynamics_results=results,
+                )
+
+        run([0.5, 0.6, 0.7])
+        with raises(ValueError, "already has trained checkpoints"):
+            run([0.5])  # would re-train, then collide at update 2
+        with (results / "train_loss.csv").open() as file:
+            assert [r["step"] for r in csv.DictReader(file)] == ["1", "2", "3", "4"]
+
+
+def test_setting_prompt_names_resolve():
+    # Unpatched on purpose: every prompt the dynamics can select must exist here.
+    for names in (
+        *dynamics._PROMPTS.values(),
+        dynamics._DEFAULT_PROMPTS,
+        *dynamics._ACTION_PROMPTS.values(),
+    ):
+        for name in names:
+            assert dynamics.get_prompt_by_name(name)
+
+
 if __name__ == "__main__":
     test_filter_and_preprocessing()
     test_csv_provenance_and_retry()
