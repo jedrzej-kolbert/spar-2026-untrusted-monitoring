@@ -461,7 +461,15 @@ def monitor_solutions(
     help="Skip runs whose save_path already holds a successful log, so an "
     "interrupted config resumes without redoing finished runs.",
 )
-def main(config: str, skip_existing: bool):
+@click.option(
+    "--max-connections",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Max parallel samples: caps both API connections and Docker sandboxes. "
+    "Raise it on a machine with spare RAM; each sandbox may use up to 0.5 GB.",
+)
+def main(config: str, skip_existing: bool, max_connections: int):
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -481,8 +489,9 @@ def main(config: str, skip_existing: bool):
             continue
         result = eval(
             tasks=monitor_solutions(run),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
+            # Cap parallel API/Docker work; total example count is unchanged.
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             limit=run.limit,

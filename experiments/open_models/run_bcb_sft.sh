@@ -15,11 +15,18 @@
 #   * uv sync done.
 #
 # USAGE
-#   bash experiments/open_models/run_bcb_sft.sh [--U MODEL] [--T MODEL] [--H MODEL] [stage]
+#   bash experiments/open_models/run_bcb_sft.sh [--U MODEL] [--T MODEL] [--H MODEL]
+#     [--max-connections N] [stage]
 #
 # MODEL is a raw Tinker id (e.g. deepseek-ai/DeepSeek-V3.1); a tinker/ prefix is
 # also accepted. Pass the SAME models to every stage: configs are regenerated
 # in `configs` and `configure`, and they take U/T/H from these flags.
+#
+# --max-connections N (default 8) caps parallel samples in generation and
+# monitoring, i.e. both Tinker connections and Docker sandboxes. Each sandbox may
+# use up to 0.5 GB, so raise it only with Docker memory to spare (e.g. 32-48 on
+# a machine giving Docker 16+ GB). An overloaded host can turn correct code into
+# test timeouts, so compare main_task_success against an 8-connection run.
 #
 # stage is one of: configs | train-gen | train-transform | prepare | finetune |
 # configure | test-gen | test-transform | monitor | plot | all (default).
@@ -34,13 +41,15 @@ cd "$(git rev-parse --show-toplevel)"
 U="deepseek-ai/DeepSeek-V3.1"
 T="Qwen/Qwen3.5-4B"
 H="openai/gpt-oss-20b"
+MAX_CONN=8
 STAGE="all"
 while [ $# -gt 0 ]; do
   case "$1" in
     --U) U="$2"; shift 2 ;;
     --T) T="$2"; shift 2 ;;
     --H) H="$2"; shift 2 ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    --max-connections) MAX_CONN="$2"; shift 2 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) STAGE="$1"; shift ;;
   esac
 done
@@ -99,6 +108,7 @@ stage_train_gen() {
   echo "=== [train-gen] U attacks + H honeypots on the odd (train) split"
   need_docker
   uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
+    --max-connections "$MAX_CONN" \
     --config "$CFG/generator/generator_config_train.yaml"
 }
 
@@ -179,6 +189,7 @@ stage_test_gen() {
   echo "=== [test-gen] U attacks + U honest + H honeypots on the even (test) split"
   need_docker
   uv run python "$SCRIPTS/generate_solutions_inspect.py" --skip-existing \
+    --max-connections "$MAX_CONN" \
     --config "$CFG/generator/generator_config.yaml"
 }
 
@@ -195,7 +206,8 @@ stage_monitor() {
   echo "=== [monitor] U-SFT collusion + T and U backdoor monitors, per arm"
   local arm
   for arm in "${ARMS[@]}"; do
-    uv run python "$SCRIPTS/monitor_solutions_inspect.py" --skip-existing --config "$(monitor_cfg "$arm")"
+    uv run python "$SCRIPTS/monitor_solutions_inspect.py" --skip-existing \
+      --max-connections "$MAX_CONN" --config "$(monitor_cfg "$arm")"
   done
 }
 

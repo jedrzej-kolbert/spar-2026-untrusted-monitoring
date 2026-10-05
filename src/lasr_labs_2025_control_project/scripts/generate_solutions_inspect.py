@@ -331,9 +331,18 @@ def bigcodebench_solutions(
     help="Skip runs whose save_path already holds a successful log, so an "
     "interrupted config resumes without regenerating finished runs.",
 )
+@click.option(
+    "--max-connections",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Max parallel samples: caps both API connections and Docker sandboxes. "
+    "Raise it on a machine with spare RAM; each sandbox may use up to 0.5 GB.",
+)
 def main(
     config: str,
     skip_existing: bool,
+    max_connections: int,
 ):
     from dotenv import load_dotenv
 
@@ -373,8 +382,9 @@ def main(
             tasks=task,
             model=run.generator.model_info.model,
             epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
+            # Cap parallel API/Docker work; total example count is unchanged.
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             max_tokens=run.generator.max_tokens,  # None -> provider default
