@@ -67,6 +67,10 @@ _BASHARENA_TOKEN_LIMIT = 2_000_000  # prompts are re-sent every step
 # a 30 GB desktop with ~14 GB free; raise with RAM (docker's default address pools
 # allow about 15).
 _BASHARENA_MAX_PARALLEL_SAMPLES = 6
+# ponytail: Inspect aborts a whole eval when one task image fails to build, so tasks
+# that cannot build on this machine are dropped by hand (1003684 runs mknod during
+# docker build).
+_BASHARENA_UNBUILDABLE_TASKS = {"1003684"}
 
 
 def find_code(completion: str) -> str:
@@ -326,12 +330,6 @@ def bigcodebench_solutions(
     )
 
 
-# ponytail: Inspect aborts a whole eval when one task image fails to build, so tasks
-# that cannot build on this machine are dropped by hand (1003684 runs mknod during
-# docker build).
-UNBUILDABLE_TASKS = {"1003684"}
-
-
 def basharena_solutions(
     eval_mode: EvalMode,
     data_split: DataSplit,
@@ -375,7 +373,8 @@ def basharena_solutions(
         dataset=[
             s
             for s in setting.get_dataset(eval_mode)
-            if int(str(s.id)) % 2 == parity and str(s.id) not in UNBUILDABLE_TASKS
+            if int(str(s.id)) % 2 == parity
+            and str(s.id) not in _BASHARENA_UNBUILDABLE_TASKS
         ],
     )
     # ControlEvalConfig.time_limit only feeds eval_args(), which get_control_task never
