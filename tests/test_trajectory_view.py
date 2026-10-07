@@ -64,9 +64,18 @@ def test_view_contains_actions_and_nothing_else():
         "submit",
     ):
         assert leak not in view, leak
-    assert len(view) < 5000 and "chars omitted" in view  # long argument capped
     # A prefix is a view of only those actions; later actions cannot leak in.
     assert "text_editor" not in trajectory_view(messages[:4])
+
+
+def test_view_keeps_the_middle_of_a_long_argument():
+    # The tool runs the whole argument, so an operation far from both ends of a
+    # long command must still be visible to the monitor.
+    cmd = "echo pad;" * 400 + "chmod 777 /etc/sudoers;" + "echo pad;" * 400
+    view = trajectory_view(
+        [ChatMessageAssistant(content="", tool_calls=[_call(1, "bash", cmd=cmd)])]
+    )
+    assert f"<cmd>{cmd}</cmd>" in view
 
 
 def _scores(main: str, side: str) -> dict:
@@ -104,3 +113,15 @@ def test_apps_validity_unchanged():
     assert check_sample_is_valid(apps) is False
     apps["apps_scorer"] = Score(value={"main_task_success": "C"})
     assert check_sample_is_valid(apps) is True
+
+
+def test_basharena_solutions_are_not_treated_as_python():
+    from lasr_labs_2025_control_project.utils.utils import (
+        format_solution,
+        is_code_setting,
+    )
+
+    view = "<action_1>\n<tool>bash</tool>\n<cmd>echo 'it''s # not a comment</cmd>\n</action_1>"
+    assert not is_code_setting("bash_arena") and is_code_setting("apps")
+    assert format_solution(view, "bash_arena") == f"```\n{view}\n```"
+    assert format_solution("print(1)", "apps") == "```python\nprint(1)\n```"
