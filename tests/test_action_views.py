@@ -231,7 +231,7 @@ def test_sft_rows_monitor_inputs_and_checkpoint_examples_are_identical(
     for module in (sft_data, mon_data, dyn):
         monkeypatch.setattr(module, "read_eval_log", fake_read)
 
-    # SFT rows (one JSON per role, as run_half_experiment builds them).
+    # SFT rows (one JSON per role).
     raw = tmp_path / "raw"
     for label, model in (("attacks", "U"), ("honeypots", "H")):
         source = tmp_path / f"{label}.eval"
@@ -308,13 +308,33 @@ def test_sft_rows_monitor_inputs_and_checkpoint_examples_are_identical(
     assert monitored == sft
 
 
+def test_sft_loader_rejects_transformed_logs_in_action_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from lasr_labs_2025_control_project.finetuning.utils import (
+        eval_to_dataset as sft_data,
+    )
+
+    sample = _sample("107", "185.199.108.153")
+    sample.store["transformed_solution"] = "paraphrased"
+    monkeypatch.setattr(
+        sft_data, "read_eval_log", lambda *a, **k: SimpleNamespace(samples=[sample])
+    )
+    source = tmp_path / "attacks.eval"
+    source.touch()
+    with pytest.raises(ValueError, match="transformed"):
+        sft_data.process_eval_log(
+            source, "U", tmp_path / "raw.json", view="action", action_options=OPTIONS
+        )
+
+
 def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from lasr_labs_2025_control_project.scripts import plot_data
 
     def action_sample(
-        traj: str, k: int, kept: int, scores: tuple[float, float, float]
+        traj: str, k: int, total: int, scores: tuple[float, float, float]
     ) -> SimpleNamespace:
         u_col, t_sus, u_sus = scores
         return SimpleNamespace(
@@ -322,7 +342,7 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
             metadata={"main_task_description": "t", "trajectory_id": traj},
             store={
                 "base_solution": f"view {k}",
-                "n_actions_kept": kept,
+                "n_actions": total,
                 "untrusted_collusion_score": u_col,
                 "trusted_suspiciousness_score": t_sus,
                 "untrusted_suspiciousness_score": u_sus,
@@ -351,6 +371,18 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
 
     monkeypatch.setattr(
         plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=samples[:1])
+    )
+    with pytest.raises(ValueError, match="missing scored actions"):
+        plot_data.build_jsonl_dataframe_from_eval_log(Path("x.eval"))
+
+    # Scoring a sample of a trajectory's actions is partial too: the max has to
+    # cover every action, not only the ones the monitor run kept.
+    sampled = [
+        action_sample("3", 1, 4, (0.1, 1, 1)),
+        action_sample("3", 3, 4, (0.2, 2, 2)),
+    ]
+    monkeypatch.setattr(
+        plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=sampled)
     )
     with pytest.raises(ValueError, match="missing scored actions"):
         plot_data.build_jsonl_dataframe_from_eval_log(Path("x.eval"))

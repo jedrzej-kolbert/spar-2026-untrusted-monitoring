@@ -34,7 +34,7 @@ def eval_to_dataset(
             "action" (one sample per rated action, base_solution = that action's
             per-action view rendered from the sample's messages). Action samples
             get id "<trajectory id>#a<k>" and metadata trajectory_id, action_index,
-            n_actions, n_actions_kept and solution_view; downstream plots take
+            n_actions and solution_view; downstream plots take
             the max over a trajectory's actions.
         action_options: Options for the per-action views (view == "action").
 
@@ -89,7 +89,6 @@ def eval_to_dataset(
                             "trajectory_id": sample.id,
                             "action_index": index,
                             "n_actions": len(views),
-                            "n_actions_kept": len(kept),
                         },
                         id=f"{sample.id}#a{index}",
                     )

@@ -124,6 +124,13 @@ def process_eval_log(
 
         # Merge metadata and store (store takes precedence)
         sample_data = {**sample.metadata, **sample.store}
+        # Same check as the monitor loader (scripts/helpers/eval_to_dataset.py), so a
+        # transformed log is rejected here too, not only the --transformed flag.
+        if view == ACTION_VIEW and "transformed_solution" in sample_data:
+            raise ValueError(
+                "Per-action views are rendered from the agent's messages; "
+                "transformed (paraphrased/minified) trajectories are not supported"
+            )
         transform_info = sample_data.get("transform_info")
 
         # Get solution based on transformed flag (similar to get_problem_and_solution_from_state)

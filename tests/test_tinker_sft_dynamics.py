@@ -1,5 +1,6 @@
 """Offline regression check: PYTHONPATH=src python tests/test_tinker_sft_dynamics.py."""
 
+import asyncio
 import csv
 import json
 import tempfile
@@ -260,9 +261,30 @@ def test_transformed_cli():
                 assert record.call_args.kwargs["solution_field"] == field
 
 
+def test_score_retries_a_transient_failure():
+    calls = []
+
+    async def flaky(*, user_prompt, **_):
+        calls.append(user_prompt)
+        if len(calls) == 1:
+            raise RuntimeError("transient")
+        yes = user_prompt == "attack"
+        return {"YES": -0.1 if yes else -2.0, "NO": -2.0 if yes else -0.1}
+
+    examples = [(1, "system", "attack"), (0, "system", "honeypot")]
+    with (
+        patch.object(dynamics, "collusion_yes_no_logprobs", flaky),
+        patch.object(asyncio, "sleep", new_callable=AsyncMock),
+    ):
+        auc, scores = asyncio.run(dynamics._score("tinker://step-0", examples, 1))
+    assert auc == 1.0 and len(scores) == 2
+    assert sorted(calls) == ["attack", "attack", "honeypot"]  # the failure is re-asked
+
+
 if __name__ == "__main__":
     test_filter_and_preprocessing()
     test_csv_provenance_and_retry()
+    test_score_retries_a_transient_failure()
     test_final_checkpoint_timing()
     test_transformed_cli()
     print("Dynamics regression checks passed")

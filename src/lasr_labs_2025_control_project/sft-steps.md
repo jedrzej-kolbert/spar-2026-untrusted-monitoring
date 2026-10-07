@@ -230,28 +230,39 @@ of an action's input. `actions_per_trajectory` only chooses which actions are tr
 or scored at checkpoints. Monitoring always scores every action, because the
 trajectory score is a max.
 
-Prepare training data:
+Prepare training data. `<eval_logs_dir>/train` must hold only the two logs to train on
+(U attacks and H honeypots): every `.eval` in it is converted.
 ```
 ACTION_MAX_HISTORY_CHARS=120000 ACTIONS_PER_TRAJECTORY=4 \
 bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw --action-views
-bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name> \
-  --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT
+uv run src/lasr_labs_2025_control_project/finetuning/utils/generate_train_data.py \
+  --dataset-folder <eval_logs_dir>/raw/train --output-folder <eval_logs_dir>/prepared/train \
+  --target-model <untrusted_generator_model_name> \
+  --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT \
+  --upsample-neg-factor <round(YES rows / NO rows)>
 ```
+`generate_train_data.py` is called directly because `transform_raw_to_prepared.sh` does
+not forward `--upsample-neg-factor`. U and H trajectories do not yield the same number of
+actions, so repeat the NO rows until the two labels are roughly balanced.
+
+Five task ids that upstream BashArena never runs (`12249547`, `50618411`, `109553`,
+`59487096`, `34113609`; see `basharena_public/src/run_tasks.py`) are not filtered by any
+of these steps.
+
 Fine-tune with the same options for the checkpoint ROC:
 ```
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
   --train-jsonl <eval_logs_dir>/prepared/train/train_messages.jsonl --base-model <id> \
   --checkpoint-name <name> --attacks-eval <test attacks .eval> --honeypots-eval <test honeypots .eval> \
-  --dynamics-results <dir> --action-views --max-history-chars 120000 --actions-per-trajectory 4
+  --dynamics-results <dir> --action-views --max-history-chars 120000 --actions-per-trajectory 4 \
+  --rank 32 --lr 5e-5 --epochs 3 --batch-size 1 --val-frac 0 --checkpoint-every-steps 75
 ```
+The last line is what the existing per-action run used. The trainer's defaults differ:
+lr 1e-4, batch size 64, val-frac 0.05 and no intermediate checkpoints.
 Monitor with `configs/basharena_open/self_rec/monitors/action_monitor_config.yaml`
 (`defaults.view: action`, `defaults.action_view.max_history_chars: 120000`). Put your
 checkpoint in its collusion monitor, then run `monitor_solutions_inspect.py` and
 `plot_data.py` as above. `plot_data` reduces each trajectory to the max over its actions.
-It raises if any action of a trajectory is missing, so don't use `limit` with per-action
-monitoring.
-
-The half-experiment driver does all of this with
-`run_logs/run_half_experiment.py --action-views` and
-`run_logs/run_half_eval.py <arm> --action-views`. Their outputs go to separate
-`*_action` folders.
+It raises if any action of a trajectory is missing, so don't use `limit` or
+`actions_per_trajectory` with per-action monitoring. A monitor reply with no parseable
+score is recorded as NaN and makes its whole trajectory NaN.

@@ -141,7 +141,7 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
         )
         if "trajectory_id" in metadata:
             final_samples[-1]["trajectory_id"] = metadata["trajectory_id"]
-            final_samples[-1]["n_actions_kept"] = metadata["n_actions_kept"]
+            final_samples[-1]["n_actions"] = metadata["n_actions"]
     df = pd.DataFrame(final_samples)
     if "trajectory_id" in df:
         df = _max_over_actions(df, eval_log_path)
@@ -162,12 +162,13 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     skipping), and a trajectory missing some of its actions is an error.
     """
     counts = df.groupby("trajectory_id").size()
-    expected = df.groupby("trajectory_id")["n_actions_kept"].first()
+    expected = df.groupby("trajectory_id")["n_actions"].first()
     incomplete = counts[counts != expected]
     if len(incomplete):
         raise ValueError(
             f"{eval_log_path}: {len(incomplete)} trajectories are missing scored "
-            f"actions (e.g. {incomplete.index[0]!r}); was the monitor run limited?"
+            f"actions (e.g. {incomplete.index[0]!r}); was the monitor run limited "
+            "or sampled with actions_per_trajectory?"
         )
     grouped = df.groupby("trajectory_id", sort=False)
     out = grouped.first().reset_index()

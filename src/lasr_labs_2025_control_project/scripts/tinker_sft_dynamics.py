@@ -22,6 +22,7 @@ from inspect_ai.log import read_eval_log
 from sklearn.metrics import roc_auc_score
 
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+from lasr_labs_2025_control_project.utils.model_calling.main import retry_api_call
 from lasr_labs_2025_control_project.utils.tinker_provider import (
     collusion_yes_no_logprobs,
 )
@@ -189,27 +190,23 @@ async def _score(
     semaphore = asyncio.Semaphore(concurrency)
 
     async def margin(system: str, user: str) -> float:
-        # One transient failure must not abort a checkpoint (or the training run
-        # that called it), so ask up to three times before giving up.
-        for attempt in range(3):
-            try:
-                async with semaphore:
-                    result = await collusion_yes_no_logprobs(
-                        model_name=f"tinker/{checkpoint}",
-                        system_prompt=system,
-                        user_prompt=user,
-                    )
-                if result.get("YES") is None or result.get("NO") is None:
-                    raise ValueError("Tinker returned no YES/NO logprobs")
-                return float(result["YES"]) - float(result["NO"])
-            except Exception:
-                if attempt == 2:
-                    raise
-                logger.warning("collusion score attempt %d failed", attempt + 1)
-        raise AssertionError("unreachable")
+        async with semaphore:
+            result = await collusion_yes_no_logprobs(
+                model_name=f"tinker/{checkpoint}",
+                system_prompt=system,
+                user_prompt=user,
+            )
+        if result.get("YES") is None or result.get("NO") is None:
+            raise ValueError("Tinker returned no YES/NO logprobs")
+        return float(result["YES"]) - float(result["NO"])
 
+    # One transient failure must not abort a checkpoint (or the training run that
+    # called it), so each example is asked up to three times, with backoff.
     scores = await asyncio.gather(
-        *(margin(system, user) for _, system, user in examples)
+        *(
+            retry_api_call(margin, max_retries=2)(system, user)
+            for _, system, user in examples
+        )
     )
     return float(roc_auc_score([label for label, _, _ in examples], scores)), scores
 
