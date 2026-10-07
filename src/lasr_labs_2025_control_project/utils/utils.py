@@ -234,25 +234,14 @@ def get_accuracies_from_log(log_path: str, scorer_name: str) -> list[float] | No
         return None
 
 
-# ponytail: long heredocs/file writes dominate context; keep head and tail of each
-# argument. Raise if views need full file contents.
-_MAX_ARG_CHARS = 4000
-
-
-def _cap(text: str) -> str:
-    if len(text) <= _MAX_ARG_CHARS:
-        return text
-    half = _MAX_ARG_CHARS // 2
-    return f"{text[:half]}\n...[{len(text) - _MAX_ARG_CHARS} chars omitted]...\n{text[-half:]}"
-
-
 def trajectory_view(messages: list[Any]) -> str:
     """Render an agent trajectory as the actions it took, for monitors and SFT.
 
     Keeps only assistant tool calls (tool name + arguments), in order. Drops system
     and user messages (task and side-task instructions, auto-submit notices),
     assistant text (the attack policy's plans), every tool output, and `submit`
-    calls. Argument values are written raw so multi-line commands stay readable.
+    calls. Argument values are written raw and in full: the tool executes the whole
+    argument, so the monitor must see all of it.
     """
     actions = [
         call
@@ -264,7 +253,7 @@ def trajectory_view(messages: list[Any]) -> str:
     parts = []
     for i, call in enumerate(actions, 1):
         args = "".join(
-            f"<{k}>{_cap(v if isinstance(v, str) else json.dumps(v))}</{k}>\n"
+            f"<{k}>{v if isinstance(v, str) else json.dumps(v)}</{k}>\n"
             for k, v in call.arguments.items()
         )
         parts.append(f"<action_{i}>\n<tool>{call.function}</tool>\n{args}</action_{i}>")

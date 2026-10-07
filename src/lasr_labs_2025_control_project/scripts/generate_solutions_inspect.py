@@ -318,7 +318,7 @@ def bigcodebench_solutions(
 
 # ponytail: Inspect aborts a whole eval when one task image fails to build, so tasks
 # that cannot build on this machine are dropped by hand (1003684 runs mknod during
-# docker build). Find more with run_logs/prebuild_test_images.py.
+# docker build).
 UNBUILDABLE_TASKS = {"1003684"}
 
 
