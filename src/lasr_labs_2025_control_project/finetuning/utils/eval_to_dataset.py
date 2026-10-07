@@ -26,7 +26,7 @@ from lasr_labs_2025_control_project.utils.utils import (
     action_views,
     check_sample_is_valid,
     format_solution,
-    is_code_setting,
+    is_python_solution,
     remove_comments,
     select_action_views,
 )
@@ -164,7 +164,8 @@ def process_eval_log(
             # Optionally remove comments from base solution
             solution = (
                 base_solution
-                if keep_comments or not is_code_setting(sample_data.get("setting_name"))
+                if keep_comments
+                or not is_python_solution(sample_data.get("setting_name"))
                 else remove_comments(base_solution)
             )
 

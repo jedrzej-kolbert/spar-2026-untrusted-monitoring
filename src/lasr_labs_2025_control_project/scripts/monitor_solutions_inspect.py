@@ -44,7 +44,7 @@ from lasr_labs_2025_control_project.utils.tinker_provider import (
 )
 from lasr_labs_2025_control_project.utils.utils import (
     format_solution,
-    is_code_setting,
+    is_python_solution,
     remove_comments,
 )
 
@@ -305,7 +305,7 @@ def get_problem_and_solution_from_state(
         solution = (
             remove_comments(state.metadata["base_solution"])
             if remove_comments_from_solution
-            and is_code_setting(state.metadata.get("setting_name"))
+            and is_python_solution(state.metadata.get("setting_name"))
             else state.metadata["base_solution"]
         )
 
