@@ -29,7 +29,7 @@ from lasr_labs_2025_control_project.utils.utils import (
     apply_python_code_format,
     check_sample_is_valid,
     format_solution,
-    is_code_setting,
+    is_python_solution,
     remove_comments,
 )
 
@@ -88,7 +88,7 @@ def load_eval_examples(
             if solution_field == "base_solution":
                 solution = (
                     apply_python_code_format(remove_comments(solution))
-                    if is_code_setting(setting)
+                    if is_python_solution(setting)
                     else format_solution(solution, setting)
                 )
             examples.append(

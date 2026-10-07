@@ -23,15 +23,18 @@ def apply_python_code_format(x: str) -> str:
     return x
 
 
-def is_code_setting(setting_name: str | None) -> bool:
-    """BashArena solutions are action trajectories, not Python: no comment
-    stripping (Python tokenizer) and no ```python fence."""
+def is_python_solution(setting_name: str | None) -> bool:
+    """Whether a setting's solutions are Python source, which is the default.
+
+    BashArena solutions are action trajectories, not Python: no comment
+    stripping (Python tokenizer) and no ```python fence.
+    """
     return setting_name != "bash_arena"
 
 
 def format_solution(x: str, setting_name: str | None) -> str:
     """Fence a solution for monitor and SFT prompts."""
-    if is_code_setting(setting_name):
+    if is_python_solution(setting_name):
         return apply_python_code_format(x)
     return f"```\n{x.strip()}\n```"
 
