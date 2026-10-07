@@ -70,9 +70,9 @@ def _extract_scores_from_df(
     Returns:
     pd.DataFrame: DataFrame containing only the specified column with scores.
     """
-    assert (
-        column_name in df.columns
-    ), f"Column '{column_name}' not found in DataFrame.\nAvailable columns: {df.columns.tolist()}"
+    assert column_name in df.columns, (
+        f"Column '{column_name}' not found in DataFrame.\nAvailable columns: {df.columns.tolist()}"
+    )
 
     try:
         # use .loc to filter rows

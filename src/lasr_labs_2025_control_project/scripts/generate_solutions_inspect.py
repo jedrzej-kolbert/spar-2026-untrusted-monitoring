@@ -429,9 +429,9 @@ def main(
         config_path, normalized.experiment_folder / "configs" / "generator_config.yaml"
     )
     for run in normalized.runs:
-        assert isinstance(
-            run, GeneratorRunConfig
-        ), "Run is not a GeneratorRunConfig, make sure to use the correct config"
+        assert isinstance(run, GeneratorRunConfig), (
+            "Run is not a GeneratorRunConfig, make sure to use the correct config"
+        )
 
         if run.generator.dataset_type == DatasetType.BASHARENA:
             model = run.generator.model_info.model
@@ -491,6 +491,11 @@ def main(
         run.save_path.parent.mkdir(parents=True, exist_ok=True)
         run.save_path.touch()
         shutil.copy(result[0].location, run.save_path)
+        if result[0].status != "success":
+            raise SystemExit(
+                f"{run.label}: eval ended with status {result[0].status!r}, "
+                f"log saved to {run.save_path}"
+            )
 
 
 if __name__ == "__main__":
