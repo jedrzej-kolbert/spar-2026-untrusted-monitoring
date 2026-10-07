@@ -16,7 +16,9 @@ import pytest
 class _StubTok:
     eos_token_id = 99
 
-    def apply_chat_template(self, messages, add_generation_prompt, tokenize, return_dict=False, **kw):
+    def apply_chat_template(
+        self, messages, add_generation_prompt, tokenize, return_dict=False, **kw
+    ):
         return {"input_ids": [1, 2, 3]}  # 3-token prompt
 
     def encode(self, text, add_special_tokens=False):
@@ -46,10 +48,10 @@ def stub_finetune(monkeypatch):
     from lasr_labs_2025_control_project.utils import tinker_provider as tp
 
     monkeypatch.setattr(tp, "_tokenizer", lambda base_model: _StubTok())
-    fake_types = pytypes.SimpleNamespace(
-        ModelInput=_StubModelInput, Datum=_StubDatum
+    fake_types = pytypes.SimpleNamespace(ModelInput=_StubModelInput, Datum=_StubDatum)
+    monkeypatch.setitem(
+        sys.modules, "tinker", pytypes.SimpleNamespace(types=fake_types)
     )
-    monkeypatch.setitem(sys.modules, "tinker", pytypes.SimpleNamespace(types=fake_types))
     from lasr_labs_2025_control_project.finetuning import tinker_lora_finetune as ft
 
     return ft

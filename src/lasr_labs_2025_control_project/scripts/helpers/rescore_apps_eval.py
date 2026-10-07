@@ -89,9 +89,9 @@ def main(eval_path: str, limit: int | None, out: str | None, max_sandboxes: int)
     assert log.samples, "No samples in the eval log"
     stored = log.samples[:limit]
     mode = EvalMode(stored[0].metadata["eval_mode"])
-    assert all(
-        s.metadata["eval_mode"] == mode.value for s in stored
-    ), "Mixed eval modes"
+    assert all(s.metadata["eval_mode"] == mode.value for s in stored), (
+        "Mixed eval modes"
+    )
     assert len({s.epoch for s in stored}) == 1, "Multi-epoch logs are not supported"
 
     old = {s.id: s.scores["apps_scorer"].value for s in stored}  # type: ignore[index]
