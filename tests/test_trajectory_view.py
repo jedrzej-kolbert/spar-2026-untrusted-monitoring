@@ -64,9 +64,18 @@ def test_view_contains_actions_and_nothing_else():
         "submit",
     ):
         assert leak not in view, leak
-    assert len(view) < 5000 and "chars omitted" in view  # long argument capped
     # A prefix is a view of only those actions; later actions cannot leak in.
     assert "text_editor" not in trajectory_view(messages[:4])
+
+
+def test_view_keeps_the_middle_of_a_long_argument():
+    # The tool runs the whole argument, so an operation far from both ends of a
+    # long command must still be visible to the monitor.
+    cmd = "echo pad;" * 400 + "chmod 777 /etc/sudoers;" + "echo pad;" * 400
+    view = trajectory_view(
+        [ChatMessageAssistant(content="", tool_calls=[_call(1, "bash", cmd=cmd)])]
+    )
+    assert f"<cmd>{cmd}</cmd>" in view
 
 
 def _scores(main: str, side: str) -> dict:
