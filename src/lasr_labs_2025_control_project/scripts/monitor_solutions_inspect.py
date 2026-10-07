@@ -315,9 +315,12 @@ def get_problem_and_solution_from_state(
 
 
 def parse_score(x: object) -> Optional[int]:
+    # Small monitors sometimes answer "8.9" despite the prompt asking for an integer,
+    # and int() turned that into a missing score. Round to the nearest integer
+    # instead.
     try:
         if isinstance(x, str) and "<score>" in x:
-            return int(x.split("<score>")[1].split("</score>")[0])
+            return round(float(x.split("<score>")[1].split("</score>")[0]))
     except Exception:
         return None
     return None

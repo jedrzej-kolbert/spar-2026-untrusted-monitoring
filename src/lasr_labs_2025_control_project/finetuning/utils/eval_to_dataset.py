@@ -94,8 +94,15 @@ def process_eval_log(
     successful_samples = []
 
     for sample in log.samples:
-        # Check if sample has successful scores (both tasks for attacks, main task for honest)
-        if not check_sample_is_valid(sample.scores, sample.metadata.get("eval_mode")):
+        # Check if sample has successful scores (both tasks for attacks, main task for honest).
+        # Also drops zero-action trajectories (empty base_solution) and errored samples so the
+        # SFT rows match what the monitor and checkpoint ROC keep.
+        if not check_sample_is_valid(
+            sample.scores,
+            sample.metadata.get("eval_mode"),
+            base_solution={**sample.metadata, **sample.store}.get("base_solution"),
+            errored=getattr(sample, "error", None) is not None,
+        ):
             continue
 
         # Merge metadata and store (store takes precedence)

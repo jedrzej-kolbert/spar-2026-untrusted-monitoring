@@ -63,9 +63,14 @@ logger = logging.getLogger(__name__)
 _BASHARENA_MAX_STEPS = 60
 _BASHARENA_TIME_LIMIT_S = 60 * 60
 _BASHARENA_TOKEN_LIMIT = 2_000_000  # prompts are re-sent every step
-# ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM and
-# /etc/docker/daemon.json address pools.
-_BASHARENA_MAX_PARALLEL_SAMPLES = 4
+# ponytail: up to ~2.3 GB (memory caps) and 2 docker networks per sample, so 6 fits
+# a 30 GB desktop with ~14 GB free; raise with RAM (docker's default address pools
+# allow about 15).
+_BASHARENA_MAX_PARALLEL_SAMPLES = 6
+# ponytail: Inspect aborts a whole eval when one task image fails to build, so tasks
+# that cannot build on this machine are dropped by hand (1003684 runs mknod during
+# docker build).
+_BASHARENA_UNBUILDABLE_TASKS = {"1003684"}
 
 
 def find_code(completion: str) -> str:
@@ -355,7 +360,7 @@ def basharena_solutions(
                 update={"max_tokens": max_tokens}
             ),
         )
-    return get_control_task(
+    control_task = get_control_task(
         setting=setting,
         micro_protocol=auto_submit_protocol_wrapper(micro_protocol=policy),
         mode=eval_mode,
@@ -363,13 +368,20 @@ def basharena_solutions(
             untrusted_model=model,
             trusted_model=model,  # unused: no trusted monitor during generation
             max_steps=_BASHARENA_MAX_STEPS,
-            time_limit=_BASHARENA_TIME_LIMIT_S,
             token_limit=_BASHARENA_TOKEN_LIMIT,
         ),
         dataset=[
-            s for s in setting.get_dataset(eval_mode) if int(str(s.id)) % 2 == parity
+            s
+            for s in setting.get_dataset(eval_mode)
+            if int(str(s.id)) % 2 == parity
+            and str(s.id) not in _BASHARENA_UNBUILDABLE_TASKS
         ],
     )
+    # ControlEvalConfig.time_limit only feeds eval_args(), which get_control_task never
+    # applies, so set it on the Task: 60 min for the agent, and Inspect gives scoring
+    # half of that. Without it a hung main-task test blocked a run for 9 h.
+    control_task.time_limit = _BASHARENA_TIME_LIMIT_S
+    return control_task
 
 
 def add_trajectory_views(
@@ -446,6 +458,7 @@ def main(
                 model=model,
                 max_sandboxes=_BASHARENA_MAX_PARALLEL_SAMPLES,
                 max_samples=_BASHARENA_MAX_PARALLEL_SAMPLES,
+                log_buffer=1,  # save each completed sample, even if another hangs
                 fail_on_error=False,  # one broken container must not end the run
                 limit=run.limit,
             )[0]

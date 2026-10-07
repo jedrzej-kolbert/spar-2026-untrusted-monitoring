@@ -96,7 +96,7 @@ class RunConfig:
 
     label: RunLabel
     save_path: Path
-    limit: Optional[int]
+    limit: int | tuple[int, int] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +360,16 @@ def _build_base_run_config(
     save_path = _resolve_eval_path(experiment_folder, save_path_str)
 
     limit = run_cfg.get("limit", defaults.get("limit"))
+    if isinstance(limit, list):
+        if (
+            len(limit) != 2
+            or any(type(value) is not int for value in limit)
+            or not 0 <= limit[0] < limit[1]
+        ):
+            raise ValueError(
+                "limit range must be [start, stop], with 0 <= start < stop"
+            )
+        limit = tuple(limit)  # Inspect's native, zero-based [start, stop) range.
     return RunConfig(
         label=label,
         save_path=save_path,
