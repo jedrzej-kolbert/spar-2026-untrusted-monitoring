@@ -41,7 +41,6 @@ from inspect_ai.model import (
     GenerateConfig,
     ModelAPI,
     ModelOutput,
-    ModelUsage,
 )
 from inspect_ai.model import (
     modelapi as _modelapi,
@@ -380,22 +379,13 @@ class TinkerAPI(ModelAPI):
         stop_reason = (
             "max_tokens" if str(seq.stop_reason).lower().endswith("length") else "stop"
         )
-        # Token counts so eval logs record usage (cost estimates); Tinker bills the
-        # full prompt on every call.
-        usage = ModelUsage(
-            input_tokens=prompt.length,
-            output_tokens=len(seq.tokens),
-            total_tokens=prompt.length + len(seq.tokens),
-        )
         if not tools:
             text = _tokenizer(self.base_model).decode(
                 list(seq.tokens), skip_special_tokens=True
             )
-            output = ModelOutput.from_content(
+            return ModelOutput.from_content(
                 model=self.model_name, content=text, stop_reason=stop_reason
             )
-            output.usage = usage
-            return output
 
         from tinker_cookbook.renderers import get_text_content
 
@@ -414,7 +404,6 @@ class TinkerAPI(ModelAPI):
                     stop_reason="tool_calls" if tool_calls else stop_reason,
                 )
             ],
-            usage=usage,
         )
 
     def connection_key(self) -> str:
