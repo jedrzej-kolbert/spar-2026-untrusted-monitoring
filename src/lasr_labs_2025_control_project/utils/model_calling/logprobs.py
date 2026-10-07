@@ -139,9 +139,9 @@ def build_logprob_caller(
     except Exception:
         pass
 
-    assert re.match(
-        r"^[^/]+/[^/]+$", model_name
-    ), "model_name must be of the form 'model_provider/model'"
+    assert re.match(r"^[^/]+/[^/]+$", model_name), (
+        "model_name must be of the form 'model_provider/model'"
+    )
     provider, model = model_name.split("/")
 
     openai_client: Optional[OpenAI] = None
