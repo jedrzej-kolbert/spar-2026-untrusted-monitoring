@@ -65,9 +65,9 @@ def eval_to_dataset(
             continue
 
         base_solution = metadata.get("base_solution", None)
-        assert (
-            base_solution is not None
-        ), "No base_solution found in the sample store or metadata"
+        assert base_solution is not None, (
+            "No base_solution found in the sample store or metadata"
+        )
 
         if view == ACTION_VIEW:
             if "transformed_solution" in metadata:
