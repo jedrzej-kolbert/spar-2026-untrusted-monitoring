@@ -139,22 +139,28 @@ class AppsSetting(Setting):
             # Filtering the dataset to have standard format.
             # Dataset has already been filtered to have inputs and outputs for the main task, which are needed for the tests.
             dataset = dataset.filter(
-                lambda x: x.input is not None
-                and "Input" in x.input
-                and "Output" in x.input
-                and "Examples" in x.input
+                lambda x: (
+                    x.input is not None
+                    and "Input" in x.input
+                    and "Output" in x.input
+                    and "Examples" in x.input
+                )
             )
 
         if self.filter_on_split is not None:
             if self.filter_on_split == "odd_train":
                 dataset = dataset.filter(
-                    lambda x: x.id is not None
-                    and (int(x.id) if isinstance(x.id, str) else x.id) % 2 == 1
+                    lambda x: (
+                        x.id is not None
+                        and (int(x.id) if isinstance(x.id, str) else x.id) % 2 == 1
+                    )
                 )
             elif self.filter_on_split == "even_test":
                 dataset = dataset.filter(
-                    lambda x: x.id is not None
-                    and (int(x.id) if isinstance(x.id, str) else x.id) % 2 == 0
+                    lambda x: (
+                        x.id is not None
+                        and (int(x.id) if isinstance(x.id, str) else x.id) % 2 == 0
+                    )
                 )
 
         return dataset

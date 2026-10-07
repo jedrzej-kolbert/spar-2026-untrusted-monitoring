@@ -125,3 +125,7 @@ async def test_generate_via_provider(stub_tinker):
     # stub emits token id 10 -> tokenizer decodes to "YES"
     assert out.completion == "YES"
     assert out.stop_reason == "stop"
+    # one sampled token, plus whatever the chat template produced for the prompt
+    assert out.usage is not None
+    assert out.usage.output_tokens == 1
+    assert out.usage.total_tokens == out.usage.input_tokens + 1
