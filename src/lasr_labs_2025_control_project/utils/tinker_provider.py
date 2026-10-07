@@ -35,6 +35,7 @@ from inspect_ai.model import (
     GenerateConfig,
     ModelAPI,
     ModelOutput,
+    ModelUsage,
 )
 from inspect_ai.model import (
     modelapi as _modelapi,
@@ -263,9 +264,17 @@ class TinkerAPI(ModelAPI):
         stop_reason = (
             "max_tokens" if str(seq.stop_reason).lower().endswith("length") else "stop"
         )
-        return ModelOutput.from_content(
+        output = ModelOutput.from_content(
             model=self.model_name, content=text, stop_reason=stop_reason
         )
+        # Token counts so eval logs record usage (cost estimates); Tinker bills the
+        # full prompt on every call.
+        output.usage = ModelUsage(
+            input_tokens=len(prompt_ids),
+            output_tokens=len(seq.tokens),
+            total_tokens=len(prompt_ids) + len(seq.tokens),
+        )
+        return output
 
     def connection_key(self) -> str:
         return f"tinker/{self.base_model}"
