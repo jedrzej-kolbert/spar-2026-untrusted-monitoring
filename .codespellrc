@@ -1,3 +1,4 @@
 [codespell]
 skip = *.json
-ignore-words-list = alle
+# constitues: a typo in upstream BashArena's monitor prompt, which is kept verbatim.
+ignore-words-list = alle,constitues
