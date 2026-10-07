@@ -207,7 +207,7 @@ def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
 # --------------------------------------------------------------------------- #
 @lru_cache(maxsize=None)
 def _renderer(model_ref: str):
-    from tinker_cookbook.model_info import get_recommended_renderer_names
+    from tinker_cookbook.model_info import get_recommended_renderer_name
     from tinker_cookbook.renderers import get_renderer
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -218,11 +218,9 @@ def _renderer(model_ref: str):
         rest = _service().create_rest_client()
         run = rest.get_training_run_by_tinker_path(model_ref, access_scope="accessible")
         base = run.result().base_model
-    # Thinking off where the family offers it, matching _NOTHINK_TEMPLATE_KWARGS on
-    # the plain path (e.g. Qwen3.5/3.6 default to thinking: long, slow agent turns).
-    names = get_recommended_renderer_names(base)
-    name = next((n for n in names if n.endswith("_disable_thinking")), names[0])
-    return get_renderer(name, get_tokenizer(base), model_name=base)
+    return get_renderer(
+        get_recommended_renderer_name(base), get_tokenizer(base), model_name=base
+    )
 
 
 def _renderer_messages(
