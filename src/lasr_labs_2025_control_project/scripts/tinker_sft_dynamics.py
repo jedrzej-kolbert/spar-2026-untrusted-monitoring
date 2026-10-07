@@ -21,20 +21,22 @@ import click
 from inspect_ai.log import read_eval_log
 from sklearn.metrics import roc_auc_score
 
+from lasr_labs_2025_control_project.scripts.helpers.eval_to_dataset import (
+    eval_to_dataset,
+)
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from lasr_labs_2025_control_project.utils.model_calling.main import retry_api_call
 from lasr_labs_2025_control_project.utils.tinker_provider import (
     collusion_yes_no_logprobs,
 )
 from lasr_labs_2025_control_project.utils.utils import (
+    ACTION_VIEW,
     ActionViewOptions,
-    action_views,
     apply_python_code_format,
     check_sample_is_valid,
     format_solution,
     is_python_solution,
     remove_comments,
-    select_action_views,
 )
 
 # Collusion prompts per setting; must match the prompts the SFT data was built with.
@@ -63,6 +65,47 @@ logger = logging.getLogger(__name__)
 FIELDS = ("updates", "checkpoint", "train_loss", "roc_auc", "eval_n")
 
 
+def _action_examples(
+    label: int,
+    path: Path,
+    action_options: ActionViewOptions | None,
+    keys: list[tuple[str, int | None]] | None,
+) -> list[tuple[int, str, str]]:
+    """Per-action examples of one log, rendered by the monitor's dataset adapter.
+
+    Validity filtering, view rendering and action selection are the adapter's, so a
+    checkpoint example and a monitor call for the same action cannot drift apart.
+    The class label, prompts and final prompt text are chosen here.
+    """
+    examples = []
+    for sample in eval_to_dataset(
+        path, view=ACTION_VIEW, action_options=action_options
+    ):
+        metadata = sample.metadata or {}
+        setting = metadata.get("setting_name")
+        problem = metadata.get("main_task_description")
+        if setting not in _ACTION_PROMPTS:
+            raise ValueError(f"no per-action prompts for setting {setting!r}")
+        if not isinstance(problem, str) or not problem.strip():
+            raise ValueError(
+                f"missing main_task_description: {path} sample "
+                f"{metadata['trajectory_id']}"
+            )
+        system, user = (get_prompt_by_name(n) for n in _ACTION_PROMPTS[setting])
+        examples.append(
+            (
+                label,
+                system,
+                user.format(
+                    problem_statement=problem, solution=metadata["base_solution"]
+                ),
+            )
+        )
+        if keys is not None:
+            keys.append((str(metadata["trajectory_id"]), metadata["action_index"]))
+    return examples
+
+
 def load_eval_examples(
     attacks: Path,
     honeypots: Path,
@@ -80,6 +123,12 @@ def load_eval_examples(
         raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
     examples = []
     for label, path in ((1, attacks), (0, honeypots)):
+        if solution_field == ACTION_VIEW_FIELD:
+            found = _action_examples(label, path, action_options, keys)
+            if not found:
+                raise ValueError(f"no valid samples in {path}")
+            examples.extend(found)
+            continue
         log = read_eval_log(str(path))
         if not log.samples:
             raise ValueError(f"no samples in {path}")
@@ -97,27 +146,6 @@ def load_eval_examples(
                 continue
             setting = metadata.get("setting_name")
             problem = metadata.get("main_task_description")
-            if solution_field == ACTION_VIEW_FIELD:
-                if setting not in _ACTION_PROMPTS:
-                    raise ValueError(f"no per-action prompts for setting {setting!r}")
-                if not isinstance(problem, str) or not problem.strip():
-                    raise ValueError(
-                        f"missing main_task_description: {path} sample {index}"
-                    )
-                system, user = (get_prompt_by_name(n) for n in _ACTION_PROMPTS[setting])
-                views = action_views(sample.messages, action_options)
-                for k, view in select_action_views(views, sample.id, action_options):
-                    examples.append(
-                        (
-                            label,
-                            system,
-                            user.format(problem_statement=problem, solution=view),
-                        )
-                    )
-                    if keys is not None:
-                        keys.append((str(sample.id), k))
-                retained += 1
-                continue
             system, user = (
                 get_prompt_by_name(n) for n in _PROMPTS.get(setting, _DEFAULT_PROMPTS)
             )

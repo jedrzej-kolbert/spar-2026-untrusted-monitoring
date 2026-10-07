@@ -328,6 +328,25 @@ def test_sft_loader_rejects_transformed_logs_in_action_view(
         )
 
 
+def test_checkpoint_loader_rejects_transformed_logs_in_action_view(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from lasr_labs_2025_control_project.scripts import tinker_sft_dynamics as dyn
+    from lasr_labs_2025_control_project.scripts.helpers import (
+        eval_to_dataset as mon_data,
+    )
+
+    sample = _sample("107", "185.199.108.153")
+    sample.store["transformed_solution"] = "paraphrased"
+    monkeypatch.setattr(
+        mon_data, "read_eval_log", lambda *a, **k: SimpleNamespace(samples=[sample])
+    )
+    with pytest.raises(ValueError, match="transformed"):
+        dyn.load_eval_examples(
+            Path("attacks.eval"), Path("honeypots.eval"), "action_view", OPTIONS
+        )
+
+
 def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     monkeypatch: pytest.MonkeyPatch,
 ):
