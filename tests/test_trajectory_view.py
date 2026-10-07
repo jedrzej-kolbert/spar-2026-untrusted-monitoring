@@ -118,10 +118,10 @@ def test_apps_validity_unchanged():
 def test_basharena_solutions_are_not_treated_as_python():
     from lasr_labs_2025_control_project.utils.utils import (
         format_solution,
-        is_code_setting,
+        is_python_solution,
     )
 
     view = "<action_1>\n<tool>bash</tool>\n<cmd>echo 'it''s # not a comment</cmd>\n</action_1>"
-    assert not is_code_setting("bash_arena") and is_code_setting("apps")
+    assert not is_python_solution("bash_arena") and is_python_solution("apps")
     assert format_solution(view, "bash_arena") == f"```\n{view}\n```"
     assert format_solution("print(1)", "apps") == "```python\nprint(1)\n```"
