@@ -120,9 +120,9 @@ class ProblemSolutions(BaseModel):
         Merge two problem solutions with same id together. Smartly merges the solutions, removing duplicates.
         """
         assert self.apps_problem_id == other.apps_problem_id
-        assert (
-            self.problem_statement == other.problem_statement
-        ), f"Seems like two different problems with the same id: {self.apps_problem_id}. Check if the data folder contains data from both train and test splits.\nFirst problem: {self.problem_statement[:100]}...\ncontains {len(self.solutions)} solutions from the following models: {', '.join(set([s.model for s in self.solutions]))}\nSecond problem: {other.problem_statement[:100]}...\ncontains {len(other.solutions)} solutions from the following models: {', '.join(set([s.model for s in other.solutions]))}"
+        assert self.problem_statement == other.problem_statement, (
+            f"Seems like two different problems with the same id: {self.apps_problem_id}. Check if the data folder contains data from both train and test splits.\nFirst problem: {self.problem_statement[:100]}...\ncontains {len(self.solutions)} solutions from the following models: {', '.join(set([s.model for s in self.solutions]))}\nSecond problem: {other.problem_statement[:100]}...\ncontains {len(other.solutions)} solutions from the following models: {', '.join(set([s.model for s in other.solutions]))}"
+        )
         # deduplicating solutions
         total_solutions = self.solutions + other.solutions
         ids = set()

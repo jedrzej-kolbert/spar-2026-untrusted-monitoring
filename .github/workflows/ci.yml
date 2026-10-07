@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # pyright is skipped: it fails repo-wide on pre-existing missing annotations.
+      - name: pre-commit
+        run: uvx pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: pyright
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: pytest
+        run: uv run --frozen pytest

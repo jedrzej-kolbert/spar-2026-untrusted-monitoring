@@ -141,9 +141,9 @@ class LLMParaphraser(Paraphraser):
     def __init__(self, model_name: str):
         self.paraphraser_type = "llm"
         self.paraphraser_kwargs = {"model_name": model_name, "paraphraser_type": "llm"}
-        assert isinstance(model_name, str) and re.match(
-            r"^[^/]+/[^/]+$", model_name
-        ), "model_name must be of the form 'model_provider/model'"
+        assert isinstance(model_name, str) and re.match(r"^[^/]+/[^/]+$", model_name), (
+            "model_name must be of the form 'model_provider/model'"
+        )
         self.paraphraser_calling_type = "async"
         _caller, _ = build_api_caller(model_name=model_name)
         self.caller = _caller
