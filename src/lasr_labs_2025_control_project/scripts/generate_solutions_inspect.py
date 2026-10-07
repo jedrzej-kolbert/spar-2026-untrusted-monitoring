@@ -14,8 +14,16 @@ from pathlib import Path
 
 import click
 from control_arena import EvalMode
+from control_arena.eval import ControlEvalConfig, get_control_task
+from control_arena.settings.bash_arena.bash_arena_setting import BashArenaSetting
+from control_arena.settings.bash_arena.policies.attack_policy import attack_policy
+from control_arena.settings.bash_arena.policies.honest_policy import honest_policy
+from control_arena.settings.bash_arena.protocol.auto_submit_protocol_wrapper import (
+    auto_submit_protocol_wrapper,
+)
 from control_arena.tools.submit_tool import STORE_SUBMIT_ARGS_KEY
 from inspect_ai import Epochs, Task, eval, task
+from inspect_ai.log import EvalLog, read_eval_log, write_eval_log
 from inspect_ai.model import (
     ChatMessageAssistant,
     ModelOutput,
@@ -45,9 +53,19 @@ from lasr_labs_2025_control_project.utils.config_loader import (
     GeneratorRunConfig,
     load_and_normalize_config,
 )
+from lasr_labs_2025_control_project.utils.utils import trajectory_view
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ponytail: fixed BashArena agent limits; move into the config if pilots need tuning.
+# gpt-oss H hit 40 steps on 2/5 pilot tasks; U and H get the same budget.
+_BASHARENA_MAX_STEPS = 60
+_BASHARENA_TIME_LIMIT_S = 60 * 60
+_BASHARENA_TOKEN_LIMIT = 2_000_000  # prompts are re-sent every step
+# ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM and
+# /etc/docker/daemon.json address pools.
+_BASHARENA_MAX_PARALLEL_SAMPLES = 4
 
 
 def find_code(completion: str) -> str:
@@ -307,6 +325,90 @@ def bigcodebench_solutions(
     )
 
 
+def basharena_solutions(
+    eval_mode: EvalMode,
+    data_split: DataSplit,
+    system_prompt: str,
+    model: str,
+    max_tokens: int | None = None,
+) -> Task:
+    """BashArena agent runs (U/H attacks, U honest), ended early if a side task fires.
+
+    BashArena has one split, so task ids (StackOverflow question numbers) are split
+    like APPS problem ids: odd = train, even = test.
+
+    max_tokens overrides the policy's per-step output cap (16000), which counts
+    against the context window: on 32K models (DeepSeek-V3.1 on Tinker) it leaves
+    only ~16K for the growing trajectory.
+    """
+    setting = BashArenaSetting()
+    parity = 1 if data_split == DataSplit.TRAIN else 0  # odd ids train, even ids test
+    make_policy = attack_policy if eval_mode == EvalMode.ATTACK else honest_policy
+    policy = make_policy(model_name=model, system_prompt=system_prompt)
+    if (
+        max_tokens is not None
+    ):  # keep the policy's reasoning settings, change only the cap
+        policy = make_policy(
+            model_name=model,
+            system_prompt=system_prompt,
+            generate_config=policy.generate_config.model_copy(
+                update={"max_tokens": max_tokens}
+            ),
+        )
+    return get_control_task(
+        setting=setting,
+        micro_protocol=auto_submit_protocol_wrapper(micro_protocol=policy),
+        mode=eval_mode,
+        eval_config=ControlEvalConfig(
+            untrusted_model=model,
+            trusted_model=model,  # unused: no trusted monitor during generation
+            max_steps=_BASHARENA_MAX_STEPS,
+            time_limit=_BASHARENA_TIME_LIMIT_S,
+            token_limit=_BASHARENA_TOKEN_LIMIT,
+        ),
+        dataset=[
+            s for s in setting.get_dataset(eval_mode) if int(str(s.id)) % 2 == parity
+        ],
+    )
+
+
+def add_trajectory_views(
+    log_path: str, eval_mode: EvalMode, system_prompt: str, model: str
+) -> EvalLog:
+    """Stores each trajectory's action view in the log, as APPS stores a solution.
+
+    Monitors, SFT data preparation and checkpoint scoring read the view from
+    `sample.store["base_solution"]`. Runs after eval(), not as a solver, because a
+    sample that hits its step, time or token limit skips later solvers.
+
+    Example:
+        log = add_trajectory_views(path, EvalMode.ATTACK, prompt, model)
+        log.samples[0].store["base_solution"]  # "<action_1> <tool>bash</tool> ..."
+
+    Args:
+        log_path: Eval log of a BashArena generation run.
+        eval_mode: Mode the run was generated in.
+        system_prompt: Policy system prompt, recorded in `generator_info`.
+        model: Generator model, including its provider prefix.
+
+    Returns:
+        The log with `base_solution` and `generator_info` set on every sample.
+    """
+    log = read_eval_log(log_path)
+    for sample in log.samples or []:
+        sample.store["base_solution"] = trajectory_view(sample.messages)
+        sample.store["generator_info"] = GeneratorInfo(
+            model_info=ModelInfo(
+                system_prompt=system_prompt,
+                base_prompt=sample.metadata["main_task_description"],
+                model=model.split("/", 1)[1],  # name without provider, as for APPS
+            ),
+            eval_mode=eval_mode,
+            secret_input="",
+        )
+    return log
+
+
 @click.command()
 @click.option(
     "--config",
@@ -330,6 +432,34 @@ def main(
         assert isinstance(run, GeneratorRunConfig), (
             "Run is not a GeneratorRunConfig, make sure to use the correct config"
         )
+
+        if run.generator.dataset_type == DatasetType.BASHARENA:
+            model = run.generator.model_info.model
+            log = eval(
+                tasks=basharena_solutions(
+                    run.generator.eval_mode,
+                    run.generator.data_split,
+                    run.generator.model_info.system_prompt,
+                    model,
+                    run.generator.max_tokens,
+                ),
+                model=model,
+                max_sandboxes=_BASHARENA_MAX_PARALLEL_SAMPLES,
+                max_samples=_BASHARENA_MAX_PARALLEL_SAMPLES,
+                fail_on_error=False,  # one broken container must not end the run
+                limit=run.limit,
+            )[0]
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            write_eval_log(
+                add_trajectory_views(
+                    log.location,
+                    run.generator.eval_mode,
+                    run.generator.model_info.system_prompt,
+                    model,
+                ),
+                str(run.save_path),
+            )
+            continue
 
         # Select the appropriate task based on dataset_type
         if run.generator.dataset_type == DatasetType.APPS:
