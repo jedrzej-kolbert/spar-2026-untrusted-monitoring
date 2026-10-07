@@ -58,6 +58,15 @@ from lasr_labs_2025_control_project.utils.utils import trajectory_view
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ponytail: fixed BashArena agent limits; move into the config if pilots need tuning.
+# gpt-oss H hit 40 steps on 2/5 pilot tasks; U and H get the same budget.
+_BASHARENA_MAX_STEPS = 60
+_BASHARENA_TIME_LIMIT_S = 60 * 60
+_BASHARENA_TOKEN_LIMIT = 2_000_000  # prompts are re-sent every step
+# ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM and
+# /etc/docker/daemon.json address pools.
+_BASHARENA_MAX_PARALLEL_SAMPLES = 4
+
 
 def find_code(completion: str) -> str:
     """
@@ -333,7 +342,7 @@ def basharena_solutions(
     only ~16K for the growing trajectory.
     """
     setting = BashArenaSetting()
-    parity = 1 if data_split == DataSplit.TRAIN else 0
+    parity = 1 if data_split == DataSplit.TRAIN else 0  # odd ids train, even ids test
     make_policy = attack_policy if eval_mode == EvalMode.ATTACK else honest_policy
     policy = make_policy(model_name=model, system_prompt=system_prompt)
     if (
@@ -350,13 +359,12 @@ def basharena_solutions(
         setting=setting,
         micro_protocol=auto_submit_protocol_wrapper(micro_protocol=policy),
         mode=eval_mode,
-        # ponytail: fixed agent limits; move into the config if pilots need tuning.
         eval_config=ControlEvalConfig(
             untrusted_model=model,
             trusted_model=model,  # unused: no trusted monitor during generation
-            max_steps=60,  # gpt-oss H hit 40 on 2/5 pilot tasks; same budget for U and H
-            time_limit=60 * 60,
-            token_limit=2_000_000,  # prompts are re-sent every step
+            max_steps=_BASHARENA_MAX_STEPS,
+            time_limit=_BASHARENA_TIME_LIMIT_S,
+            token_limit=_BASHARENA_TOKEN_LIMIT,
         ),
         dataset=[
             s for s in setting.get_dataset(eval_mode) if int(str(s.id)) % 2 == parity
@@ -367,10 +375,24 @@ def basharena_solutions(
 def add_trajectory_views(
     log_path: str, eval_mode: EvalMode, system_prompt: str, model: str
 ) -> EvalLog:
-    """Store each trajectory's action view as base_solution, like an APPS solution.
+    """Stores each trajectory's action view in the log, as APPS stores a solution.
 
-    Done after eval() rather than in a solver: a sample that hits its step, time or
-    token limit skips later solvers, and this keeps the view re-renderable offline.
+    Monitors, SFT data preparation and checkpoint scoring read the view from
+    `sample.store["base_solution"]`. Runs after eval(), not as a solver, because a
+    sample that hits its step, time or token limit skips later solvers.
+
+    Example:
+        log = add_trajectory_views(path, EvalMode.ATTACK, prompt, model)
+        log.samples[0].store["base_solution"]  # "<action_1> <tool>bash</tool> ..."
+
+    Args:
+        log_path: Eval log of a BashArena generation run.
+        eval_mode: Mode the run was generated in.
+        system_prompt: Policy system prompt, recorded in `generator_info`.
+        model: Generator model, including its provider prefix.
+
+    Returns:
+        The log with `base_solution` and `generator_info` set on every sample.
     """
     log = read_eval_log(log_path)
     for sample in log.samples or []:
@@ -422,10 +444,8 @@ def main(
                     run.generator.max_tokens,
                 ),
                 model=model,
-                # ponytail: ~2.3 GB and 2 docker networks per sample; raise with RAM
-                # and /etc/docker/daemon.json address pools.
-                max_sandboxes=4,
-                max_samples=4,
+                max_sandboxes=_BASHARENA_MAX_PARALLEL_SAMPLES,
+                max_samples=_BASHARENA_MAX_PARALLEL_SAMPLES,
                 fail_on_error=False,  # one broken container must not end the run
                 limit=run.limit,
             )[0]
