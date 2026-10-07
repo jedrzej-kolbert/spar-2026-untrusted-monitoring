@@ -28,7 +28,21 @@ from lasr_labs_2025_control_project.utils.tinker_provider import (
 from lasr_labs_2025_control_project.utils.utils import (
     apply_python_code_format,
     check_sample_is_valid,
+    format_solution,
+    is_python_solution,
     remove_comments,
+)
+
+# Collusion prompts per setting; must match the prompts the SFT data was built with.
+_PROMPTS = {
+    "bash_arena": (
+        "BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT",
+        "BASHARENA_MONITOR_USER_PROMPT",
+    ),
+}
+_DEFAULT_PROMPTS = (
+    "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+    "MONITOR_USER_PROMPT",
 )
 
 logger = logging.getLogger(__name__)
@@ -39,8 +53,6 @@ def load_eval_examples(
     attacks: Path, honeypots: Path, solution_field: str
 ) -> list[tuple[int, str, str]]:
     """Use source file as the ROC label; never infer it from the model's answer."""
-    system = get_prompt_by_name("SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT")
-    user = get_prompt_by_name("MONITOR_USER_PROMPT")
     examples = []
     for label, path in ((1, attacks), (0, honeypots)):
         log = read_eval_log(str(path))
@@ -48,9 +60,15 @@ def load_eval_examples(
             raise ValueError(f"no samples in {path}")
         retained = 0
         for index, sample in enumerate(log.samples):
-            if not check_sample_is_valid(sample.scores):
+            if not check_sample_is_valid(
+                sample.scores, (sample.metadata or {}).get("eval_mode")
+            ):
                 continue
             metadata = {**(sample.metadata or {}), **(sample.store or {})}
+            setting = metadata.get("setting_name")
+            system, user = (
+                get_prompt_by_name(n) for n in _PROMPTS.get(setting, _DEFAULT_PROMPTS)
+            )
             problem = metadata.get("main_task_description")
             solution = metadata.get(solution_field)
             if (
@@ -63,7 +81,11 @@ def load_eval_examples(
                     f"missing main_task_description or {solution_field}: {path} sample {index}"
                 )
             if solution_field == "base_solution":
-                solution = apply_python_code_format(remove_comments(solution))
+                solution = (
+                    apply_python_code_format(remove_comments(solution))
+                    if is_python_solution(setting)
+                    else format_solution(solution, setting)
+                )
             examples.append(
                 (
                     label,
@@ -152,19 +174,44 @@ def _plot(rows: list[dict[str, str]], output: Path) -> None:
     )
     if not complete:
         return
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, (ax, loss_ax) = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
     ax.plot(
         [int(row["updates"]) for row in complete],
         [float(row["roc_auc"]) for row in complete],
         marker="o",
     )
+    ax.axhline(0.5, color="grey", linestyle="--", linewidth=1)
     ax.set(
-        xlabel="Number of gradient updates",
-        ylabel="Attack vs honeypot ROC AUC",
+        ylabel="Test attack vs honeypot ROC AUC",
         title="Self-recognition SFT dynamics",
         ylim=(0, 1),
     )
     ax.grid(alpha=0.2)
+    loss_csv = output.parent / "train_loss.csv"
+    if loss_csv.exists():
+        with loss_csv.open(newline="", encoding="utf-8") as file:
+            steps = [
+                (int(r["step"]), float(r["loss"]))
+                for r in csv.DictReader(file)
+                if r["loss"]
+            ]
+        if steps:
+            xs, ys = zip(*steps)
+            window = 10
+            smooth = [
+                sum(ys[max(0, i - window + 1) : i + 1])
+                / len(ys[max(0, i - window + 1) : i + 1])
+                for i in range(len(ys))
+            ]
+            loss_ax.plot(
+                xs, ys, color="tab:orange", alpha=0.3, linewidth=1, label="per step"
+            )
+            loss_ax.plot(
+                xs, smooth, color="tab:orange", linewidth=2, label=f"{window}-step mean"
+            )
+            loss_ax.legend()
+    loss_ax.set(xlabel="Number of gradient updates", ylabel="Train loss (per-token CE)")
+    loss_ax.grid(alpha=0.2)
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output)
@@ -182,8 +229,10 @@ def record_checkpoint(
     solution_field: str,
 ) -> None:
     """Persist the checkpoint URI before Tinker evaluation, then refresh the plot."""
-    if not checkpoint.startswith("tinker://"):
-        raise ValueError("checkpoint must be a tinker:// sampler weights path")
+    if not checkpoint.startswith("tinker://") and updates != 0:
+        raise ValueError(
+            "checkpoint must be a tinker:// sampler weights path (or the base model at update 0)"
+        )
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
     csv_path = results_dir / "dynamics.csv"

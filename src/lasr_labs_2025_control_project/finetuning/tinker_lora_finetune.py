@@ -47,8 +47,9 @@ from __future__ import annotations
 import json
 import logging
 import random
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any
 
 import click
 
@@ -123,7 +124,7 @@ def _batches(items: list[Any], size: int) -> Iterator[list[Any]]:
         yield items[i : i + size]
 
 
-def _mean_loss(fb_output: Any, batch: list[Any]) -> Optional[float]:
+def _mean_loss(fb_output: Any, batch: list[Any]) -> float | None:
     """Best-effort weighted mean NLL for logging.
 
     cross_entropy returns per-datum logprobs of the target tokens; the training
@@ -155,14 +156,14 @@ def finetune(
     epochs: int = 3,
     batch_size: int = 64,
     checkpoint_name: str = "self_rec_u",
-    max_examples: Optional[int] = None,
+    max_examples: int | None = None,
     seed: int = 0,
     val_frac: float = 0.05,
     checkpoint_every_steps: int = 0,
-    attacks_eval: Optional[Path] = None,
-    honeypots_eval: Optional[Path] = None,
+    attacks_eval: Path | None = None,
+    honeypots_eval: Path | None = None,
     solution_field: str = "base_solution",
-    dynamics_results: Optional[Path] = None,
+    dynamics_results: Path | None = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
     import tinker
@@ -226,6 +227,19 @@ def finetune(
     step = 0
     loss = None
     last_checkpoint = None
+    if attacks_eval is not None and epochs > 0:
+        # Untrained monitor as the curve's starting point (update 0).
+        record_checkpoint(
+            base_model,
+            0,
+            None,
+            eval_examples,
+            dynamics_results,
+            solution_field=solution_field,
+        )
+        loss_csv = dynamics_results / "train_loss.csv"
+        if not loss_csv.exists():
+            loss_csv.write_text("step,epoch,loss\n")
     for epoch in range(epochs):
         rng.shuffle(data)
         for batch in _batches(data, batch_size):
@@ -235,6 +249,9 @@ def finetune(
             opt_future.result()
             step += 1
             loss = _mean_loss(fb_output, batch)
+            if attacks_eval is not None:
+                with (dynamics_results / "train_loss.csv").open("a") as f:
+                    f.write(f"{step},{epoch},{'' if loss is None else loss}\n")
             logger.info(
                 "epoch %d step %d (%d examples)%s",
                 epoch,
@@ -396,15 +413,15 @@ def main(
     epochs: int,
     batch_size: int,
     checkpoint_name: str,
-    max_examples: Optional[int],
+    max_examples: int | None,
     seed: int,
     val_frac: float,
-    out_path_file: Optional[Path],
+    out_path_file: Path | None,
     checkpoint_every_steps: int,
-    attacks_eval: Optional[Path],
-    honeypots_eval: Optional[Path],
+    attacks_eval: Path | None,
+    honeypots_eval: Path | None,
     transformed: bool,
-    dynamics_results: Optional[Path],
+    dynamics_results: Path | None,
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
     # in a gitignored .env. Without this the trainer dies immediately with

@@ -48,10 +48,12 @@ def test_filter_and_preprocessing():
         SimpleNamespace(samples=[valid]),
     ]
 
-    def prompt(name: str) -> str:
-        if name == "MONITOR_USER_PROMPT":
-            return "{problem_statement}\n{solution}"
-        return "system"
+    def prompt(name):
+        return (
+            "{problem_statement}\n{solution}"
+            if name == "MONITOR_USER_PROMPT"
+            else "system"
+        )
 
     with patch.object(dynamics, "get_prompt_by_name", side_effect=prompt):
         for field, expected in (
@@ -74,15 +76,17 @@ def test_filter_and_preprocessing():
                     dynamics.load_eval_examples(
                         Path("attacks"), Path("honeypots"), "base_solution"
                     )
-        with patch.object(
-            dynamics,
-            "read_eval_log",
-            return_value=SimpleNamespace(samples=[sample("C", "")]),
+        with (
+            patch.object(
+                dynamics,
+                "read_eval_log",
+                return_value=SimpleNamespace(samples=[sample("C", "")]),
+            ),
+            raises(ValueError, "missing main_task_description or base_solution"),
         ):
-            with raises(ValueError, "missing main_task_description or base_solution"):
-                dynamics.load_eval_examples(
-                    Path("attacks"), Path("honeypots"), "base_solution"
-                )
+            dynamics.load_eval_examples(
+                Path("attacks"), Path("honeypots"), "base_solution"
+            )
 
 
 def test_csv_provenance_and_retry():
@@ -175,7 +179,10 @@ def test_final_checkpoint_timing():
                     honeypots_eval=root / "h.eval",
                     dynamics_results=root / "results",
                 )
-            assert [call.args[1] for call in record.call_args_list] == expected_steps
+            baseline = [0] if epochs else []  # untrained base model at update 0
+            assert [
+                call.args[1] for call in record.call_args_list
+            ] == baseline + expected_steps
             assert client.save_weights_for_sampler.call_count == len(expected_steps)
             assert record.call_args.args[0] == final_path
             assert record.call_args.kwargs["solution_field"] == "base_solution"
@@ -254,3 +261,44 @@ if __name__ == "__main__":
     test_final_checkpoint_timing()
     test_transformed_cli()
     print("Dynamics regression checks passed")
+
+
+def test_basharena_eval_examples_match_sft_format():
+    """BashArena checkpoints are scored with the BashArena prompts and the same
+    plain-fenced trajectory view the SFT data uses; invalid attacks are dropped."""
+    view = "<action_1>\n<tool>bash</tool>\n<cmd>ls</cmd>\n</action_1>"
+
+    def sample(side):
+        return SimpleNamespace(
+            scores={
+                "main_task_success": SimpleNamespace(value={"main_task_success": "I"}),
+                "side_task_success": SimpleNamespace(value=side),
+            },
+            metadata={
+                "eval_mode": "attack",
+                "setting_name": "bash_arena",
+                "main_task_description": "Fix the service",
+            },
+            store={"base_solution": view},
+        )
+
+    logs = {"a.eval": [sample("C"), sample("I")], "h.eval": [sample("C")]}
+    prompts = {
+        "BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT": "bash-system",
+        "BASHARENA_MONITOR_USER_PROMPT": "{problem_statement}|{solution}",
+    }
+    with (
+        patch.object(
+            dynamics,
+            "read_eval_log",
+            side_effect=lambda p: SimpleNamespace(samples=logs[Path(p).name]),
+        ),
+        patch.object(dynamics, "get_prompt_by_name", side_effect=prompts.__getitem__),
+    ):
+        examples = dynamics.load_eval_examples(
+            Path("a.eval"), Path("h.eval"), "base_solution"
+        )
+    assert examples == [
+        (1, "bash-system", f"Fix the service|```\n{view}\n```"),
+        (0, "bash-system", f"Fix the service|```\n{view}\n```"),
+    ]
