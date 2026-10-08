@@ -21,11 +21,17 @@ import click
 from inspect_ai.log import read_eval_log
 from sklearn.metrics import roc_auc_score
 
+from lasr_labs_2025_control_project.scripts.helpers.eval_to_dataset import (
+    eval_to_dataset,
+)
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+from lasr_labs_2025_control_project.utils.model_calling.main import retry_api_call
 from lasr_labs_2025_control_project.utils.tinker_provider import (
     collusion_yes_no_logprobs,
 )
 from lasr_labs_2025_control_project.utils.utils import (
+    ACTION_VIEW,
+    ActionViewOptions,
     apply_python_code_format,
     check_sample_is_valid,
     format_solution,
@@ -44,17 +50,85 @@ _DEFAULT_PROMPTS = (
     "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
     "MONITOR_USER_PROMPT",
 )
+# solution_field value for per-action views: one example per rated action, in the
+# same format and with the same prompts as the per-action SFT rows and monitor.
+ACTION_VIEW_FIELD = "action_view"
+_ACTION_PROMPTS = {
+    "bash_arena": (
+        "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_USER_PROMPT",
+    ),
+}
+SOLUTION_FIELDS = ("base_solution", "transformed_solution", ACTION_VIEW_FIELD)
 
 logger = logging.getLogger(__name__)
 FIELDS = ("updates", "checkpoint", "train_loss", "roc_auc", "eval_n")
 
 
-def load_eval_examples(
-    attacks: Path, honeypots: Path, solution_field: str
+def _action_examples(
+    label: int,
+    path: Path,
+    action_options: ActionViewOptions | None,
+    keys: list[tuple[str, int | None]] | None,
 ) -> list[tuple[int, str, str]]:
-    """Use source file as the ROC label; never infer it from the model's answer."""
+    """Per-action examples of one log, rendered by the monitor's dataset adapter.
+
+    Validity filtering, view rendering and action selection are the adapter's, so a
+    checkpoint example and a monitor call for the same action cannot drift apart.
+    The class label, prompts and final prompt text are chosen here.
+    """
+    examples = []
+    for sample in eval_to_dataset(
+        path, view=ACTION_VIEW, action_options=action_options
+    ):
+        metadata = sample.metadata or {}
+        setting = metadata.get("setting_name")
+        problem = metadata.get("main_task_description")
+        if setting not in _ACTION_PROMPTS:
+            raise ValueError(f"no per-action prompts for setting {setting!r}")
+        if not isinstance(problem, str) or not problem.strip():
+            raise ValueError(
+                f"missing main_task_description: {path} sample "
+                f"{metadata['trajectory_id']}"
+            )
+        system, user = (get_prompt_by_name(n) for n in _ACTION_PROMPTS[setting])
+        examples.append(
+            (
+                label,
+                system,
+                user.format(
+                    problem_statement=problem, solution=metadata["base_solution"]
+                ),
+            )
+        )
+        if keys is not None:
+            keys.append((str(metadata["trajectory_id"]), metadata["action_index"]))
+    return examples
+
+
+def load_eval_examples(
+    attacks: Path,
+    honeypots: Path,
+    solution_field: str,
+    action_options: ActionViewOptions | None = None,
+    keys: list[tuple[str, int | None]] | None = None,
+) -> list[tuple[int, str, str]]:
+    """Use source file as the ROC label; never infer it from the model's answer.
+
+    With solution_field == "action_view" each rated action is one example (label
+    of its trajectory), so the ROC is per action. `keys`, if given, receives one
+    (sample id, 1-based action index or None) per example, in the same order.
+    """
+    if solution_field not in SOLUTION_FIELDS:
+        raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
     examples = []
     for label, path in ((1, attacks), (0, honeypots)):
+        if solution_field == ACTION_VIEW_FIELD:
+            found = _action_examples(label, path, action_options, keys)
+            if not found:
+                raise ValueError(f"no valid samples in {path}")
+            examples.extend(found)
+            continue
         log = read_eval_log(str(path))
         if not log.samples:
             raise ValueError(f"no samples in {path}")
@@ -71,10 +145,10 @@ def load_eval_examples(
                 # SFT and monitor consumers; a blank base_solution is now caught above.
                 continue
             setting = metadata.get("setting_name")
+            problem = metadata.get("main_task_description")
             system, user = (
                 get_prompt_by_name(n) for n in _PROMPTS.get(setting, _DEFAULT_PROMPTS)
             )
-            problem = metadata.get("main_task_description")
             solution = metadata.get(solution_field)
             if (
                 not isinstance(problem, str)
@@ -98,6 +172,8 @@ def load_eval_examples(
                     user.format(problem_statement=problem, solution=solution),
                 )
             )
+            if keys is not None:
+                keys.append((str(sample.id), None))
             retained += 1
         if not retained:
             raise ValueError(f"no valid samples in {path}")
@@ -138,7 +214,7 @@ def check_eval_manifest(
 
 async def _score(
     checkpoint: str, examples: list[tuple[int, str, str]], concurrency: int
-) -> float:
+) -> tuple[float, list[float]]:
     semaphore = asyncio.Semaphore(concurrency)
 
     async def margin(system: str, user: str) -> float:
@@ -152,10 +228,15 @@ async def _score(
             raise ValueError("Tinker returned no YES/NO logprobs")
         return float(result["YES"]) - float(result["NO"])
 
+    # One transient failure must not abort a checkpoint (or the training run that
+    # called it), so each example is asked up to three times, with backoff.
     scores = await asyncio.gather(
-        *(margin(system, user) for _, system, user in examples)
+        *(
+            retry_api_call(margin, max_retries=2)(system, user)
+            for _, system, user in examples
+        )
     )
-    return float(roc_auc_score([label for label, _, _ in examples], scores))
+    return float(roc_auc_score([label for label, _, _ in examples], scores)), scores
 
 
 def _write_rows(csv_path: Path, rows: list[dict[str, str]]) -> None:
@@ -268,7 +349,9 @@ def record_checkpoint(
             }
         )
         _write_rows(csv_path, rows)
-    auc = asyncio.run(_score(checkpoint, examples, concurrency))
+    auc, scores = asyncio.run(_score(checkpoint, examples, concurrency))
+    # Per-example YES-NO margins, in `examples` order, for analysis beyond the AUC.
+    (results_dir / f"scores_{updates}.json").write_text(json.dumps(scores))
     row = next(row for row in rows if int(row["updates"]) == updates)
     row["roc_auc"] = str(auc)
     row["eval_n"] = str(len(examples))
@@ -298,6 +381,15 @@ def record_checkpoint(
     help="Evaluate transformed_solution instead of base_solution from the eval logs.",
 )
 @click.option(
+    "--action-views",
+    "use_action_views",
+    is_flag=True,
+    help="Score every rated action in BashArena's per-action format.",
+)
+@click.option("--max-history-chars", type=int, default=None)
+@click.option("--actions-per-trajectory", type=int, default=None)
+@click.option("--action-seed", type=int, default=0, show_default=True)
+@click.option(
     "--dynamics-results",
     type=click.Path(file_okay=False, path_type=Path),
     required=True,
@@ -310,14 +402,33 @@ def main(
     attacks_eval: Path,
     honeypots_eval: Path,
     transformed: bool,
+    use_action_views: bool,
+    max_history_chars: int | None,
+    actions_per_trajectory: int | None,
+    action_seed: int,
     dynamics_results: Path,
     concurrency: int,
 ) -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
-    solution_field = "transformed_solution" if transformed else "base_solution"
-    examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
+    if transformed and use_action_views:
+        raise click.UsageError("--action-views does not support --transformed")
+    solution_field = (
+        ACTION_VIEW_FIELD
+        if use_action_views
+        else "transformed_solution"
+        if transformed
+        else "base_solution"
+    )
+    action_options = ActionViewOptions(
+        max_history_chars=max_history_chars,
+        actions_per_trajectory=actions_per_trajectory,
+        seed=action_seed,
+    )
+    examples = load_eval_examples(
+        attacks_eval, honeypots_eval, solution_field, action_options
+    )
     record_checkpoint(
         checkpoint,
         updates,

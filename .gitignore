@@ -61,3 +61,5 @@ src/lasr_labs_2025_control_project/configs/bigcodebench_open/plot_everything.sh
 # BashArena run configs are per-experiment and not generated yet (make_configs.py
 # has no BashArena setting); keep them local unless one is checked in as an example.
 src/lasr_labs_2025_control_project/configs/basharena_open/**/*.yaml
+# The per-action monitor config is the checked-in example (sft-steps.md points at it).
+!src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/monitors/action_monitor_config.yaml

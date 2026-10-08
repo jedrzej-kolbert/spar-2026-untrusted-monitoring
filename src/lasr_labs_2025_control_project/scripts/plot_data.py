@@ -139,7 +139,48 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
                 ]["model_info"]["base_prompt"],
             }
         )
-    return pd.DataFrame(final_samples)
+        if "trajectory_id" in metadata:
+            final_samples[-1]["trajectory_id"] = metadata["trajectory_id"]
+            final_samples[-1]["n_actions"] = metadata["n_actions"]
+    df = pd.DataFrame(final_samples)
+    if "trajectory_id" in df:
+        df = _max_over_actions(df, eval_log_path)
+    return df
+
+
+_SCORE_COLUMNS = (
+    "untrusted_collusion_score",
+    "trusted_suspiciousness_score",
+    "untrusted_suspiciousness_score",
+)
+
+
+def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
+    """Per-action monitor logs (view: action): one row per trajectory, each score
+    the max over its rated actions, as upstream BashArena aggregates per-step
+    suspicion. A NaN on any action makes that trajectory's score NaN (no silent
+    skipping), and a trajectory missing some of its actions is an error.
+    """
+    counts = df.groupby("trajectory_id").size()
+    expected = df.groupby("trajectory_id")["n_actions"].first()
+    incomplete = counts[counts != expected]
+    if len(incomplete):
+        raise ValueError(
+            f"{eval_log_path}: {len(incomplete)} trajectories are missing scored "
+            f"actions (e.g. {incomplete.index[0]!r}); was the monitor run limited "
+            "or sampled with actions_per_trajectory?"
+        )
+    grouped = df.groupby("trajectory_id", sort=False)
+    out = grouped.first().reset_index()
+    for column in _SCORE_COLUMNS:
+        out[column] = (
+            grouped[column]
+            .apply(lambda s: s.max() if s.notna().all() else float("nan"))
+            .to_numpy()
+        )
+    out["sample_id"] = out["trajectory_id"]
+    out["n_actions_scored"] = counts.loc[out["trajectory_id"]].to_numpy()
+    return out
 
 
 def plot_ensemble_monitoring(

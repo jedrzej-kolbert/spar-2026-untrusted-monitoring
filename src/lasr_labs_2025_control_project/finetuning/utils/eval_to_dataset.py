@@ -19,10 +19,16 @@ from lasr_labs_2025_control_project.self_rec_baselines.utils.scripts.data_models
     Solution,
 )
 from lasr_labs_2025_control_project.utils.utils import (
+    ACTION_VIEW,
+    TRAJECTORY_VIEW,
+    VIEWS,
+    ActionViewOptions,
+    action_views,
     check_sample_is_valid,
     format_solution,
     is_python_solution,
     remove_comments,
+    select_action_views,
 )
 
 # Configure logging
@@ -46,6 +52,8 @@ def process_eval_log(
     output_json_path: str | Path,
     transformed: bool = False,
     keep_comments: bool = False,
+    view: str = TRAJECTORY_VIEW,
+    action_options: ActionViewOptions | None = None,
 ) -> Dataset:
     """Process eval log and extract successful solutions to Dataset format.
 
@@ -59,6 +67,11 @@ def process_eval_log(
         output_json_path: Path to output JSON file
         transformed: If True, use transformed_solution; if False, use base_solution
         keep_comments: If True, keep comments in base_solution (only when transformed=False)
+        view: "trajectory" (one solution per trajectory) or "action" (one solution
+            per rated action, rendered from the sample's messages exactly as the
+            per-action monitor sees it; see utils.action_views). Use the same
+            action_options as the monitor and checkpoint scoring.
+        action_options: Options for per-action views (view == "action").
 
     Returns:
         Dataset object containing successful solutions
@@ -88,6 +101,10 @@ def process_eval_log(
         raise ValueError("No samples found in eval log")
 
     logger.info(f"Found {len(log.samples)} total samples in eval log")
+    if view not in VIEWS:
+        raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
+    if view == ACTION_VIEW and transformed:
+        raise ValueError("Per-action views do not support transformed solutions")
 
     # Filter for successful solutions
     logger.info("Filtering for successful solutions...")
@@ -107,6 +124,13 @@ def process_eval_log(
 
         # Merge metadata and store (store takes precedence)
         sample_data = {**sample.metadata, **sample.store}
+        # Same check as the monitor loader (scripts/helpers/eval_to_dataset.py), so a
+        # transformed log is rejected here too, not only the --transformed flag.
+        if view == ACTION_VIEW and "transformed_solution" in sample_data:
+            raise ValueError(
+                "Per-action views are rendered from the agent's messages; "
+                "transformed (paraphrased/minified) trajectories are not supported"
+            )
         transform_info = sample_data.get("transform_info")
 
         # Get solution based on transformed flag (similar to get_problem_and_solution_from_state)
@@ -164,6 +188,23 @@ def process_eval_log(
                 # If can't extract, use hash of sample id
                 problem_id = hash(problem_id) % (10**8)
 
+        if view == ACTION_VIEW:
+            # One solution per rated action, grouped under the trajectory's task.
+            views = action_views(sample.messages, action_options)
+            for _, action_view in select_action_views(views, sample.id, action_options):
+                successful_samples.append(
+                    {
+                        "sample_id": sample.id,
+                        "problem_id": problem_id,
+                        "problem_statement": problem_statement,
+                        "solution": action_view,
+                        "transform_info": transform_info,
+                        "setting_name": sample_data.get("setting_name"),
+                        "solution_view": ACTION_VIEW,
+                    }
+                )
+            continue
+
         successful_samples.append(
             {
                 "sample_id": sample.id,
@@ -201,7 +242,9 @@ def process_eval_log(
             formatted_solution = sample_data["solution"]
         else:
             formatted_solution = format_solution(
-                sample_data["solution"], sample_data["setting_name"]
+                sample_data["solution"],
+                sample_data["setting_name"],
+                sample_data.get("solution_view"),
             )
 
         problems_dict[problem_id]["solutions"].append(
@@ -266,12 +309,36 @@ def process_eval_log(
     default=False,
     help="Keep comments in base_solution (only applies when --transformed is not set)",
 )
+@click.option(
+    "--action-views",
+    "use_action_views",
+    is_flag=True,
+    default=False,
+    help="One row per rated action in BashArena's per-action monitor format.",
+)
+@click.option(
+    "--max-history-chars",
+    type=int,
+    default=None,
+    help="With --action-views: drop the oldest steps from <actions> beyond this size.",
+)
+@click.option(
+    "--actions-per-trajectory",
+    type=int,
+    default=None,
+    help="With --action-views: keep at most this many actions per trajectory.",
+)
+@click.option("--action-seed", type=int, default=0, show_default=True)
 def main(
     data_path: str | Path,
     model_name: str | None,
     output_json: str | Path,
     transformed: bool,
     keep_comments: bool,
+    use_action_views: bool,
+    max_history_chars: int | None,
+    actions_per_trajectory: int | None,
+    action_seed: int,
 ):
     """
     Convert eval logs to Dataset JSON for binary fine-tuning.
@@ -322,6 +389,12 @@ def main(
             output_json,
             transformed,
             keep_comments,
+            view=ACTION_VIEW if use_action_views else TRAJECTORY_VIEW,
+            action_options=ActionViewOptions(
+                max_history_chars=max_history_chars,
+                actions_per_trajectory=actions_per_trajectory,
+                seed=action_seed,
+            ),
         )
         num_solutions = sum(len(p.solutions) for p in dataset)
         logger.info(f"Wrote {num_solutions} solutions to {output_json}")

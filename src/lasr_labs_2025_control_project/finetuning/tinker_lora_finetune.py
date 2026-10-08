@@ -54,6 +54,7 @@ from typing import Any
 import click
 
 from lasr_labs_2025_control_project.utils import tinker_provider as tp
+from lasr_labs_2025_control_project.utils.utils import ActionViewOptions
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -164,6 +165,7 @@ def finetune(
     honeypots_eval: Path | None = None,
     solution_field: str = "base_solution",
     dynamics_results: Path | None = None,
+    action_options: ActionViewOptions | None = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
     import tinker
@@ -176,8 +178,12 @@ def finetune(
         option is not None for option in dynamics_options
     ):
         raise ValueError("pass both .eval files and --dynamics-results together")
-    if solution_field not in ("base_solution", "transformed_solution"):
-        raise ValueError("solution_field must be base_solution or transformed_solution")
+    from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
+        SOLUTION_FIELDS,
+    )
+
+    if solution_field not in SOLUTION_FIELDS:
+        raise ValueError(f"solution_field must be one of {SOLUTION_FIELDS}")
     if attacks_eval is not None:
         from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
             check_eval_manifest,
@@ -185,7 +191,9 @@ def finetune(
             record_checkpoint,
         )
 
-        eval_examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
+        eval_examples = load_eval_examples(
+            attacks_eval, honeypots_eval, solution_field, action_options
+        )
         check_eval_manifest(
             dynamics_results / "dynamics.csv", eval_examples, solution_field
         )
@@ -401,6 +409,15 @@ def evaluate_checkpoint(
     help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.",
 )
 @click.option(
+    "--action-views",
+    "use_action_views",
+    is_flag=True,
+    help="Score checkpoints per action; prepare the training JSONL with --action-views too.",
+)
+@click.option("--max-history-chars", type=int, default=None)
+@click.option("--actions-per-trajectory", type=int, default=None)
+@click.option("--action-seed", type=int, default=0, show_default=True)
+@click.option(
     "--dynamics-results",
     type=click.Path(file_okay=False, path_type=Path),
     help="Output folder for dynamics CSV, SVG, and provenance manifest",
@@ -421,6 +438,10 @@ def main(
     attacks_eval: Path | None,
     honeypots_eval: Path | None,
     transformed: bool,
+    use_action_views: bool,
+    max_history_chars: int | None,
+    actions_per_trajectory: int | None,
+    action_seed: int,
     dynamics_results: Path | None,
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
@@ -429,6 +450,8 @@ def main(
     from dotenv import load_dotenv
 
     load_dotenv()
+    if transformed and use_action_views:
+        raise click.UsageError("--action-views does not support --transformed")
 
     path = finetune(
         train_jsonl=train_jsonl,
@@ -444,8 +467,19 @@ def main(
         checkpoint_every_steps=checkpoint_every_steps,
         attacks_eval=attacks_eval,
         honeypots_eval=honeypots_eval,
-        solution_field="transformed_solution" if transformed else "base_solution",
+        solution_field=(
+            "action_view"
+            if use_action_views
+            else "transformed_solution"
+            if transformed
+            else "base_solution"
+        ),
         dynamics_results=dynamics_results,
+        action_options=ActionViewOptions(
+            max_history_chars=max_history_chars,
+            actions_per_trajectory=actions_per_trajectory,
+            seed=action_seed,
+        ),
     )
     click.echo(path)
     if out_path_file is not None:

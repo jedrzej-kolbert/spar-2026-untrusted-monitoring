@@ -206,7 +206,11 @@ def create_collusion_monitor_scorer(
             solution = (
                 solution
                 if monitor_config.transformed
-                else format_solution(solution, state.metadata.get("setting_name"))
+                else format_solution(
+                    solution,
+                    state.metadata.get("setting_name"),
+                    state.metadata.get("solution_view"),
+                )
             )
             user_prompt = monitor_config.model_info.base_prompt.format(
                 problem_statement=problem,
@@ -398,7 +402,9 @@ def monitor_solutions(
         collusion_monitor_user_prompt: User prompt to use for the collusion monitor.
 
     """
-    dataset = eval_to_dataset(run.eval_path)
+    dataset = eval_to_dataset(
+        run.eval_path, view=run.view, action_options=run.action_options
+    )
     scorer_names = []
     if dataset[0].metadata and "scores" in dataset[0].metadata:
         scorer_names = list(dataset[0].metadata["scores"].keys())
