@@ -24,7 +24,7 @@ from warnings import warn
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from control_arena.eval_mode import EvalMode
+from control_arena import EvalMode
 from datasets import load_dataset
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample

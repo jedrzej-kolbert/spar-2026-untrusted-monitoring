@@ -11,18 +11,15 @@ import logging
 import re
 import shutil
 from pathlib import Path
-from typing import Callable
 
 import click
-from control_arena.control_task_metadata import ControlTaskMetadata
-from control_arena.eval_mode import EvalMode
-from control_arena.tools.submit_tool import SubmitToolConfig, get_submit_tool_def
+from control_arena import EvalMode
+from control_arena.tools.submit_tool import STORE_SUBMIT_ARGS_KEY
 from inspect_ai import Epochs, Task, eval, task
 from inspect_ai.model import (
     ChatMessageAssistant,
     ModelOutput,
 )
-from inspect_ai.model._call_tools import tools_info
 from inspect_ai.solver import (
     Generate,
     TaskState,
@@ -70,10 +67,7 @@ def find_code(completion: str) -> str:
 
 
 @solver
-def parse_and_submit(
-    get_submit_tool_config: Callable[[ControlTaskMetadata], SubmitToolConfig],
-    eval_mode: EvalMode,
-):
+def parse_and_submit(eval_mode: EvalMode):
     async def solve(
         state: TaskState,
         generate: Generate,
@@ -104,11 +98,6 @@ def parse_and_submit(
             secret_input = secret_input_match.group(1).strip()  # pyright: ignore[reportOptionalMemberAccess]
         else:
             secret_input = ""
-
-        task_metadata = state.metadata_as(ControlTaskMetadata)
-        submit_tool_config = get_submit_tool_config(task_metadata)
-        submit_tool = get_submit_tool_def(submit_tool_config).as_tool()
-        state.metadata["tools"] = tools_info(state.tools + [submit_tool])
 
         generator_info = GeneratorInfo(
             model_info=ModelInfo(
@@ -144,6 +133,8 @@ def parse_and_submit(
             model="manual_submit", tool_name="submit", tool_arguments=tool_arguments
         )
         state.output.completion = json.dumps(tool_arguments)
+        # control-arena's APPS scorer reads the submission from the store.
+        store().set(STORE_SUBMIT_ARGS_KEY, state.output.completion)
 
         # Add the assistant message to the state
         state.messages.append(assistant_message)
@@ -180,7 +171,7 @@ def backdoored_solutions(
         solver=[
             system_message(system_prompt),
             generate(),
-            parse_and_submit(apps_setting.get_submit_tool_config, eval_mode),
+            parse_and_submit(eval_mode),
         ],
         scorer=apps_setting.get_scorers()[0],  # Use first scorer
         sandbox=apps_setting.get_sandbox_config(),

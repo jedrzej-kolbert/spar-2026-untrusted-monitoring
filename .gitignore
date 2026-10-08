@@ -22,6 +22,8 @@ results/
 *.jsonl
 *.eval
 *.json
+# Small committed test fixtures.
+!tests/data/*.json
 *.ipynb
 *.csv
 *.txt

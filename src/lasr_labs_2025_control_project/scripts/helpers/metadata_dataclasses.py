@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Optional
 
-from control_arena.eval_mode import EvalMode
+from control_arena import EvalMode
 
 
 class TransformType(StrEnum):

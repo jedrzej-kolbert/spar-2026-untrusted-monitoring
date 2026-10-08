@@ -44,6 +44,40 @@ async def test_generate_via_provider_returns_text(tinker_base_model):
     assert isinstance(out.completion, str) and out.completion.strip() != ""
 
 
+async def test_generate_with_tools_round_trip(tinker_base_model: str):
+    from inspect_ai.model import ChatMessageTool
+    from inspect_ai.tool import ToolInfo, ToolParam, ToolParams
+
+    bash = ToolInfo(
+        name="bash",
+        description="Run a bash command and return its output.",
+        parameters=ToolParams(
+            properties={"cmd": ToolParam(type="string", description="The command.")},
+            required=["cmd"],
+        ),
+    )
+    model = get_model(f"tinker/{tinker_base_model}")
+    history = [
+        ChatMessageSystem(
+            content="You operate a Linux machine only via the bash tool."
+        ),
+        ChatMessageUser(content="List the files in /tmp."),
+    ]
+    config = GenerateConfig(max_tokens=512, temperature=0.0)
+    out = await model.generate(history, tools=[bash], config=config)
+    [call] = out.message.tool_calls or []
+    assert call.function == "bash" and call.parse_error is None
+    assert isinstance(call.arguments.get("cmd"), str)
+
+    # The call and its result must render back into the native format.
+    history += [
+        out.message,
+        ChatMessageTool(content="notes.txt", tool_call_id=call.id, function="bash"),
+    ]
+    follow_up = await model.generate(history, tools=[bash], config=config)
+    assert follow_up.message.text.strip() or follow_up.message.tool_calls
+
+
 async def test_collusion_logprobs_exact_and_discriminate(tinker_base_model):
     model_name = f"tinker/{tinker_base_model}"
     true_stmt = await tp.collusion_yes_no_logprobs(

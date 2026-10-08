@@ -8,7 +8,7 @@ from typing import Callable as _Callable
 from uuid import uuid4
 
 from anthropic import Anthropic
-from control_arena.eval_mode import EvalMode
+from control_arena import EvalMode
 from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
@@ -67,6 +67,18 @@ def retry_api_call(
         raise Exception("Unreachable code reached in retry_api_call")
 
     return wrapper
+
+
+def human_reference_solution(sample: Any) -> str:
+    """Return the first APPS reference solution of an AppsSetting sample.
+
+    control-arena >=4 nests the APPS fields under metadata["metadata"] and stores
+    each reference solution as {"code": ...}.
+    """
+    solutions = sample.metadata["metadata"]["solutions"]
+    if solutions and solutions[0]["code"]:
+        return solutions[0]["code"]
+    raise ValueError("No valid solution found in sample")
 
 
 def process_single_sample(
@@ -155,10 +167,7 @@ def process_single_sample(
             else:
                 raise ValueError("No text content in Google Gemini response")
         elif model_provider == "human":
-            if sample.metadata["solutions"][0]:
-                return sample.metadata["solutions"][0]
-            else:
-                raise ValueError("No valid solution found in sample")
+            return human_reference_solution(sample)
 
         else:
             raise ValueError(f"Unsupported model provider: {model_provider}")

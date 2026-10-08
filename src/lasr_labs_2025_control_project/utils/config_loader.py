@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
-from control_arena.eval_mode import EvalMode
+from control_arena import EvalMode
 from dacite import Config, from_dict
 
 from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import (
