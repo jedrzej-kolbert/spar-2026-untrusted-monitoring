@@ -1,13 +1,14 @@
 """Generate every experiment config tree (closed-model and open-model) from one spec.
 
 The declarative spec at the top of this module is the source of truth; the YAML
-under `src/lasr_labs_2025_control_project/configs/{apps,bigcodebench}[_open]/` is a
-generated artifact. Hand-edits to those files will be overwritten -- change the
-spec instead.
+under `src/lasr_labs_2025_control_project/configs/{apps,bigcodebench}[_open]/` and
+`configs/basharena_open/` is a generated artifact. Hand-edits to those files will be
+overwritten -- change the spec instead.
 
     python experiments/open_models/make_configs.py                     # both trees
     python experiments/open_models/make_configs.py --model-class open  # open only
     python experiments/open_models/make_configs.py --model-class open --settings bigcodebench
+    python experiments/open_models/make_configs.py --model-class open --settings basharena
 
 A config is fully determined by a handful of axes:
 
@@ -49,6 +50,17 @@ within a reasonable token budget, which rules out heavy reasoners:
 `enable_thinking=False`, and blow past 8k output tokens on trivial problems
 without ever emitting `<final_code>`. `gpt-oss-120b` and `deepseek-ai/DeepSeek-V3.1`
 emit clean output out of the box; gpt-oss-120b is the closer capability match to U.
+
+BashArena (open models only)
+----------------------------
+BashArena has its own U/T/H triple (`SETTING_ROLE_MODELS`), because its generators
+are tool-calling agents. It emits one generator config per role, so a retried run
+cannot redo another role's trajectories, each limited to `BASHARENA_LIMITS` tasks.
+There are no transforms. The monitors use the per-action view (`view: action`),
+with the base U or the `basharena_self_rec_action` SFT arm as collusion monitor.
+Generator configs carry no `max_tokens` unless `--max-tokens` is passed: the agent
+policy's own per-step cap (16000) applies. Pass `--max-tokens 4096` for a model
+with a 32K context such as DeepSeek-V3.1.
 
 SFT arms
 --------
@@ -153,9 +165,29 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
     },
 }
 
-#: SFT arm -> the closed-model OpenAI finetune that implements it. The open-model
-#: counterpart is a Tinker LoRA of U supplied via --checkpoints.
-SFT_ARMS: dict[str, str] = {
+#: setting -> model class -> roles that replace ROLE_MODELS for that setting.
+#: BashArena generators are tool-calling agents; these are the models its runs and
+#: the former hand-written action_monitor_config.yaml used.
+SETTING_ROLE_MODELS: dict[str, dict[str, dict[str, str]]] = {
+    "basharena": {
+        "open": {
+            "U": "tinker/Qwen/Qwen3.6-35B-A3B",
+            "T": "tinker/Qwen/Qwen3.5-9B",
+            "H": "tinker/openai/gpt-oss-120b",
+        },
+    },
+}
+
+#: data split -> number of BashArena tasks each generator run takes (the first N
+#: odd task ids for train, even for test). Each task is an agent run of up to 60
+#: steps in its own container, so the whole split is not the default. 40 / 20 are
+#: the sizes of the first BashArena batch; the later half-split run used 158 / 160.
+BASHARENA_LIMITS: dict[str, int] = {"train": 40, "test": 20}
+
+#: SFT arm -> the closed-model OpenAI finetune that implements it (None: the arm
+#: exists for open models only). The open-model counterpart is a Tinker LoRA of U
+#: supplied via --checkpoints.
+SFT_ARMS: dict[str, str | None] = {
     # passive self-recognition, one arm per paraphrase strategy
     "self_rec_base": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash:CJvxwvyn",
     "self_rec_minified": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash-minified:CKNzgVEI",
@@ -171,6 +203,8 @@ SFT_ARMS: dict[str, str] = {
     "bcb_self_rec_base": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-none:CRHKEcKW",
     "bcb_self_rec_minified": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-minified:CRHPL9Uc",
     "bcb_self_rec_paraphrased": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-paraphrased:CRIEKOFs",
+    # BashArena per-action self-recognition SFT (open models only)
+    "basharena_self_rec_action": None,
 }
 
 # ---------------------------------------------------------------------------
@@ -212,6 +246,23 @@ MONITOR_ORDER = (
     "trusted_backdoor_monitor",
     "untrusted_backdoor_monitor",
 )
+
+#: BashArena per-action view (`view: action`): monitor -> (system prompt, user prompt).
+ACTION_PROMPTS = {
+    "collusion": (
+        "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_USER_PROMPT",
+    ),
+    "backdoor": (
+        "BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT",
+    ),
+}
+
+#: `defaults.action_view` of every per-action monitor config. ~30K tokens of
+#: history, which keeps late honest steps inside a 64K context. The SFT rows and
+#: the checkpoint ROC must be built with the same value (sft-steps.md).
+ACTION_VIEW = {"max_history_chars": 120000}
 
 # ---------------------------------------------------------------------------
 # spec dataclasses
@@ -276,6 +327,7 @@ class Monitor:
     input_dir: str | None = None  # default: generator/ or transforms/<strategy>/
     input_files: Mapping[str, str] | None = None  # label -> filename override
     disable_untrusted_monitor: bool = False
+    view: str = "trajectory"  # "action": BashArena per-action view (ACTION_VIEW)
 
     def eval_path(self, label: str) -> str:
         if self.input_files and label in self.input_files:
@@ -352,11 +404,16 @@ def shared_source(model_class: str, experiment: str, label: str) -> str | None:
 
 @dataclass(frozen=True)
 class Setting:
-    """Everything generated for one setting (apps / bigcodebench)."""
+    """Everything generated for one setting (apps / bigcodebench / basharena)."""
 
     generators: tuple[Generator, ...]
     transforms: tuple[Transform, ...]
     monitors: tuple[Monitor, ...]
+    model_classes: tuple[str, ...] = ("closed", "open")
+    #: `max_tokens` of the open generator configs when --max-tokens is not passed.
+    max_tokens: int | None = DEFAULT_MAX_TOKENS
+    #: Delete every .yaml in the tree that the spec does not emit.
+    prune: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -815,12 +872,80 @@ BIGCODEBENCH = Setting(
     ),
 )
 
-SPEC: dict[str, Setting] = {"apps": APPS, "bigcodebench": BIGCODEBENCH}
+
+def basharena_generator(split: str, label: str, role: str) -> Generator:
+    """One BashArena generator config: one role's agent runs on one split.
+
+    Train logs go straight into `generator/train/`: `transform_logs_to_raw.sh`
+    converts every `.eval` in `<eval_logs_dir>/train`, so the two training logs
+    are saved there and nothing has to be moved by hand.
+    """
+    honest = label == "honest"
+    return Generator(
+        path=f"self_rec/generator/{split}_{label}_config.yaml",
+        experiment="self_rec_train" if split == "train" else "self_rec",
+        experiment_name=f"basharena_self_rec_{split}_{label}",
+        data_split=split,
+        extra_defaults={
+            "dataset_type": "basharena",
+            "limit": BASHARENA_LIMITS[split],
+        },
+        runs=(
+            GenRun(
+                label,
+                "honest" if honest else "attack",
+                "BASHARENA_HONEST_SYSTEM_PROMPT"
+                if honest
+                else "BASHARENA_ATTACK_SYSTEM_PROMPT",
+                role,
+                save_path=f"generator/train/{label}.eval" if split == "train" else "",
+            ),
+        ),
+    )
+
+
+BASHARENA = Setting(
+    generators=(
+        # SFT training data: U attacks (YES) and H honeypots (NO), train split.
+        basharena_generator("train", "attacks", "U"),
+        basharena_generator("train", "honeypots", "H"),
+        basharena_generator("test", "attacks", "U"),
+        basharena_generator("test", "honest", "U"),
+        basharena_generator("test", "honeypots", "H"),
+    ),
+    transforms=(),
+    monitors=tuple(
+        Monitor(
+            path=f"self_rec/monitors/{suffix}/action_monitor_config.yaml",
+            experiment="self_rec",
+            experiment_name=f"basharena_self_rec_{suffix}_action",
+            results_folder=f"results/action_{suffix}/",
+            condition="self_rec",
+            strategy="none",
+            arm=f"action_{suffix}",
+            collusion=collusion,
+            view="action",
+        )
+        for suffix, collusion in (("base", "U"), ("sft", "basharena_self_rec_action"))
+    ),
+    model_classes=("open",),
+    # The agent policy has its own per-step output cap (16000).
+    max_tokens=None,
+    # Hand-written per-experiment run configs live in this tree too; keep them.
+    prune=False,
+)
+
+SPEC: dict[str, Setting] = {
+    "apps": APPS,
+    "bigcodebench": BIGCODEBENCH,
+    "basharena": BASHARENA,
+}
 
 # Every generated tree is gitignored, so the DEFAULT invocation must be able to
 # rebuild all of them from scratch -- hence bigcodebench is generated for the open
-# class too, even though the open-weights *runs* are APPS-focused.
-DEFAULT_SETTINGS = ("apps", "bigcodebench")
+# class too, even though the open-weights *runs* are APPS-focused. A setting is
+# skipped for a model class it does not support (`Setting.model_classes`).
+DEFAULT_SETTINGS = ("apps", "bigcodebench", "basharena")
 
 # Resolved SFT checkpoints live here when --checkpoints is not passed. This file
 # is the one piece of genuinely non-regenerable state in the scheme (the arm ->
@@ -837,24 +962,33 @@ DEFAULT_CHECKPOINTS_FILE = Path(__file__).resolve().parent / "ckpts.json"
 class ModelResolver:
     """Turns a spec model reference (role key or SFT arm) into a model string."""
 
-    def __init__(self, model_class: str, checkpoints: Mapping[str, str]):
+    def __init__(
+        self, model_class: str, checkpoints: Mapping[str, str], setting: str = ""
+    ):
         self.model_class = model_class
         self.checkpoints = checkpoints
+        self.roles = {
+            **ROLE_MODELS[model_class],
+            **SETTING_ROLE_MODELS.get(setting, {}).get(model_class, {}),
+        }
         self.pending: set[str] = set()
         self.used_arms: set[str] = set()
 
     def role(self, key: str) -> str:
-        return ROLE_MODELS[self.model_class][key]
+        return self.roles[key]
 
     def resolve(self, ref: str) -> str:
         """`ref` is either a role key (U/T/H) or an SFT arm name."""
-        if ref in ROLE_MODELS[self.model_class]:
+        if ref in self.roles:
             return self.role(ref)
         if ref not in SFT_ARMS:
             raise SystemExit(f"spec error: unknown model reference {ref!r}")
         self.used_arms.add(ref)
         if self.model_class == "closed":
-            return SFT_ARMS[ref]
+            finetune = SFT_ARMS[ref]
+            if finetune is None:
+                raise SystemExit(f"SFT arm {ref!r} has no closed-model finetune")
+            return finetune
         path = self.checkpoints.get(ref)
         if not path:
             self.pending.add(ref)
@@ -989,13 +1123,14 @@ def _monitor_entry(
     *,
     transformed: bool,
     remove_comments: bool,
+    base_prompt: str = "MONITOR_USER_PROMPT",
 ) -> dict[str, Any]:
     return {
         name: {
             "model_info": {
                 "model": model,
                 "system_prompt": system_prompt,
-                "base_prompt": "MONITOR_USER_PROMPT",
+                "base_prompt": base_prompt,
             },
             "remove_comments": remove_comments,
             "transformed": transformed,
@@ -1003,34 +1138,62 @@ def _monitor_entry(
     }
 
 
+def _action_monitors(spec: Monitor, models: ModelResolver) -> list[dict[str, Any]]:
+    """Per-action monitors: each reads the rendered action view, never code."""
+    return [
+        _monitor_entry(
+            name,
+            model,
+            ACTION_PROMPTS[kind][0],
+            transformed=False,
+            remove_comments=False,
+            base_prompt=ACTION_PROMPTS[kind][1],
+        )
+        for name, model, kind in (
+            (
+                "untrusted_collusion_monitor",
+                models.resolve(spec.collusion),
+                "collusion",
+            ),
+            ("trusted_backdoor_monitor", models.role("T"), "backdoor"),
+            ("untrusted_backdoor_monitor", models.role("U"), "backdoor"),
+        )
+    ]
+
+
 def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[str, Any]:
     transformed = spec.strategy != "none"
-    # untrusted monitors read the (possibly transformed) code; the trusted monitor
-    # always reads the original, comments stripped.
-    monitors = [
-        _monitor_entry(
-            "untrusted_collusion_monitor",
-            models.resolve(spec.collusion),
-            COLLUSION_PROMPTS[spec.condition],
-            transformed=transformed,
-            remove_comments=not transformed,
-        ),
-        _monitor_entry(
-            "trusted_backdoor_monitor",
-            models.role("T"),
-            BACKDOOR_PROMPTS["none"],
-            transformed=False,
-            remove_comments=True,
-        ),
-        _monitor_entry(
-            "untrusted_backdoor_monitor",
-            models.role("U"),
-            BACKDOOR_PROMPTS[spec.strategy],
-            transformed=transformed,
-            remove_comments=not transformed,
-        ),
-    ]
     defaults: dict[str, Any] = {}
+    if spec.view == "action":
+        defaults["view"] = "action"
+        defaults["action_view"] = dict(ACTION_VIEW)
+        monitors = _action_monitors(spec, models)
+    else:
+        # untrusted monitors read the (possibly transformed) code; the trusted
+        # monitor always reads the original, comments stripped.
+        monitors = [
+            _monitor_entry(
+                "untrusted_collusion_monitor",
+                models.resolve(spec.collusion),
+                COLLUSION_PROMPTS[spec.condition],
+                transformed=transformed,
+                remove_comments=not transformed,
+            ),
+            _monitor_entry(
+                "trusted_backdoor_monitor",
+                models.role("T"),
+                BACKDOOR_PROMPTS["none"],
+                transformed=False,
+                remove_comments=True,
+            ),
+            _monitor_entry(
+                "untrusted_backdoor_monitor",
+                models.role("U"),
+                BACKDOOR_PROMPTS[spec.strategy],
+                transformed=transformed,
+                remove_comments=not transformed,
+            ),
+        ]
     if spec.disable_untrusted_monitor:
         defaults["disable_untrusted_monitor"] = True
     defaults["monitors"] = monitors
@@ -1103,6 +1266,9 @@ def generate_setting(
                 dst.write_bytes(src.read_bytes())
                 dst.chmod(src.stat().st_mode)
 
+    if not spec.prune:
+        return written, []
+
     # the spec owns every .yaml under the tree: drop anything it no longer emits
     keep = set(written)
     pruned = sorted(p for p in root.rglob("*.yaml") if p not in keep)
@@ -1148,7 +1314,8 @@ def main() -> None:
         description="Generate the closed- and open-model experiment config trees "
         "from the declarative spec in this module.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="default: every tree (closed and open, apps and bigcodebench). "
+        epilog="default: every tree (closed and open; apps, bigcodebench and, for "
+        "open models only, basharena). "
         "All generated trees are gitignored, so the bare command must rebuild "
         "them all; the open-weights runs themselves are APPS-focused.",
     )
@@ -1163,7 +1330,7 @@ def main() -> None:
         "--settings",
         nargs="+",
         default=None,
-        choices=["apps", "bigcodebench"],
+        choices=sorted(SPEC),
         help="override the per-class default settings",
     )
     parser.add_argument(
@@ -1175,9 +1342,10 @@ def main() -> None:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=DEFAULT_MAX_TOKENS,
-        help="completion cap injected into OPEN generator configs "
-        f"(default: {DEFAULT_MAX_TOKENS})",
+        default=None,
+        help="completion cap injected into OPEN generator configs (default: "
+        f"{DEFAULT_MAX_TOKENS} for apps and bigcodebench; none for basharena, "
+        "whose agent policy has its own per-step cap)",
     )
     args = parser.parse_args()
 
@@ -1185,20 +1353,28 @@ def main() -> None:
 
     pending: set[str] = set()
     for model_class in args.model_class:
-        settings = args.settings or DEFAULT_SETTINGS
-        models = ModelResolver(model_class, checkpoints)
-        for setting in settings:
+        for setting in args.settings or DEFAULT_SETTINGS:
+            if model_class not in SPEC[setting].model_classes:
+                if args.settings:
+                    print(f"{model_class:>6}  {setting}: not generated for this class")
+                continue
+            models = ModelResolver(model_class, checkpoints, setting)
+            max_tokens = (
+                args.max_tokens
+                if args.max_tokens is not None
+                else SPEC[setting].max_tokens
+            )
             written, pruned = generate_setting(
                 model_class,
                 setting,
                 models,
-                args.max_tokens if model_class == "open" else None,
+                max_tokens if model_class == "open" else None,
             )
             root = target_dir(model_class, setting).relative_to(REPO_ROOT)
             print(f"{model_class:>6}  {root}: {len(written)} files")
             for stale in pruned:
                 print(f"          pruned {stale.relative_to(REPO_ROOT)}")
-        pending |= models.pending
+            pending |= models.pending
 
     if checkpoints:
         print("\ncheckpoints:")

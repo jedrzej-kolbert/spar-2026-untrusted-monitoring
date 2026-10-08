@@ -17,7 +17,7 @@ Configure the Tinker API key in the .env file.
 
 ## Configs
 
-Before making your config files, open `experiments/open_models/make_configs.py` to line 142:
+Before making your config files, open `experiments/open_models/make_configs.py` and find `ROLE_MODELS`:
 ```
 #: role -> model string, per model class. U untrusted, T trusted/weak, H honeypot.
 ROLE_MODELS: dict[str, dict[str, str]] = {
@@ -230,6 +230,40 @@ of an action's input. `actions_per_trajectory` only chooses which actions are tr
 or scored at checkpoints. Monitoring always scores every action, because the
 trajectory score is a max.
 
+### BashArena configs
+
+BashArena has its own model triple and task counts. Set both in
+`experiments/open_models/make_configs.py`, just below `ROLE_MODELS`:
+- `SETTING_ROLE_MODELS["basharena"]["open"]` holds U, T and H. The generators are
+  tool-calling agents, so `ROLE_MODELS` is not used for them.
+- `BASHARENA_LIMITS` is the number of tasks per generator run (40 train, 20 test).
+  Each task is an agent run of up to 60 steps in its own Docker container.
+
+Then generate the configs. The command from [Configs](#configs) writes them too; this one
+writes only `configs/basharena_open/`:
+```
+python experiments/open_models/make_configs.py --model-class open --settings basharena
+```
+For a U or H with a 32K context (DeepSeek-V3.1 on Tinker), add `--max-tokens 4096`.
+Without it the agent's own per-step output cap of 16000 tokens applies.
+
+### Generate trajectories
+
+Docker must be running. There is one config per role, so a rerun repeats only that role:
+```
+for c in train_attacks train_honeypots test_attacks test_honest test_honeypots; do
+  python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py \
+    --config src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/${c}_config.yaml
+done
+```
+The two training logs are saved in
+`experiments/open-source-model/basharena/self_rec_train/generator/train/`, so
+`<eval_logs_dir>` below is `experiments/open-source-model/basharena/self_rec_train/generator`
+and nothing has to be moved. The three test logs are saved in
+`experiments/open-source-model/basharena/self_rec/generator/`.
+
+### Prepare data and fine-tune
+
 Prepare training data. `<eval_logs_dir>/train` must hold only the two logs to train on
 (U attacks and H honeypots): every `.eval` in it is converted.
 ```
@@ -253,16 +287,29 @@ Fine-tune with the same options for the checkpoint ROC:
 ```
 python -m src.lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
   --train-jsonl <eval_logs_dir>/prepared/train/train_messages.jsonl --base-model <id> \
-  --checkpoint-name <name> --attacks-eval <test attacks .eval> --honeypots-eval <test honeypots .eval> \
+  --checkpoint-name basharena_self_rec_action \
+  --out-path-file experiments/open_models/basharena_self_rec_action.txt \
+  --attacks-eval experiments/open-source-model/basharena/self_rec/generator/attacks.eval \
+  --honeypots-eval experiments/open-source-model/basharena/self_rec/generator/honeypots.eval \
   --dynamics-results <dir> --action-views --max-history-chars 120000 --actions-per-trajectory 4 \
   --rank 32 --lr 5e-5 --epochs 3 --batch-size 1 --val-frac 0 --checkpoint-every-steps 75
 ```
 The last line is what the existing per-action run used. The trainer's defaults differ:
 lr 1e-4, batch size 64, val-frac 0.05 and no intermediate checkpoints.
-Monitor with `configs/basharena_open/self_rec/monitors/action_monitor_config.yaml`
-(`defaults.view: action`, `defaults.action_view.max_history_chars: 120000`). Put your
-checkpoint in its collusion monitor, then run `monitor_solutions_inspect.py` and
-`plot_data.py` as above. `plot_data` reduces each trajectory to the max over its actions.
+
+### Monitor and plot
+
+Add the printed `tinker://` path to `experiments/open_models/ckpts.json` under
+`basharena_self_rec_action`, then put it in the collusion monitor:
+```
+python3 experiments/open_models/make_configs.py --checkpoints experiments/open_models/ckpts.json
+```
+(Repeat `--max-tokens 4096` if you passed it before: every run rewrites the generator
+configs too.) Monitor with `configs/basharena_open/self_rec/monitors/sft/action_monitor_config.yaml`
+(`defaults.view: action`, `defaults.action_view.max_history_chars: 120000`): run
+`monitor_solutions_inspect.py` and `plot_data.py` on it as above. The same file under
+`monitors/base/` uses the base U as collusion monitor. `plot_data` reduces each
+trajectory to the max over its actions.
 It raises if any action of a trajectory is missing, so don't use `limit` or
 `actions_per_trajectory` with per-action monitoring. A monitor reply with no parseable
 score is recorded as NaN and makes its whole trajectory NaN.

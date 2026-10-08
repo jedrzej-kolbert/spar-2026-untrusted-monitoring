@@ -58,8 +58,6 @@ src/lasr_labs_2025_control_project/configs/bigcodebench_open/**/*.yaml
 # plot_everything.sh is hand-written and stays checked in under bigcodebench/;
 # the copy mirrored into the open tree by the generator is an artifact.
 src/lasr_labs_2025_control_project/configs/bigcodebench_open/plot_everything.sh
-# BashArena run configs are per-experiment and not generated yet (make_configs.py
-# has no BashArena setting); keep them local unless one is checked in as an example.
+# BashArena (open models only): the generated configs, plus any hand-written
+# per-experiment run configs, which make_configs.py leaves in place.
 src/lasr_labs_2025_control_project/configs/basharena_open/**/*.yaml
-# The per-action monitor config is the checked-in example (sft-steps.md points at it).
-!src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/monitors/action_monitor_config.yaml
