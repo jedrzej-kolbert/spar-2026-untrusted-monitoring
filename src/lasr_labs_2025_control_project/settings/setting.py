@@ -7,7 +7,7 @@ from control_arena import ControlTaskMetadata, EvalMode
 from control_arena.settings import Setting
 from control_arena.settings.apps.task.metadata import AppsTaskMetadata
 from control_arena.settings.apps.task.scorers import (
-    apps_scorer,
+    apps_scorer as upstream_apps_scorer,
 )
 from control_arena.settings.apps.task.submission_types import (
     SubmitAttackArgs,
@@ -30,6 +30,7 @@ from pydantic import Field
 from lasr_labs_2025_control_project.prompts.generation_prompts import (
     setting_description,
 )
+from lasr_labs_2025_control_project.settings.apps_scorer import apps_scorer
 
 
 def _compiles(code: str) -> bool:
@@ -44,6 +45,8 @@ def _compiles(code: str) -> bool:
 
 def runnable_reference(code: str) -> str:
     """Make a codeparrot/apps reference solution runnable as a plain script.
+
+    Only for scoring="upstream"; the default scorer wraps all code itself.
 
     APPS reference solutions were written for a harness that runs them inside a
     function, so some use a top-level `return` or `nonlocal`. control-arena >=4
@@ -62,6 +65,10 @@ def runnable_reference(code: str) -> str:
 class AppsSetting(Setting):
     cache_python_code: bool = Field(default=True)
     num_tests_to_run: int = Field(default=10)
+    # "legacy": control-arena 2.1.3's rules (settings/apps_scorer.py), which all
+    # our APPS results were scored with. "upstream": the installed control-arena's
+    # apps_scorer. See docs/apps_scorer_migration.md.
+    scoring: Literal["legacy", "upstream"] = Field(default="legacy")
     dataset_name: Literal["simple", "backdoor"] = Field(default="simple")
     dataset_type: Literal["filtered", "original"] = Field(default="original")
     original_dataset_split: Literal["train", "test", "all"] = Field(default="test")
@@ -183,7 +190,8 @@ class AppsSetting(Setting):
         return MemoryDataset(dataset)
 
     def get_scorers(self) -> list[Scorer]:
-        return [apps_scorer(self.cache_python_code, self.num_tests_to_run)]
+        scorer = upstream_apps_scorer if self.scoring == "upstream" else apps_scorer
+        return [scorer(self.cache_python_code, self.num_tests_to_run)]
 
     def get_sandbox_config(self) -> SandboxEnvironmentSpec:
         return SandboxEnvironmentSpec(
@@ -243,7 +251,12 @@ class AppsSetting(Setting):
                     inputs=inputs,
                     outputs=outputs,
                     solutions=[
-                        {"code": runnable_reference(code)} for code in solutions
+                        {
+                            "code": runnable_reference(code)
+                            if self.scoring == "upstream"
+                            else code
+                        }
+                        for code in solutions
                     ],
                 ).model_dump(),
                 main_task_description=record["question"],

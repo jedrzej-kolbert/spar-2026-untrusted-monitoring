@@ -1,11 +1,12 @@
 """
-Re-score a stored APPS generation .eval with the installed control-arena APPS scorer
-and diff per-sample results against the scores stored in the log.
+Re-score a stored APPS generation .eval with AppsSetting's scorer and diff per-sample
+results against the scores stored in the log.
 
 Rebuilds each sample from AppsSetting (so metadata is in the installed control-arena's
-format), replays the stored submission, and runs apps_scorer in the Docker sandbox.
-Imports only paths that exist in both control-arena 2.1.3 and 17.1.2, so running it
-under each version shows whether a version change moves APPS scores.
+format), replays the stored submission, and runs the scorer in the Docker sandbox.
+--scoring legacy (the default, control-arena 2.1.3's rules) should reproduce the
+stored scores of logs made under 2.1.3; --scoring upstream shows what the installed
+control-arena's own scorer would give.
 
 Usage:
     python -m lasr_labs_2025_control_project.scripts.helpers.rescore_apps_eval \
@@ -15,9 +16,10 @@ Usage:
 import json
 from collections import Counter
 from pathlib import Path
+from typing import Literal
 
 import click
-from control_arena.settings.apps.task.scorers import apps_scorer
+from control_arena import EvalMode
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset
 from inspect_ai.log import read_eval_log
@@ -27,11 +29,6 @@ from inspect_ai.util import store
 
 from lasr_labs_2025_control_project.settings.setting import AppsSetting
 
-try:  # control-arena >= 3
-    from control_arena import EvalMode
-except ImportError:  # control-arena 2.1.3
-    from control_arena.eval_mode import EvalMode  # type: ignore[no-redef]
-
 
 @solver
 def replay_submission(completions: dict[int | str, str]):
@@ -40,24 +37,28 @@ def replay_submission(completions: dict[int | str, str]):
         state.output = ModelOutput.from_content(
             "replay", completion
         )  # 2.1.3 reads this
-        store().set("submit_args", completion)  # 17.x reads STORE_SUBMIT_ARGS_KEY
+        store().set("submit_args", completion)  # STORE_SUBMIT_ARGS_KEY
         return state
 
     return solve
 
 
 def rescore(
-    completions: dict[int | str, str], mode: EvalMode, max_sandboxes: int = 8
+    completions: dict[int | str, str],
+    mode: EvalMode,
+    max_sandboxes: int = 8,
+    scoring: Literal["legacy", "upstream"] = "legacy",
 ) -> dict[int | str, dict[str, str]]:
     """Score stored APPS submissions (sample id -> completion JSON) in Docker."""
     # backdoored_solutions always samples codeparrot/apps "test" (odd/even ids pick the
     # train/test halves), where problem ids are unique.
-    by_id = {
-        s.id: s
-        for s in AppsSetting(original_dataset_split="test", shuffle=False).get_dataset(
-            mode
-        )
-    }
+    setting = AppsSetting(
+        original_dataset_split="test",
+        shuffle=False,
+        scoring=scoring,
+        cache_python_code=False,
+    )
+    by_id = {s.id: s for s in setting.get_dataset(mode)}
     missing = [i for i in completions if i not in by_id]
     assert not missing, f"{len(missing)} ids not in APPS test split, e.g. {missing[:5]}"
 
@@ -65,7 +66,7 @@ def rescore(
         Task(
             dataset=MemoryDataset([by_id[i] for i in completions]),
             solver=replay_submission(completions),
-            scorer=apps_scorer(use_cache=False, num_tests=10),
+            scorer=setting.get_scorers()[0],
             sandbox="docker",
         ),
         model="mockllm/model",
@@ -84,7 +85,14 @@ def rescore(
 @click.option("--limit", type=int, default=None, help="First N samples of the log.")
 @click.option("--out", type=click.Path(dir_okay=False), default=None, help="Diff JSON.")
 @click.option("--max-sandboxes", type=int, default=8)
-def main(eval_path: str, limit: int | None, out: str | None, max_sandboxes: int):
+@click.option("--scoring", type=click.Choice(["legacy", "upstream"]), default="legacy")
+def main(
+    eval_path: str,
+    limit: int | None,
+    out: str | None,
+    max_sandboxes: int,
+    scoring: Literal["legacy", "upstream"],
+):
     log = read_eval_log(eval_path)
     assert log.samples, "No samples in the eval log"
     stored = log.samples[:limit]
@@ -95,7 +103,9 @@ def main(eval_path: str, limit: int | None, out: str | None, max_sandboxes: int)
     assert len({s.epoch for s in stored}) == 1, "Multi-epoch logs are not supported"
 
     old = {s.id: s.scores["apps_scorer"].value for s in stored}  # type: ignore[index]
-    new = rescore({s.id: s.output.completion for s in stored}, mode, max_sandboxes)
+    new = rescore(
+        {s.id: s.output.completion for s in stored}, mode, max_sandboxes, scoring
+    )
     changes = Counter()
     diffs = []
     for sample_id, old_value in old.items():
@@ -107,7 +117,10 @@ def main(eval_path: str, limit: int | None, out: str | None, max_sandboxes: int)
                     {"id": sample_id, "key": key, "stored": before, "rescored": after}
                 )
 
-    print(f"{len(old)} samples, mode={mode.value}, {len(diffs)} per-key differences")
+    print(
+        f"{len(old)} samples, mode={mode.value}, scoring={scoring}, "
+        f"{len(diffs)} per-key differences"
+    )
     for change, count in changes.most_common():
         print(f"  {change}: {count}")
     if out:
