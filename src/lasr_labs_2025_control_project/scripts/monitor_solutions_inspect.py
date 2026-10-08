@@ -44,7 +44,8 @@ from lasr_labs_2025_control_project.utils.tinker_provider import (
     is_tinker_model,
 )
 from lasr_labs_2025_control_project.utils.utils import (
-    apply_python_code_format,
+    format_solution,
+    is_python_solution,
     remove_comments,
 )
 
@@ -205,7 +206,7 @@ def create_collusion_monitor_scorer(
             solution = (
                 solution
                 if monitor_config.transformed
-                else apply_python_code_format(solution)
+                else format_solution(solution, state.metadata.get("setting_name"))
             )
             user_prompt = monitor_config.model_info.base_prompt.format(
                 problem_statement=problem,
@@ -304,6 +305,7 @@ def get_problem_and_solution_from_state(
         solution = (
             remove_comments(state.metadata["base_solution"])
             if remove_comments_from_solution
+            and is_python_solution(state.metadata.get("setting_name"))
             else state.metadata["base_solution"]
         )
 

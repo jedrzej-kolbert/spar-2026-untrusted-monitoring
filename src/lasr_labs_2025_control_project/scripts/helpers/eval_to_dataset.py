@@ -38,7 +38,9 @@ def eval_to_dataset(
             **sample.store,
         }  # order matters - store overrides metadata
         scores = sample.scores
-        is_valid_sample = check_sample_is_valid(scores)
+        is_valid_sample = check_sample_is_valid(
+            scores, sample.metadata.get("eval_mode")
+        )
         if not is_valid_sample:
             continue
 
