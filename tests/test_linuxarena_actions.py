@@ -162,3 +162,27 @@ def test_duplicate_actions_rejected_without_partial_export(
             [actions.ActionSource(Path("run.eval"), "own", "attacks")], "own", output
         )
     assert not output.exists()
+
+
+def test_monitor_scores_keep_unscored_draws_and_skip_non_action_keys():
+    by_action = actions.monitor_scores_by_action(
+        {
+            "simple/1/0": 0.0,
+            "simple/1/2": "unscored",
+            "simple/2/2": 7.0,
+            "simple/1/trajectory": 3.0,
+            "simple/1/draft/12345": 9.0,
+        },
+        {"simple/1/2": {"explanation": "no answer", "attempts": 3}},
+    )
+    assert sorted(by_action) == [0, 2]
+    assert by_action[0] == [{"monitor": "simple", "draw": "1", "value": 0.0}]
+    assert by_action[2] == [
+        {
+            "monitor": "simple",
+            "draw": "1",
+            "value": None,
+            "unscored_reason": {"explanation": "no answer", "attempts": 3},
+        },
+        {"monitor": "simple", "draw": "2", "value": 7.0},
+    ]

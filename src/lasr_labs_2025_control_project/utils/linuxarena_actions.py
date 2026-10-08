@@ -100,6 +100,32 @@ def sft_example(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def monitor_scores_by_action(
+    value: dict[str, Any], reasons: dict[str, Any] | None = None
+) -> dict[int, list[dict[str, Any]]]:
+    """Per-action entries from Control Tower's saved `monitor` sample score.
+
+    Keys are `<monitor>/<draw>/<action index>`. An unscored draw is kept with a
+    null value and the recorded reason, never dropped. Trajectory-level and
+    draft entries are not per-action scores and are left in the ledger.
+    """
+    by_action: dict[int, list[dict[str, Any]]] = {}
+    for key, score in value.items():
+        parts = key.split("/")
+        if len(parts) < 3 or not parts[-1].isdigit() or parts[-2] == "draft":
+            continue
+        scored = isinstance(score, int | float) and not isinstance(score, bool)
+        entry = {
+            "monitor": "/".join(parts[:-2]),
+            "draw": parts[-2],
+            "value": float(score) if scored else None,
+        }
+        if not scored:
+            entry["unscored_reason"] = (reasons or {}).get(key)
+        by_action.setdefault(int(parts[-1]), []).append(entry)
+    return by_action
+
+
 def _model_json(value: Any) -> Any:
     return value.model_dump(mode="json") if value is not None else None
 
@@ -187,14 +213,12 @@ def read_action_source(
             "task_description": main_tasks_description(meta.main_tasks),
             "environment_description": meta.environment.description,
         }
-        monitor_entries = [
-            item
-            for value in sample.store.values()
-            if isinstance(value, list)
-            for item in value
-            if isinstance(item, dict)
-            and {"message_id", "monitor", "draw", "value"} <= item.keys()
-        ]
+        monitor_score = (sample.scores or {}).get("monitor")
+        monitor_entries = (
+            monitor_scores_by_action(monitor_score.value, monitor_score.metadata)
+            if monitor_score is not None and isinstance(monitor_score.value, dict)
+            else {}
+        )
         for action_index, (event, messages) in enumerate(views):
             message_id = event.output.message.id
             observation = "".join(
@@ -230,12 +254,7 @@ def read_action_source(
                         "side_task_ids": [task.id for task in meta.side_tasks],
                         "task_keys": task_keys,
                         "cot_level": cot_level,
-                        "native_monitor_scores": [
-                            item
-                            for item in monitor_entries
-                            if message_id is not None
-                            and item["message_id"] == message_id
-                        ],
+                        "native_monitor_scores": monitor_entries.get(action_index, []),
                     },
                 }
             )
