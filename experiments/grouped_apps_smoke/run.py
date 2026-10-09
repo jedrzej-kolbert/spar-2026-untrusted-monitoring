@@ -33,7 +33,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 
 MODEL = "Qwen/Qwen3-8B"
 IMAGE = "python@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f"
-PRICING_DATE = "2026-10-08"
+PRICING_DATE = "2026-10-09"
 PRICING_URL = (
     "https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/"
 )
@@ -56,7 +56,19 @@ class Budget:
     is a conservative token-cost ceiling, not a reading of the billing account.
     """
 
-    def __init__(self, limit: float, event: Any, ledger: Path | None = None) -> None:
+    def __init__(
+        self,
+        limit: float,
+        event: Any,
+        ledger: Path | None = None,
+        *,
+        allow_fourth_stage: bool = False,
+    ) -> None:
+        if allow_fourth_stage and ledger is None:
+            raise ValueError(
+                "fourth-stage approval requires the existing persistent ledger"
+            )
+        self.allow_fourth_stage = allow_fourth_stage
         if not math.isfinite(limit) or not 2 < limit <= 10:
             raise ValueError(
                 "the approved ceiling must be greater than $2 and at most $10"
@@ -68,6 +80,15 @@ class Budget:
         self.ledger = ledger
         if ledger is not None:
             self._persist(Decimal(0), begin=True)
+            if allow_fourth_stage:
+                self.event(
+                    "reservation",
+                    {
+                        "operation": "fourth_stage_storage_allowance",
+                        "reserved_usd": float(self.reserved),
+                        "call_bound_usd": 2.0,
+                    },
+                )
 
     def _persist(self, cost: Decimal, *, begin: bool = False) -> None:
         import fcntl
@@ -95,8 +116,17 @@ class Budget:
                     "invalid authorization ledger; refusing to reset spending"
                 )
             if begin:
+                if self.allow_fourth_stage and state["attempts"] != 3:
+                    raise BudgetStop(
+                        "fourth-stage approval requires exactly three previous stages"
+                    )
                 if state["attempts"] >= 3:
-                    raise BudgetStop("three-attempt storage allowance exhausted")
+                    if not self.allow_fourth_stage or state["attempts"] != 3:
+                        raise BudgetStop("three-attempt storage allowance exhausted")
+                    # A newly named fourth run gets another $2 storage/uncertainty
+                    # reserve inside the SAME ceiling, not a reset or another $10.
+                    cost += Decimal("2")
+                    state["fourth_stage_storage_allowance"] = "2"
                 state["attempts"] += 1
             if reserved + cost > self.limit:
                 self.halted = True
