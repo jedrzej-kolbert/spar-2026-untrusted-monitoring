@@ -244,12 +244,9 @@ writes only `configs/basharena_open/`:
 ```
 python experiments/open_models/make_configs.py --model-class open --settings basharena
 ```
-The agent's per-step output cap (16000 tokens unless `--max-tokens` is passed) counts
-against the model's context window, and the trajectory is never trimmed: a task that
-outgrows the window errors and is left unscored. `--max-tokens 4096` leaves more room.
-It is not enough for a 32K model: DeepSeek-V3.1 on Tinker as U still lost 8 of 34 tasks
-with it. Qwen3.6-35B-A3B (64K on Tinker) lost 0 of 318 attack tasks and 22 of 160 honest
-tasks at the default cap.
+`--max-tokens` caps the output of one agent step (16000 tokens without it). It does not
+change how long a trajectory can get before the model's context window is full: 32K
+tokens for DeepSeek-V3.1 and gpt-oss-120b on Tinker, 64K for Qwen3.6-35B-A3B.
 
 ### Generate trajectories
 

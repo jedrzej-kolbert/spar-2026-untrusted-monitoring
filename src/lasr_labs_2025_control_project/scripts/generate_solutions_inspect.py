@@ -342,9 +342,8 @@ def basharena_solutions(
     BashArena has one split, so task ids (StackOverflow question numbers) are split
     like APPS problem ids: odd = train, even = test.
 
-    max_tokens overrides the policy's per-step output cap (16000), which counts
-    against the context window: on 32K models (DeepSeek-V3.1 on Tinker) it leaves
-    only ~16K for the growing trajectory.
+    max_tokens overrides the policy's per-step output cap (16000). It does not change
+    how long a trajectory can get before the model's context window is full.
     """
     setting = BashArenaSetting()
     parity = 1 if data_split == DataSplit.TRAIN else 0  # odd ids train, even ids test

@@ -60,10 +60,9 @@ and H must be able to call tools. The generator configs have the APPS names
 There are no transforms. The monitors use the per-action view (`view: action`),
 with the base U or the `basharena_self_rec_action` SFT arm as collusion monitor.
 Generator configs carry no `max_tokens` unless `--max-tokens` is passed: the agent
-policy's own per-step cap (16000) applies. The cap counts against the context
-window and the trajectory is never trimmed, so a task that outgrows the window
-errors and is left unscored. `--max-tokens 4096` leaves more room, but a 32K model
-(DeepSeek-V3.1 on Tinker) still overflows with it.
+policy's own per-step cap (16000) applies. The option caps one step's output only.
+It does not change how long a trajectory can get before the model's context window
+is full (32K for DeepSeek-V3.1 and gpt-oss-120b on Tinker, 64K for Qwen3.6-35B-A3B).
 
 SFT arms
 --------
