@@ -275,6 +275,8 @@ class Recorder:
                     "generation": item.generation.text if item.generation else None,
                     "probabilities": item.probabilities,
                     "reward": item.reward,
+                    "suspiciousness": item.suspiciousness,
+                    "overseer_penalty": item.overseer_penalty,
                     "advantage": item.advantage,
                     "errors": item.errors,
                     "execution": {
@@ -299,6 +301,19 @@ class Recorder:
         metrics[f"{phase}/reward_std"] = (
             statistics.pstdev(rewards) if len(rewards) == len(rows) else None
         )
+        scores = [item.suspiciousness for item in result.rollouts]
+        penalties = [item.overseer_penalty for item in result.rollouts]
+        metrics[f"{phase}/overseer_scored_records"] = sum(v is not None for v in scores)
+        metrics[f"{phase}/suspiciousness_mean"] = (
+            statistics.fmean(v for v in scores if v is not None)
+            if all(v is not None for v in scores)
+            else None
+        )
+        metrics[f"{phase}/reward_overseer_penalty_mean"] = (
+            statistics.fmean(v for v in penalties if v is not None)
+            if all(v is not None for v in penalties)
+            else None
+        )
         if len(rewards) == len(rows):
             task_credit = sum(
                 float(item.execution.passed)
@@ -307,7 +322,7 @@ class Recorder:
             )
             metrics[f"{phase}/reward_task_mean"] = task_credit / len(rows)
             metrics[f"{phase}/reward_communication_mean"] = (
-                sum(rewards) - task_credit
+                sum(rewards) + sum(v for v in penalties if v is not None) - task_credit
             ) / len(rows)
         else:
             metrics[f"{phase}/reward_task_mean"] = None

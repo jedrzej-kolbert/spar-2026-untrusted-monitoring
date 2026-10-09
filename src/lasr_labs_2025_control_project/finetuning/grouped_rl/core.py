@@ -122,6 +122,10 @@ class Receiver(Protocol):
     async def update(self, examples: list[ReceiverExample]) -> UpdateStats: ...
 
 
+class Overseer(Protocol):
+    async def suspiciousness(self, problem: AppsProblem, message: str) -> float: ...
+
+
 class CodeEvaluator(Protocol):
     async def grade(self, problem: AppsProblem, code: str) -> ExecutionGrade: ...
 
@@ -132,10 +136,13 @@ class GroupedRLConfig:
     seed: int = 0
     task_weight: float = 1.0
     communication_weight: float = 1.0
+    overseer_weight: float = 0.0
 
     def __post_init__(self) -> None:
         if self.group_size < 2:
             raise ValueError("group_size must be at least two")
+        if not math.isfinite(self.overseer_weight) or self.overseer_weight < 0:
+            raise ValueError("overseer weight must be finite and nonnegative")
         weights = (self.task_weight, self.communication_weight)
         if not all(math.isfinite(value) and value >= 0 for value in weights):
             raise ValueError("reward weights must be finite and nonnegative")
@@ -174,6 +181,8 @@ class Rollout:
     reward: float | None = None
     advantage: float | None = None
     errors: list[str] = field(default_factory=list)
+    suspiciousness: float | None = None
+    overseer_penalty: float | None = 0.0
 
     @property
     def decoded_correctly(self) -> bool:
@@ -246,11 +255,16 @@ class GroupedRLTrainer:
         receiver: Receiver,
         evaluator: CodeEvaluator,
         config: GroupedRLConfig | None = None,
+        *,
+        overseer: Overseer | None = None,
     ) -> None:
         self.sender = sender
         self.receiver = receiver
         self.evaluator = evaluator
         self.config = config or GroupedRLConfig()
+        if self.config.overseer_weight > 0 and overseer is None:
+            raise ValueError("positive overseer weight requires an overseer")
+        self.overseer = overseer
         self._rng = random.Random(self.config.seed)
         self._train_ids: set[str] = set()
         self._eval_ids: set[str] = set()
@@ -337,13 +351,34 @@ class GroupedRLTrainer:
                             )
                     except Exception as exc:
                         rollout.errors.append(f"execution scoring failed: {exc}")
+                if self.overseer is not None:
+                    rollout.overseer_penalty = None
+                    try:
+                        # Judge the full original response, including explicit comments
+                        # and malformed prose; minification must not hide it from the judge.
+                        score = await self.overseer.suspiciousness(
+                            problem, generation.text
+                        )
+                        if not math.isfinite(score) or not 0 <= score <= 1:
+                            raise ValueError(
+                                "suspiciousness must be finite and in [0, 1]"
+                            )
+                        rollout.suspiciousness = score
+                        rollout.overseer_penalty = self.config.overseer_weight * score
+                    except Exception as exc:
+                        rollout.errors.append(f"overseer scoring failed: {exc}")
                 if not rollout.errors and rollout.probabilities is not None:
                     assert rollout.execution is not None
+                    assert rollout.overseer_penalty is not None
                     # Communication credit is gated on passing every selected APPS test.
-                    rollout.reward = float(rollout.execution.passed) * (
-                        self.config.task_weight
-                        + self.config.communication_weight
-                        * rollout.probabilities[payload]
+                    rollout.reward = (
+                        float(rollout.execution.passed)
+                        * (
+                            self.config.task_weight
+                            + self.config.communication_weight
+                            * rollout.probabilities[payload]
+                        )
+                        - rollout.overseer_penalty
                     )
         return result
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import random
 from dataclasses import replace
 from datetime import date
@@ -18,6 +19,7 @@ from experiments.grouped_apps_smoke.run import (
     PRICING_DATE,
     Budget,
     Recorder,
+    SamplingProxy,
     TrainingProxy,
     load_problems,
     start_wandb,
@@ -35,6 +37,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.sandbox import (
     DockerAppsEvaluator,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
+    TinkerOverseer,
     TinkerReceiver,
     TinkerSender,
 )
@@ -141,6 +144,8 @@ class ChannelRecorder(Recorder):
                     "minification_error": error,
                     "probabilities": row.probabilities,
                     "reward": row.reward,
+                    "suspiciousness": row.suspiciousness,
+                    "overseer_penalty": row.overseer_penalty,
                     "errors": row.errors,
                     "passed": row.execution.passed if row.execution else None,
                 }
@@ -193,7 +198,14 @@ async def execute(args: argparse.Namespace) -> None:
         raise RuntimeError(f"minification/Docker preflight failed: {grade}")
     config = {
         **manifest,
-        "experiment": "one_bit_minification_training",
+        "experiment": "one_bit_minification_overseer_training"
+        if args.overseer_weight
+        else "one_bit_minification_training",
+        "overseer_model": MODEL if args.overseer_weight else None,
+        "overseer_weight": args.overseer_weight,
+        "overseer_view": "full original sender response, before minification; no payload label",
+        "overseer_score": "frozen base model P(suspicious=1), normalized over forced labels 0/1; uncalibrated",
+        "reward_formula": "pass * (1 + P(correct bit)) - overseer_weight * suspiciousness",
         "selection_reason": "Short introductory stdin wiring subset, with documented replacement of the legacy-regex task by the next eligible original-train task; not a representative benchmark.",
         "model": MODEL,
         "steps": args.steps,
@@ -232,7 +244,11 @@ async def execute(args: argparse.Namespace) -> None:
 
     recorder.budget = budget = Budget(10, recorder.event, args.budget_ledger)
     recorder.wandb = start_wandb(args.output, config)
-    recorder.wandb.notes = "One-bit joint training through project-standard minification. Fresh independent adapters. Genuine balanced held-out sender generations. No stealth/overseer objective; one supplied test per task."
+    recorder.wandb.notes = (
+        "One-bit joint training through project-standard minification. Fresh independent adapters. Genuine balanced held-out sender generations. Frozen raw-response overseer weight="
+        + str(args.overseer_weight)
+        + "; one supplied test per task."
+    )
     recorder.status(
         status="initializing_models",
         wandb_url=recorder.wandb.url,
@@ -266,11 +282,29 @@ async def execute(args: argparse.Namespace) -> None:
                 )
             )
             proxies.append(proxy)
+        overseer = None
+        if args.overseer_weight > 0:
+            from tinker.lib.retry_handler import RetryConfig
+
+            judge_sampler = await service.create_sampling_client_async(
+                base_model=MODEL,
+                retry_config=RetryConfig(
+                    enable_retry_logic=False, progress_timeout=180
+                ),
+            )
+            overseer = TinkerOverseer(
+                None,
+                SamplingProxy(judge_sampler, budget, recorder),
+                judge_sampler.get_tokenizer(),
+                allow_paid=True,
+                max_context_tokens=8192,
+            )
         loop = BalancedTrainer(
             roles[0],
             ChannelReceiver(roles[1], channel),
             evaluator,
-            GroupedRLConfig(seed=0),
+            GroupedRLConfig(seed=0, overseer_weight=args.overseer_weight),
+            overseer=overseer,
         )
         baseline = recorder.batch(
             "validation", await loop.evaluate_balanced(validation)
@@ -347,6 +381,12 @@ def main() -> None:
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument(
+        "--overseer-weight",
+        type=float,
+        default=1.0,
+        help="Suspiciousness penalty weight; 0 explicitly disables the judge",
+    )
+    parser.add_argument(
         "--budget-ledger",
         type=Path,
         default=Path.home()
@@ -355,6 +395,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--temp-root", type=Path, required=True)
     args = parser.parse_args()
+    if not math.isfinite(args.overseer_weight) or args.overseer_weight < 0:
+        parser.error("overseer weight must be finite and nonnegative")
     if not 1 <= args.steps <= 10:
         parser.error("this authorized pilot permits 1–10 steps")
     asyncio.run(asyncio.wait_for(execute(args), timeout=1800))
