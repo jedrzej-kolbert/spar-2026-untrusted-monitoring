@@ -273,6 +273,7 @@ Prepare training data. `<eval_logs_dir>/train` must hold only the two logs to tr
 ```
 ACTION_MAX_HISTORY_CHARS=120000 ACTIONS_PER_TRAJECTORY=4 \
 bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw --action-views
+mkdir -p <eval_logs_dir>/prepared
 uv run src/lasr_labs_2025_control_project/finetuning/utils/generate_train_data.py \
   --dataset-folder <eval_logs_dir>/raw/train --output-folder <eval_logs_dir>/prepared/train \
   --target-model <untrusted_generator_model_name> \
