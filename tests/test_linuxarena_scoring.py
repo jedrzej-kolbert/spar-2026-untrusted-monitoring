@@ -94,3 +94,52 @@ def test_scoring_records_errors_and_resumes_only_unscored_rows(
     assert calls == ["view b"]
     summary = scoring.summarize(scoring.load_rows(output))
     assert (summary["rows"], summary["scored"], summary["failed"]) == (2, 2, 0)
+
+
+@pytest.mark.parametrize("change", ["model", "system", "user", "legacy"])
+def test_resume_provenance_rejected_before_requests(
+    change: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def fake(
+        model_name: str, system_prompt: str, user_prompt: str
+    ) -> dict[str, Any]:
+        calls.append(user_prompt)
+        return {"YES": -0.1, "NO": -2.1}
+
+    monkeypatch.setattr(tinker_provider, "collusion_yes_no_logprobs", fake)
+    rows = [row("a", True), row("b", False)]
+    output = tmp_path / "scores.jsonl"
+    asyncio.run(scoring.score_rows(rows[:1], "tinker/model", output, concurrency=1))
+    calls.clear()
+    model = "tinker/other-model" if change == "model" else "tinker/model"
+    if change in {"system", "user"}:
+        for message in rows[0]["messages"]:
+            if message["role"] == change:
+                message["content"] += " changed"
+    if change == "legacy":
+        records = scoring.load_rows(output)
+        records[0].pop("input_hash")
+        output.write_text(json.dumps(records[0]) + "\n")
+    original = output.read_text()
+    expected = (
+        "model differs"
+        if change == "model"
+        else "legacy output"
+        if change == "legacy"
+        else "input text changed"
+    )
+    with pytest.raises(ValueError, match=expected):
+        asyncio.run(scoring.score_rows(rows, model, output, concurrency=1))
+    assert not calls
+    assert output.read_text() == original
+
+
+def test_input_hash_ignores_training_answer_and_covers_exact_monitor_text() -> None:
+    original = row("a", True)
+    identity = scoring.input_hash(original)
+    original["messages"][-1]["content"] = "a different training label"
+    assert scoring.input_hash(original) == identity
+    original["messages"][1]["content"] += " "
+    assert scoring.input_hash(original) != identity

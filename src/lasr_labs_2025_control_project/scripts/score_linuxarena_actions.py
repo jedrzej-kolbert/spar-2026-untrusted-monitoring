@@ -7,10 +7,12 @@ monitor. Makes paid Tinker calls: two logprob requests per row.
 
 Every row gets one output record. A failed request is recorded with its error
 and can be retried by re-running with the same --output-jsonl, which skips rows
-that already have a margin.
+that already have a finite margin. Resume requires identical model and system/user
+text; legacy files without input hashes remain analysable but cannot be resumed.
 """
 
 import asyncio
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -26,11 +28,47 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in f if line.strip()]
 
 
+def input_hash(row: dict[str, Any]) -> str:
+    """Identity of exactly the system/user text sent to forced decoding."""
+    messages = {m["role"]: m["content"] for m in row["messages"]}
+    text = json.dumps(
+        {"system": messages.get("system", ""), "user": messages["user"]},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def validate_resume(rows: list[dict[str, Any]], model: str, output: Path) -> None:
+    """Refuse stale or unprovable provenance before making any paid request."""
+    identities = {row["meta"]["action_id"]: input_hash(row) for row in rows}
+    if len(identities) != len(rows):
+        raise ValueError("Duplicate action IDs in recognition input")
+    for record in load_rows(output) if output.exists() else []:
+        action_id = record["action_id"]
+        if record.get("model") != model:
+            raise ValueError(
+                f"{output}: model differs from requested {model!r}; retain the old output and use a new --output-jsonl"
+            )
+        if not record.get("input_hash"):
+            raise ValueError(
+                f"{output}: legacy output has no input_hash; input provenance cannot be verified. Retain it for analysis and use a new --output-jsonl"
+            )
+        if identities.get(action_id) != record["input_hash"]:
+            raise ValueError(
+                f"{output}: input text changed or action {action_id!r} is absent; retain the old output and use a new --output-jsonl"
+            )
+
+
 def scored_ids(path: Path) -> set[str]:
-    """Action IDs that already have a margin; failed rows are retried."""
+    """Action IDs that already have a finite margin; failed rows are retried."""
     if not path.exists():
         return set()
-    return {r["action_id"] for r in load_rows(path) if r.get("margin") is not None}
+    return {
+        r["action_id"]
+        for r in load_rows(path)
+        if r.get("margin") is not None and math.isfinite(r["margin"])
+    }
 
 
 def latest_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -74,6 +112,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
 async def score_rows(
     rows: list[dict[str, Any]], model: str, output: Path, concurrency: int
 ) -> None:
+    validate_resume(rows, model, output)
     from lasr_labs_2025_control_project.utils.tinker_provider import (
         collusion_yes_no_logprobs,
     )
@@ -95,6 +134,7 @@ async def score_rows(
             "action_index": meta["action_index"],
             "split": meta.get("split"),
             "model": model,
+            "input_hash": input_hash(row),
             "margin": None,
         }
         async with gate:
