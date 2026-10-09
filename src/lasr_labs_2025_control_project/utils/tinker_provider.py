@@ -7,7 +7,8 @@ Everything Tinker-specific lives in this module. It does two jobs:
    for solution *generation* (attacks / honest / honeypots), the text-``<score>``
    suspiciousness monitors, and the LLM paraphraser -- i.e. every plain-sampling
    role -- with no other pipeline changes. Requests that carry tools (agentic
-   settings like BashArena) go through tinker-cookbook's native renderers.
+   settings like BashArena) go through tinker-cookbook's native renderers, and
+   their history is shortened when it would not fit the model's context window.
 
 2. Exposes :func:`collusion_yes_no_logprobs`, which returns the *exact*
    log P(YES) / log P(NO) answer-token logprobs the untrusted collusion monitor
@@ -30,7 +31,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -38,6 +39,7 @@ from inspect_ai.model import (
     ChatCompletionChoice,
     ChatMessage,
     ChatMessageAssistant,
+    ChatMessageUser,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
@@ -206,21 +208,141 @@ def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
 # the plain chat-template path above.
 # --------------------------------------------------------------------------- #
 @lru_cache(maxsize=None)
+def _base_model(model_ref: str) -> str:
+    """Base model of a ``tinker://`` checkpoint; any other ref is already one."""
+    if not model_ref.startswith("tinker://"):
+        return model_ref
+    rest = _service().create_rest_client()
+    run = rest.get_training_run_by_tinker_path(model_ref, access_scope="accessible")
+    return run.result().base_model
+
+
+@lru_cache(maxsize=None)
 def _renderer(model_ref: str):
     from tinker_cookbook.model_info import get_recommended_renderer_name
     from tinker_cookbook.renderers import get_renderer
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    base = model_ref
-    if model_ref.startswith(
-        "tinker://"
-    ):  # fine-tuned checkpoint: renderer follows its base
-        rest = _service().create_rest_client()
-        run = rest.get_training_run_by_tinker_path(model_ref, access_scope="accessible")
-        base = run.result().base_model
+    base = _base_model(model_ref)  # a fine-tuned checkpoint renders like its base
     return get_renderer(
         get_recommended_renderer_name(base), get_tokenizer(base), model_name=base
     )
+
+
+@lru_cache(maxsize=None)
+def _context_window(model_ref: str) -> int | None:
+    """Context length in tokens that Tinker serves for a model, if it reports one."""
+    base = _base_model(model_ref)
+    for model in _service().get_server_capabilities().supported_models:
+        if model.model_name == base:
+            return model.max_context_length
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Fitting an agent's history to the context window. An agent policy re-sends the
+# whole trajectory on every step. As the prompt nears the window Tinker silently
+# cuts the output to the room left, whatever max_tokens says, and once the prompt
+# itself exceeds the window it rejects the call ("Prompt length plus max_tokens
+# exceeds the model's context window"), which ends the run unscored. In the
+# BashArena runs that died this way, the last steps before the error had as few
+# as 28 output tokens. Only the prompt of a call is shortened: the trajectory
+# saved in the eval log stays complete.
+# --------------------------------------------------------------------------- #
+# Room kept for one step's reasoning and tool call, however long the history.
+_AGENT_MIN_OUTPUT_TOKENS = 4096
+
+_OMITTED_OUTPUT = "[output omitted to fit the model's context window]"
+
+
+def _history_levels(input: list[ChatMessage]) -> tuple[int, int]:
+    """``(outputs, steps)`` that `_shortened` can omit from an agent's messages."""
+    assistants = [i for i, m in enumerate(input) if m.role == "assistant"]
+    if len(assistants) < 2:
+        return 0, 0
+    earlier = input[assistants[0] : assistants[-1]]
+    outputs = sum(_is_long_output(m) for m in earlier)
+    return outputs, len(assistants) - 1
+
+
+def _is_long_output(message: ChatMessage) -> bool:
+    return message.role == "tool" and len(message.text) > len(_OMITTED_OUTPUT)
+
+
+def _shortened(input: list[ChatMessage], level: int) -> list[ChatMessage]:
+    """An agent's messages with older history removed, more at each level.
+
+    Level k up to the number of earlier tool outputs replaces the k oldest of them
+    with a placeholder, so the agent still sees which commands it ran. Each level
+    beyond that also drops the oldest remaining step (an assistant message and its
+    tool results). The messages before the first step and the latest step are kept.
+
+    Example:
+        _shortened(messages, 0) == messages
+        _shortened(messages, 3)[5].text  # "[output omitted to fit ...]"
+    """
+    outputs, steps = _history_levels(input)
+    assistants = [i for i, m in enumerate(input) if m.role == "assistant"]
+    if level <= 0 or not steps:
+        return list(input)
+    first, last = assistants[0], assistants[-1]
+    earlier = list(input[first:last])
+    omit = min(level, outputs)
+    for i, message in enumerate(earlier):
+        if omit and _is_long_output(message):
+            earlier[i] = message.model_copy(
+                update={"content": _OMITTED_OUTPUT, "error": None}
+            )
+            omit -= 1
+    dropped = min(level - outputs, steps)
+    note: list[ChatMessage] = []
+    if dropped > 0:
+        earlier = earlier[assistants[dropped] - first :]
+        note = [
+            ChatMessageUser(
+                content=f"[{dropped} earlier steps omitted to fit the model's context window]"
+            )
+        ]
+    return [*input[:first], *note, *earlier, *input[last:]]
+
+
+def _fit_history(
+    build: Callable[[list[ChatMessage]], Any], input: list[ChatMessage], budget: int
+) -> tuple[Any, dict[str, int] | None] | None:
+    """Prompt for an agent step that fits in `budget` tokens, shortening its history.
+
+    Example:
+        prompt, omitted = _fit_history(build, messages, 32768 - 4096)
+        omitted  # None, or {"outputs": 12, "steps": 0}
+
+    Args:
+        build: Renders messages into a prompt with a token ``length``.
+        input: The agent's messages for this step.
+        budget: Most prompt tokens allowed.
+
+    Returns:
+        The prompt and what was omitted from it (None if nothing was), or None if
+        even the shortest history does not fit.
+    """
+    prompt = build(input)
+    if prompt.length <= budget:
+        return prompt, None
+    outputs, steps = _history_levels(input)
+    low, high = 1, outputs + steps  # the lowest level that fits is in [low, high]
+    best = build(_shortened(input, high)) if high else None
+    if best is None or best.length > budget:
+        return None
+    while low < high:
+        level = (low + high) // 2
+        candidate = build(_shortened(input, level))
+        if candidate.length <= budget:
+            best, high = candidate, level
+        else:
+            low = level + 1
+    return best, {
+        "outputs": min(high, outputs),
+        "steps": max(high - outputs, 0),
+    }
 
 
 def _renderer_messages(
@@ -339,11 +461,34 @@ class TinkerAPI(ModelAPI):
     ) -> ModelOutput:
         from tinker import types
 
+        # Generous default for callers that set no max_tokens (monitors, the
+        # paraphraser): a short cap truncates generators mid-output, e.g.
+        # before the closing </final_code> tag. Generator configs override
+        # this via RunGenerator.max_tokens.
+        max_tokens = config.max_tokens or _DEFAULT_MAX_TOKENS
+        omitted: dict[str, int] | None = None
         if tools:
             renderer = _renderer(self.base_model)
-            prompt = renderer.build_generation_prompt(
-                _renderer_messages(renderer, input, tools)
-            )
+
+            def build(messages: list[ChatMessage]) -> Any:
+                return renderer.build_generation_prompt(
+                    _renderer_messages(renderer, messages, tools)
+                )
+
+            window = _context_window(self.base_model)
+            if window is None:
+                prompt = build(input)
+            else:
+                reserve = min(max_tokens, _AGENT_MIN_OUTPUT_TOKENS)
+                fitted = _fit_history(build, input, window - reserve)
+                if fitted is None:
+                    # One step alone is too long. Inspect's agent loop ends the run
+                    # on this stop reason, and the trajectory so far is scored.
+                    return ModelOutput.from_content(
+                        model=self.model_name, content="", stop_reason="model_length"
+                    )
+                prompt, omitted = fitted
+                max_tokens = min(max_tokens, window - prompt.length)
             stop = renderer.get_stop_sequences()
         else:
             prompt = types.ModelInput.from_ints(
@@ -356,11 +501,7 @@ class TinkerAPI(ModelAPI):
             )
             stop = config.stop_seqs
         sampling_params = types.SamplingParams(
-            # Generous default for callers that set no max_tokens (monitors, the
-            # paraphraser): a short cap truncates generators mid-output, e.g.
-            # before the closing </final_code> tag. Generator configs override
-            # this via RunGenerator.max_tokens.
-            max_tokens=config.max_tokens or _DEFAULT_MAX_TOKENS,
+            max_tokens=max_tokens,
             temperature=1.0 if config.temperature is None else config.temperature,
             top_p=1.0 if config.top_p is None else config.top_p,
             top_k=-1 if config.top_k is None else config.top_k,
@@ -410,6 +551,8 @@ class TinkerAPI(ModelAPI):
                         tool_calls=tool_calls or None,
                         model=self.model_name,
                         source="generate",
+                        # Marks the steps generated from a shortened history.
+                        metadata={"history_omitted": omitted} if omitted else None,
                     ),
                     stop_reason="tool_calls" if tool_calls else stop_reason,
                 )
