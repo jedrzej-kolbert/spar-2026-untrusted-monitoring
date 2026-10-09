@@ -48,32 +48,38 @@ def tree(
         "open", {"basharena_self_rec_action": CHECKPOINT}
     )
     written, pruned = make_configs.generate_setting("open", "basharena", models, None)
-    assert len(written) == 7 and pruned == []
+    assert len(written) == 4 and pruned == []
     return root
 
 
 def test_generators(make_configs: ModuleType, tree: Path) -> None:
     roles = make_configs.ROLE_MODELS["open"]
+    # The APPS file names, so sft-steps.md runs the same two commands.
     expected = {
-        "train_attacks": ("U", "generator/train/attacks.eval"),
-        "train_honeypots": ("H", "generator/train/honeypots.eval"),
-        "test_attacks": ("U", "generator/attacks.eval"),
-        "test_honest": ("U", "generator/honest.eval"),
-        "test_honeypots": ("H", "generator/honeypots.eval"),
+        ("train", "train_generator_config.yaml"): {
+            "attacks": ("U", "generator/train/attacks.eval"),
+            "honeypots": ("H", "generator/train/honeypots.eval"),
+        },
+        ("test", "generator_config.yaml"): {
+            "attacks": ("U", "generator/attacks.eval"),
+            "honest": ("U", "generator/honest.eval"),
+            "honeypots": ("H", "generator/honeypots.eval"),
+        },
     }
-    for name, (role, save_path) in expected.items():
-        split = name.split("_")[0]
+    for (split, name), runs in expected.items():
         config = load_and_normalize_config(
-            tree / GENERATOR / f"{name}_config.yaml", config_type="generator"
+            tree / GENERATOR / name, config_type="generator"
         )
-        (run,) = config.runs
-        assert isinstance(run, GeneratorRunConfig)
-        assert run.generator.dataset_type == DatasetType.BASHARENA
-        assert run.generator.data_split == split
-        assert run.generator.model_info.model == roles[role]
-        assert run.generator.max_tokens is None  # the agent policy's own cap
-        assert run.limit == make_configs.BASHARENA_LIMITS[split]
-        assert run.save_path == config.experiment_folder / save_path
+        assert [run.label for run in config.runs] == list(runs)
+        for run in config.runs:
+            role, save_path = runs[run.label]
+            assert isinstance(run, GeneratorRunConfig)
+            assert run.generator.dataset_type == DatasetType.BASHARENA
+            assert run.generator.data_split == split
+            assert run.generator.model_info.model == roles[role]
+            assert run.generator.max_tokens is None  # the agent policy's own cap
+            assert run.limit == make_configs.BASHARENA_LIMITS[split]
+            assert run.save_path == config.experiment_folder / save_path
 
 
 def test_monitors_use_the_action_view(
@@ -144,10 +150,10 @@ def test_max_tokens_flag_reaches_the_generators(
     models = make_configs.ModelResolver("open", {})
     make_configs.generate_setting("open", "basharena", models, 4096)
     config = load_and_normalize_config(
-        tmp_path / "basharena_open" / GENERATOR / "test_honeypots_config.yaml",
+        tmp_path / "basharena_open" / GENERATOR / "generator_config.yaml",
         config_type="generator",
     )
-    (run,) = config.runs
-    assert isinstance(run, GeneratorRunConfig)
-    assert run.generator.max_tokens == 4096
+    for run in config.runs:
+        assert isinstance(run, GeneratorRunConfig)
+        assert run.generator.max_tokens == 4096
     assert models.pending == {"basharena_self_rec_action"}

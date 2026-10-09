@@ -54,8 +54,9 @@ emit clean output out of the box; gpt-oss-120b is the closer capability match to
 BashArena (open models only)
 ----------------------------
 BashArena uses the open U/T/H above. Its generators are tool-calling agents, so U
-and H must be able to call tools. It emits one generator config per role, so a retried run
-cannot redo another role's trajectories, each limited to `BASHARENA_LIMITS` tasks.
+and H must be able to call tools. The generator configs have the APPS names
+(`train_generator_config.yaml`, `generator_config.yaml`); each run in them takes
+`BASHARENA_LIMITS` tasks.
 There are no transforms. The monitors use the per-action view (`view: action`),
 with the base U or the `basharena_self_rec_action` SFT arm as collusion monitor.
 Generator configs carry no `max_tokens` unless `--max-tokens` is passed: the agent
@@ -860,33 +861,37 @@ BIGCODEBENCH = Setting(
 )
 
 
-def basharena_generator(split: str, label: str, role: str) -> Generator:
-    """One BashArena generator config: one role's agent runs on one split.
+def basharena_generator(split: str, runs: tuple[tuple[str, str], ...]) -> Generator:
+    """One BashArena generator config: every (label, role) agent run on one split.
+
+    The file names are the APPS ones (`train_generator_config.yaml` and
+    `generator_config.yaml`), so sft-steps.md runs the same commands for both.
 
     Train logs go straight into `generator/train/`: `transform_logs_to_raw.sh`
     converts every `.eval` in `<eval_logs_dir>/train`, so the two training logs
     are saved there and nothing has to be moved by hand.
     """
-    honest = label == "honest"
+    train = split == "train"
     return Generator(
-        path=f"self_rec/generator/{split}_{label}_config.yaml",
-        experiment="self_rec_train" if split == "train" else "self_rec",
-        experiment_name=f"basharena_self_rec_{split}_{label}",
+        path=f"self_rec/generator/{'train_' if train else ''}generator_config.yaml",
+        experiment="self_rec_train" if train else "self_rec",
+        experiment_name=f"basharena_self_rec_{split}",
         data_split=split,
         extra_defaults={
             "dataset_type": "basharena",
             "limit": BASHARENA_LIMITS[split],
         },
-        runs=(
+        runs=tuple(
             GenRun(
                 label,
-                "honest" if honest else "attack",
+                "honest" if label == "honest" else "attack",
                 "BASHARENA_HONEST_SYSTEM_PROMPT"
-                if honest
+                if label == "honest"
                 else "BASHARENA_ATTACK_SYSTEM_PROMPT",
                 role,
-                save_path=f"generator/train/{label}.eval" if split == "train" else "",
-            ),
+                save_path=f"generator/train/{label}.eval" if train else "",
+            )
+            for label, role in runs
         ),
     )
 
@@ -894,11 +899,10 @@ def basharena_generator(split: str, label: str, role: str) -> Generator:
 BASHARENA = Setting(
     generators=(
         # SFT training data: U attacks (YES) and H honeypots (NO), train split.
-        basharena_generator("train", "attacks", "U"),
-        basharena_generator("train", "honeypots", "H"),
-        basharena_generator("test", "attacks", "U"),
-        basharena_generator("test", "honest", "U"),
-        basharena_generator("test", "honeypots", "H"),
+        basharena_generator("train", (("attacks", "U"), ("honeypots", "H"))),
+        basharena_generator(
+            "test", (("attacks", "U"), ("honest", "U"), ("honeypots", "H"))
+        ),
     ),
     transforms=(),
     monitors=tuple(

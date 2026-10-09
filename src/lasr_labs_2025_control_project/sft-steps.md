@@ -249,14 +249,14 @@ Without it the agent's own per-step output cap of 16000 tokens applies.
 
 ### Generate trajectories
 
-Docker must be running. There is one config per role, so a rerun repeats only that role:
+Docker must be running. The two commands are the APPS ones with `basharena_open` in the
+path. The first makes the training trajectories (U attacks, H honeypots), the second the
+test trajectories (U attacks, U honest, H honeypots):
 ```
-for c in train_attacks train_honeypots test_attacks test_honest test_honeypots; do
-  python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py \
-    --config src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/${c}_config.yaml
-done
+python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/train_generator_config.yaml
+python src/lasr_labs_2025_control_project/scripts/generate_solutions_inspect.py --config src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/generator_config.yaml
 ```
-The two training logs are saved in
+A rerun of either command repeats every run in that config. The two training logs are saved in
 `experiments/open-source-model/basharena/self_rec_train/generator/train/`, so
 `<eval_logs_dir>` below is `experiments/open-source-model/basharena/self_rec_train/generator`
 and nothing has to be moved. The three test logs are saved in
