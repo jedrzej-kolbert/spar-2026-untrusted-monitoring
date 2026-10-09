@@ -45,7 +45,7 @@ def tree(
     (root / GENERATOR).mkdir(parents=True)
     (root / GENERATOR / "my_run_config.yaml").write_text("hand-written\n")
     models = make_configs.ModelResolver(
-        "open", {"basharena_self_rec_action": CHECKPOINT}, "basharena"
+        "open", {"basharena_self_rec_action": CHECKPOINT}
     )
     written, pruned = make_configs.generate_setting("open", "basharena", models, None)
     assert len(written) == 7 and pruned == []
@@ -53,7 +53,7 @@ def tree(
 
 
 def test_generators(make_configs: ModuleType, tree: Path) -> None:
-    roles = make_configs.SETTING_ROLE_MODELS["basharena"]["open"]
+    roles = make_configs.ROLE_MODELS["open"]
     expected = {
         "train_attacks": ("U", "generator/train/attacks.eval"),
         "train_honeypots": ("H", "generator/train/honeypots.eval"),
@@ -82,7 +82,7 @@ def test_monitors_use_the_action_view(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    roles = make_configs.SETTING_ROLE_MODELS["basharena"]["open"]
+    roles = make_configs.ROLE_MODELS["open"]
     # The loader requires the test logs to exist, relative to the working directory.
     monkeypatch.chdir(tmp_path)
     logs = tmp_path / "experiments/open-source-model/basharena/self_rec/generator"
@@ -113,6 +113,26 @@ def test_monitors_use_the_action_view(
             )
 
 
+def test_role_models_edit_reaches_basharena(
+    make_configs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing `ROLE_MODELS`, as sft-steps.md says to, changes the BashArena configs."""
+    edited = {"U": "tinker/org/new-u", "T": "tinker/org/new-t", "H": "tinker/org/new-h"}
+    monkeypatch.setattr(make_configs, "CONFIGS", tmp_path)
+    monkeypatch.setitem(make_configs.ROLE_MODELS, "open", edited)
+    models = make_configs.ModelResolver(
+        "open", {"basharena_self_rec_action": CHECKPOINT}
+    )
+    written, _ = make_configs.generate_setting("open", "basharena", models, None)
+    used = {
+        line.split("model:", 1)[1].strip()
+        for path in written
+        for line in path.read_text().splitlines()
+        if line.strip().startswith("model:")
+    }
+    assert used == {*edited.values(), f"tinker/{CHECKPOINT}"}
+
+
 def test_hand_written_configs_are_kept(tree: Path) -> None:
     assert (tree / GENERATOR / "my_run_config.yaml").read_text() == "hand-written\n"
 
@@ -121,7 +141,7 @@ def test_max_tokens_flag_reaches_the_generators(
     make_configs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(make_configs, "CONFIGS", tmp_path)
-    models = make_configs.ModelResolver("open", {}, "basharena")
+    models = make_configs.ModelResolver("open", {})
     make_configs.generate_setting("open", "basharena", models, 4096)
     config = load_and_normalize_config(
         tmp_path / "basharena_open" / GENERATOR / "test_honeypots_config.yaml",

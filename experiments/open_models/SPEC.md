@@ -51,8 +51,7 @@ declared as dependencies.
 Set in `experiments/open_models/make_configs.py`, which holds one declarative
 spec and emits **both** config trees from it: `configs/{apps,bigcodebench}/`
 (closed models) and `configs/{apps,bigcodebench}_open/` (Tinker). It also emits
-`configs/basharena_open/` (Tinker only), which has its own U/T/H triple in
-`SETTING_ROLE_MODELS`. The SFT arms
+`configs/basharena_open/` (Tinker only), from the same open U/T/H. The SFT arms
 are generated too: each closed `openai/ft:...` finetune maps to a logical arm
 name whose open-weights counterpart is a Tinker LoRA of U, supplied with
 `--checkpoints ckpts.json` (arm -> `tinker://…` path). Arms without a checkpoint

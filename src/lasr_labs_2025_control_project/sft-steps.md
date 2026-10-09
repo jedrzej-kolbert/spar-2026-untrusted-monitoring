@@ -232,12 +232,12 @@ trajectory score is a max.
 
 ### BashArena configs
 
-BashArena has its own model triple and task counts. Set both in
-`experiments/open_models/make_configs.py`, just below `ROLE_MODELS`:
-- `SETTING_ROLE_MODELS["basharena"]["open"]` holds U, T and H. The generators are
-  tool-calling agents, so `ROLE_MODELS` is not used for them.
-- `BASHARENA_LIMITS` is the number of tasks per generator run (40 train, 20 test).
-  Each task is an agent run of up to 60 steps in its own Docker container.
+BashArena uses the same `ROLE_MODELS["open"]` models as [Configs](#configs). Its
+generators are tool-calling agents, so U and H must be able to call tools.
+`BASHARENA_LIMITS`, just below `ROLE_MODELS` in
+`experiments/open_models/make_configs.py`, is the number of tasks per generator run
+(40 train, 20 test). Each task is an agent run of up to 60 steps in its own Docker
+container.
 
 Then generate the configs. The command from [Configs](#configs) writes them too; this one
 writes only `configs/basharena_open/`:

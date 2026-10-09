@@ -53,8 +53,8 @@ emit clean output out of the box; gpt-oss-120b is the closer capability match to
 
 BashArena (open models only)
 ----------------------------
-BashArena has its own U/T/H triple (`SETTING_ROLE_MODELS`), because its generators
-are tool-calling agents. It emits one generator config per role, so a retried run
+BashArena uses the open U/T/H above. Its generators are tool-calling agents, so U
+and H must be able to call tools. It emits one generator config per role, so a retried run
 cannot redo another role's trajectories, each limited to `BASHARENA_LIMITS` tasks.
 There are no transforms. The monitors use the per-action view (`view: action`),
 with the base U or the `basharena_self_rec_action` SFT arm as collusion monitor.
@@ -162,19 +162,6 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
         "U": "tinker/Qwen/Qwen3-30B-A3B-Instruct-2507",
         "T": "tinker/Qwen/Qwen3.5-4B",
         "H": "tinker/openai/gpt-oss-120b",
-    },
-}
-
-#: setting -> model class -> roles that replace ROLE_MODELS for that setting.
-#: BashArena generators are tool-calling agents; these are the models its runs and
-#: the former hand-written action_monitor_config.yaml used.
-SETTING_ROLE_MODELS: dict[str, dict[str, dict[str, str]]] = {
-    "basharena": {
-        "open": {
-            "U": "tinker/Qwen/Qwen3.6-35B-A3B",
-            "T": "tinker/Qwen/Qwen3.5-9B",
-            "H": "tinker/openai/gpt-oss-120b",
-        },
     },
 }
 
@@ -962,24 +949,18 @@ DEFAULT_CHECKPOINTS_FILE = Path(__file__).resolve().parent / "ckpts.json"
 class ModelResolver:
     """Turns a spec model reference (role key or SFT arm) into a model string."""
 
-    def __init__(
-        self, model_class: str, checkpoints: Mapping[str, str], setting: str = ""
-    ):
+    def __init__(self, model_class: str, checkpoints: Mapping[str, str]):
         self.model_class = model_class
         self.checkpoints = checkpoints
-        self.roles = {
-            **ROLE_MODELS[model_class],
-            **SETTING_ROLE_MODELS.get(setting, {}).get(model_class, {}),
-        }
         self.pending: set[str] = set()
         self.used_arms: set[str] = set()
 
     def role(self, key: str) -> str:
-        return self.roles[key]
+        return ROLE_MODELS[self.model_class][key]
 
     def resolve(self, ref: str) -> str:
         """`ref` is either a role key (U/T/H) or an SFT arm name."""
-        if ref in self.roles:
+        if ref in ROLE_MODELS[self.model_class]:
             return self.role(ref)
         if ref not in SFT_ARMS:
             raise SystemExit(f"spec error: unknown model reference {ref!r}")
@@ -1353,12 +1334,12 @@ def main() -> None:
 
     pending: set[str] = set()
     for model_class in args.model_class:
+        models = ModelResolver(model_class, checkpoints)
         for setting in args.settings or DEFAULT_SETTINGS:
             if model_class not in SPEC[setting].model_classes:
                 if args.settings:
                     print(f"{model_class:>6}  {setting}: not generated for this class")
                 continue
-            models = ModelResolver(model_class, checkpoints, setting)
             max_tokens = (
                 args.max_tokens
                 if args.max_tokens is not None
@@ -1374,7 +1355,7 @@ def main() -> None:
             print(f"{model_class:>6}  {root}: {len(written)} files")
             for stale in pruned:
                 print(f"          pruned {stale.relative_to(REPO_ROOT)}")
-            pending |= models.pending
+        pending |= models.pending
 
     if checkpoints:
         print("\ncheckpoints:")
