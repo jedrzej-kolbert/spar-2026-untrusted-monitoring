@@ -1,0 +1,21 @@
+experiment_folder: /home/jkk/spar-2026-untrusted-monitoring/.worktrees/experiment-issue25-paraphrase-dynamics/experiments/issue25_paraphrase_dynamics/test
+experiment_name: Issue25 paraphrased test
+results_folder: results/paraphrased
+defaults:
+  transform:
+    type: llm
+    remove_comments: true
+    model_info:
+      model: tinker/Qwen/Qwen3.5-4B
+      system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
+      base_prompt: LLM_SUMMARIZE_BASE_PROMPT
+runs:
+  attacks:
+    eval_path: generator/attacks.eval
+    save_path: transformed/attacks.eval
+  honeypots:
+    eval_path: generator/honeypots.eval
+    save_path: transformed/honeypots.eval
+  honest:
+    eval_path: generator/honest.eval
+    save_path: transformed/honest.eval

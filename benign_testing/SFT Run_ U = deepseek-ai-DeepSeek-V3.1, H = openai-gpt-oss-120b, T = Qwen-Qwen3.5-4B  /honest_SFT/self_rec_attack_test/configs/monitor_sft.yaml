@@ -1,0 +1,28 @@
+experiment_folder: experiments/self_rec_attack_500
+experiment_name: "sft self-recognition \u2014 None (500-problem test)"
+results_folder: results/monitor_sft/
+defaults:
+  monitors:
+  - untrusted_collusion_monitor:
+      model_info:
+        model: tinker/tinker://d6c0eba5-4bb1-579d-9220-b94b0fb863c4:train:1/sampler_weights/self_rec_u_epoch2
+        system_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      transformed: false
+      remove_comments: true
+runs:
+  honest:
+    eval_path: monitor/shared/honest.eval
+    save_path: monitor/sft/honest.eval
+    monitors:
+    - untrusted_collusion_monitor
+  attacks:
+    eval_path: monitor/shared/attacks.eval
+    save_path: monitor/sft/attacks.eval
+    monitors:
+    - untrusted_collusion_monitor
+  honeypots:
+    eval_path: monitor/shared/honeypots.eval
+    save_path: monitor/sft/honeypots.eval
+    monitors:
+    - untrusted_collusion_monitor

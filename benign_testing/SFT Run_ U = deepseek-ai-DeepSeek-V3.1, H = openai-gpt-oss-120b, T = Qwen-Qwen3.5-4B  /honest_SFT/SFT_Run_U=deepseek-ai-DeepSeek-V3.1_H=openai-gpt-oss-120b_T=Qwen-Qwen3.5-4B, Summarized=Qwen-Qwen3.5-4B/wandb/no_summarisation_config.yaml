@@ -1,0 +1,128 @@
+_wandb:
+    value:
+        cli_version: 0.22.1
+        e:
+            lnzzmfccv4bljl7jcl0mv0jxk8qybw5i:
+                args:
+                    - --train-jsonl
+                    - experiments/self_rec_train/prepared/train/train_messages.jsonl
+                    - --base-model
+                    - deepseek-ai/DeepSeek-V3.1
+                    - --rank
+                    - "32"
+                    - --lr
+                    - "1e-4"
+                    - --epochs
+                    - "3"
+                    - --batch-size
+                    - "64"
+                    - --checkpoint-name
+                    - self_rec_u
+                    - --out-path-file
+                    - checkpoint_path.txt
+                    - --wandb
+                    - --eval-every-epoch
+                codePath: src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py
+                codePathLocal: src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py
+                cpu_count: 8
+                cpu_count_logical: 12
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "1449716461568"
+                        used: "1117327110144"
+                email: jedrzej.kolbert@gmail.com
+                executable: /home/jkk/spar-2026-untrusted-monitoring/.venv/bin/python3
+                git:
+                    commit: 2e45b8e641ce1621c7fa9748a05c732c97e681d6
+                    remote: https://github.com/jedrzej-kolbert/spar-2026-untrusted-monitoring.git
+                gpu: NVIDIA GeForce RTX 5060 Laptop GPU
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 3328
+                      memoryTotal: "8546942976"
+                      name: NVIDIA GeForce RTX 5060 Laptop GPU
+                      uuid: GPU-07d5d568-76f5-8c87-a80e-8873be2dbf8e
+                host: jkk
+                memory:
+                    total: "33229467648"
+                os: Linux-7.0.0-31-generic-x86_64-with-glibc2.39
+                program: /home/jkk/spar-2026-untrusted-monitoring/src/lasr_labs_2025_control_project/finetuning/tinker_lora_finetune.py
+                python: CPython 3.13.2
+                root: /home/jkk/spar-2026-untrusted-monitoring
+                startedAt: "2026-09-20T15:06:10.968730Z"
+                writerId: lnzzmfccv4bljl7jcl0mv0jxk8qybw5i
+        m: []
+        python_version: 3.13.2
+        t:
+            "1":
+                - 1
+                - 105
+            "2":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 53
+                - 105
+            "3":
+                - 13
+                - 16
+            "4": 3.13.2
+            "5": 0.22.1
+            "12": 0.22.1
+            "13": linux-x86_64
+        visualize:
+            val/roc_curve:
+                panel_config:
+                    fieldSettings:
+                        class: class
+                        x: fpr
+                        "y": tpr
+                    panelDefId: wandb/area-under-curve/v0
+                    stringSettings:
+                        title: ROC Curve
+                        x-axis-title: False positive rate
+                        y-axis-title: True positive rate
+                    transform:
+                        name: tableWithLeafColNames
+                    userQuery:
+                        queryFields:
+                            - args:
+                                - name: runSets
+                                  value: ${runSets}
+                              fields:
+                                - fields: []
+                                  name: id
+                                - fields: []
+                                  name: name
+                                - fields: []
+                                  name: _defaultColorIndex
+                                - args:
+                                    - name: tableKey
+                                      value: val/roc_curve_table
+                                  fields: []
+                                  name: summaryTable
+                              name: runSets
+                panel_type: Vega2
+base_model:
+    value: deepseek-ai/DeepSeek-V3.1
+batch_size:
+    value: 64
+epochs:
+    value: 3
+lr:
+    value: 0.0001
+max_examples:
+    value: null
+rank:
+    value: 32
+seed:
+    value: 0
+tinker_session_url:
+    value: https://tinker.thinkingmachines.ai/training_runs/749709c6-3a42-5d60-b2a8-e9126a188164:train:0
+train_jsonl:
+    value: experiments/self_rec_train/prepared/train/train_messages.jsonl
+val_frac:
+    value: 0.05

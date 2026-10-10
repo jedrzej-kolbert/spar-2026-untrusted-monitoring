@@ -1,0 +1,20 @@
+experiment_folder: experiments/self_rec_summarized
+experiment_name: self_rec_summarized_train_transform
+results_folder: results/transform_train/
+
+defaults:
+  transform:
+    type: llm
+    remove_comments: true
+    model_info:
+      model: tinker/Qwen/Qwen3.5-4B
+      system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
+      base_prompt: LLM_SUMMARIZE_BASE_PROMPT
+
+runs:
+  honest:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/experiments/self_rec_train/generator/train/honest.eval
+    save_path: transforms/summarised/train/honest.eval
+  honeypots:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/experiments/self_rec_train/generator/train/honeypots.eval
+    save_path: transforms/summarised/train/honeypots.eval

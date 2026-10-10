@@ -1,0 +1,24 @@
+# GENERATED FILE - do not hand-edit; your changes will be overwritten.
+# Source of truth: experiments/open_models/make_configs.py (declarative spec at module top).
+# Regenerate: python experiments/open_models/make_configs.py [--checkpoints ckpts.json]
+#   (SFT checkpoints are picked up automatically from experiments/open_models/ckpts.json)
+
+experiment_folder: experiments/open-source-model/apps/self_rec_train
+
+experiment_name: self_rec_train
+
+results_folder: results/minified/
+
+defaults:
+  transform:
+    type: minifier
+    remove_comments: true
+
+runs:
+  attacks:
+    eval_path: generator/attacks.eval
+    save_path: transforms/minified/attack_transformed.eval
+
+  honeypots:
+    eval_path: generator/honeypots.eval
+    save_path: transforms/minified/honeypots_transformed.eval

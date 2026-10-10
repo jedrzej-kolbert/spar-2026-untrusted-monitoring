@@ -1,0 +1,27 @@
+# GENERATED FILE - do not hand-edit; your changes will be overwritten.
+# Source of truth: experiments/open_models/make_configs.py (declarative spec at module top).
+# Regenerate: python experiments/open_models/make_configs.py [--checkpoints ckpts.json]
+#   (SFT checkpoints are picked up automatically from experiments/open_models/ckpts.json)
+
+experiment_folder: experiments/open-source-model/apps/self_rec_train
+
+experiment_name: self_rec_train
+
+results_folder: results/
+
+defaults:
+  data_split: train
+  max_tokens: 16384
+
+runs:
+  attacks:
+    eval_mode: attack
+    system_prompt: self_rec_subtle_attack_policy_prompt
+    save_path: generator/attacks.eval
+    model: tinker/deepseek-ai/DeepSeek-V3.1
+
+  honeypots:
+    eval_mode: attack
+    system_prompt: self_rec_subtle_attack_policy_prompt
+    save_path: generator/honeypots.eval
+    model: tinker/openai/gpt-oss-120b

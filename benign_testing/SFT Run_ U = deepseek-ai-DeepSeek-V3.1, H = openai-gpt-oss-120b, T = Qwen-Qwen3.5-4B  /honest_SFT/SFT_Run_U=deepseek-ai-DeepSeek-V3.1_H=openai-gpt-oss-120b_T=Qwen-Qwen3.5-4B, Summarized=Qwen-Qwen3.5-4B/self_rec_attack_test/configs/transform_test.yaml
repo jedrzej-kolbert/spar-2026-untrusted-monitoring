@@ -1,0 +1,23 @@
+experiment_folder: experiments/self_rec_summarized
+experiment_name: self_rec_summarized_500_test_transform
+results_folder: results/transform_test/
+
+defaults:
+  transform:
+    type: llm
+    remove_comments: true
+    model_info:
+      model: tinker/Qwen/Qwen3.5-4B
+      system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
+      base_prompt: LLM_SUMMARIZE_BASE_PROMPT
+
+runs:
+  honest:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/experiments/self_rec_attack_500/generator/honest.eval
+    save_path: transforms/summarised/test/honest.eval
+  attacks:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/experiments/self_rec_attack_500/generator/attacks.eval
+    save_path: transforms/summarised/test/attacks.eval
+  honeypots:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/experiments/self_rec_attack_500/generator/honeypots.eval
+    save_path: transforms/summarised/test/honeypots.eval

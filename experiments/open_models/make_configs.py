@@ -147,9 +147,9 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
         "H": "google/gemini-2.5-flash",
     },
     "open": {
-        "U": "tinker/Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "T": "tinker/Qwen/Qwen3.5-4B",
-        "H": "tinker/openai/gpt-oss-120b",
+        "U": "tinker/Qwen/Qwen3.6-35B-A3B",
+        "T": "tinker/Qwen/Qwen3.5-9B",
+        "H": "tinker/deepseek-ai/DeepSeek-V3.1",
     },
 }
 

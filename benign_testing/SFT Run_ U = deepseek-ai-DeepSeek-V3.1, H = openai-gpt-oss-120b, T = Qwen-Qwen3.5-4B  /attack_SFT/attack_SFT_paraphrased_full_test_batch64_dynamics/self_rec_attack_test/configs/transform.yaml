@@ -1,0 +1,21 @@
+experiment_folder: self_rec_attack_test
+experiment_name: Issue25 paraphrased test
+results_folder: results/paraphrased
+defaults:
+  transform:
+    type: llm
+    remove_comments: true
+    model_info:
+      model: tinker/Qwen/Qwen3.5-4B
+      system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
+      base_prompt: LLM_SUMMARIZE_BASE_PROMPT
+runs:
+  attacks:
+    eval_path: generator/attacks.eval
+    save_path: evaluation_inputs/attacks.eval
+  honeypots:
+    eval_path: generator/honeypots.eval
+    save_path: evaluation_inputs/honeypots.eval
+  honest:
+    eval_path: generator/honest.eval
+    save_path: evaluation_inputs/honest.eval

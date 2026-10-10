@@ -1,0 +1,38 @@
+experiment_folder: experiments/self_rec_attack_500
+experiment_name: Shared backdoor scores
+results_folder: results/monitor_shared/
+defaults:
+  monitors:
+  - trusted_backdoor_monitor:
+      model_info:
+        model: tinker/Qwen/Qwen3.5-4B
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      transformed: false
+      remove_comments: true
+  - untrusted_backdoor_monitor:
+      model_info:
+        model: tinker/deepseek-ai/DeepSeek-V3.1
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      transformed: false
+      remove_comments: true
+runs:
+  honest:
+    eval_path: generator/honest.eval
+    save_path: monitor/shared/honest.eval
+    monitors:
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  attacks:
+    eval_path: generator/attacks.eval
+    save_path: monitor/shared/attacks.eval
+    monitors:
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honeypots:
+    eval_path: generator/honeypots.eval
+    save_path: monitor/shared/honeypots.eval
+    monitors:
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor

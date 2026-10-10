@@ -1,0 +1,48 @@
+experiment_folder: /home/jkk/spar-2026-untrusted-monitoring/.worktrees/experiment-issue25-paraphrase-dynamics/experiments/issue25_paraphrase_dynamics/test
+experiment_name: "Full APPS test \u2014 attack SFT paraphrased batch64"
+results_folder: results/paraphrased_sft
+defaults:
+  monitors:
+  - untrusted_collusion_monitor:
+      model_info:
+        model: tinker/tinker://539e3a33-dace-5552-a7f1-897c7521403f:train:0/sampler_weights/self_rec_paraphrased_half_epoch-step-21
+        system_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: false
+      transformed: true
+  - trusted_backdoor_monitor:
+      model_info:
+        model: tinker/Qwen/Qwen3.5-4B
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: true
+      transformed: false
+  - untrusted_backdoor_monitor:
+      model_info:
+        model: tinker/deepseek-ai/DeepSeek-V3.1
+        system_prompt: PARAPHRASED_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: false
+      transformed: true
+runs:
+  attacks:
+    eval_path: transformed/attacks.eval
+    save_path: monitor/attacks.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honest:
+    eval_path: transformed/honest.eval
+    save_path: monitor/honest.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honeypots:
+    eval_path: transformed/honeypots.eval
+    save_path: monitor/honeypots.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor

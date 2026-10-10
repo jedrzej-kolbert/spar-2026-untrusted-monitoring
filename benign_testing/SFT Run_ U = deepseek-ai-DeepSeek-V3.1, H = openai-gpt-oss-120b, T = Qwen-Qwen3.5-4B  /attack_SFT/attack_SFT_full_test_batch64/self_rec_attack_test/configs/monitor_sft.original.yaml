@@ -1,0 +1,48 @@
+experiment_folder: experiments/open-source-model/apps/self_rec_attack_full_v1
+experiment_name: "Full test \u2014 attack SFT batch64 \u2014 base code"
+results_folder: results/base_sft_batch64/
+defaults:
+  monitors:
+  - untrusted_collusion_monitor:
+      model_info:
+        model: tinker/tinker://911fe7c7-5bab-567c-afbb-75b895a7c43e:train:0/sampler_weights/issue11_attack_batch_64-step-21
+        system_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: true
+      transformed: false
+  - trusted_backdoor_monitor:
+      model_info:
+        model: tinker/Qwen/Qwen3.5-4B
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: true
+      transformed: false
+  - untrusted_backdoor_monitor:
+      model_info:
+        model: tinker/deepseek-ai/DeepSeek-V3.1
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: true
+      transformed: false
+runs:
+  attacks:
+    eval_path: generator/test/attacks.eval
+    save_path: outputs/base_sft_batch64/attacks_monitor_results.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honest:
+    eval_path: generator/test/honest.eval
+    save_path: outputs/base_sft_batch64/honest_monitor_results.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honeypots:
+    eval_path: generator/test/honeypots.eval
+    save_path: outputs/base_sft_batch64/honeypots_monitor_results.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor

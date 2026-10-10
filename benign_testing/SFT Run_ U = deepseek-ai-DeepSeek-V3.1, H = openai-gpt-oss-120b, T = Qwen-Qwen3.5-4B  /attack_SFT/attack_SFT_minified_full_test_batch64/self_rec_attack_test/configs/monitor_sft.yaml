@@ -1,0 +1,48 @@
+experiment_folder: .
+experiment_name: Self-Rec SFT Minified
+results_folder: .
+defaults:
+  monitors:
+  - untrusted_collusion_monitor:
+      model_info:
+        model: tinker/tinker://bfb0e169-181b-5aaf-b7e6-db42fe9c726a:train:0/sampler_weights/self_rec_minified
+        system_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: false
+      transformed: true
+  - trusted_backdoor_monitor:
+      model_info:
+        model: tinker/Qwen/Qwen3.5-4B
+        system_prompt: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: true
+      transformed: false
+  - untrusted_backdoor_monitor:
+      model_info:
+        model: tinker/deepseek-ai/DeepSeek-V3.1
+        system_prompt: MINIFIED_HONEST_MONITOR_SYSTEM_PROMPT
+        base_prompt: MONITOR_USER_PROMPT
+      remove_comments: false
+      transformed: true
+runs:
+  attacks:
+    eval_path: self_rec_attack_test/evaluation_inputs/attacks.eval
+    save_path: self_rec_attack_test/monitor/sft/attacks.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honest:
+    eval_path: self_rec_attack_test/evaluation_inputs/honest.eval
+    save_path: self_rec_attack_test/monitor/sft/honest.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
+  honeypots:
+    eval_path: self_rec_attack_test/evaluation_inputs/honeypots.eval
+    save_path: self_rec_attack_test/monitor/sft/honeypots.eval
+    monitors:
+    - untrusted_collusion_monitor
+    - trusted_backdoor_monitor
+    - untrusted_backdoor_monitor
