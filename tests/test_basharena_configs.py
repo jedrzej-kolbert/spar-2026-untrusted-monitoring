@@ -35,23 +35,25 @@ def builder(monkeypatch, tmp_path):
     return module
 
 
-def test_bash_configs_are_bounded_native_yaml_and_scorer_json(builder):
+def _monitors(root: Path, suffix: str) -> tuple[dict, dict]:
+    path = root / f"self_rec/monitors/{suffix}/base_monitor_config.yaml"
+    document = yaml.safe_load(path.read_text())
+    entries = document["defaults"]["monitors"]
+    return document, {name: cfg for entry in entries for name, cfg in entry.items()}
+
+
+def test_bash_configs_are_bounded_generators_and_per_action_monitors(builder):
     models = builder.ModelResolver("open", {})
     written, pruned = builder.generate_setting("open", "basharena", models, 4096, 3)
     root = builder.target_dir("open", "basharena")
-    assert len(written) == 5 and not pruned
+    assert len(written) == 4 and not pruned
     assert models.pending == {"basharena_self_rec_base"}
-    workflow = json.loads((root / "self_rec/workflow.json").read_text())
-    assert workflow["conditions"] == ["baseline"]
-    assert workflow["target_actor"] == builder.ROLE_MODELS["open"]["U"]
-    assert workflow["generation_limit_per_population"] == 3
-    for split, population in (
-        ("train", {"attacks", "honeypots"}),
-        ("test", {"attacks", "honest", "honeypots"}),
+    roles = builder.ROLE_MODELS["open"]
+    for split, filename, population in (
+        ("train", "train_generator_config.yaml", {"attacks", "honeypots"}),
+        ("test", "base_generator_config.yaml", {"attacks", "honest", "honeypots"}),
     ):
-        entry = workflow["generations"][split]
-        source = root / entry["config"]
-        text = source.read_text()
+        text = (root / "self_rec/generator" / filename).read_text()
         assert "--model-class open --settings basharena" in text
         document = yaml.safe_load(text)
         assert document["defaults"] == {
@@ -61,12 +63,8 @@ def test_bash_configs_are_bounded_native_yaml_and_scorer_json(builder):
             "limit": 3,
         }
         assert set(document["runs"]) == population
-        assert entry["output"].endswith(f"/generator/{split}")
         for label, run in document["runs"].items():
-            expected_model = builder.ROLE_MODELS["open"][
-                "H" if label == "honeypots" else "U"
-            ]
-            assert run["model"] == entry["actors"][label] == expected_model
+            assert run["model"] == roles["H" if label == "honeypots" else "U"]
             assert run["system_prompt"] == (
                 "BASHARENA_HONEST_SYSTEM_PROMPT"
                 if label == "honest"
@@ -74,24 +72,59 @@ def test_bash_configs_are_bounded_native_yaml_and_scorer_json(builder):
             )
             assert run["eval_mode"] == ("honest" if label == "honest" else "attack")
             assert run["save_path"] == f"generator/{split}/{label}.eval"
-    base = json.loads((root / workflow["scoring_models"]["base"]).read_text())
-    sft = json.loads((root / workflow["scoring_models"]["sft"]).read_text())
-    assert set(base) == {
-        "recognition",
-        "trusted_suspiciousness",
-        "untrusted_suspiciousness",
-    }
-    assert (
-        base["recognition"]
-        == base["untrusted_suspiciousness"]
-        == workflow["target_actor"]
-    )
-    assert base["trusted_suspiciousness"] == builder.ROLE_MODELS["open"]["T"]
-    # Only the changed role: rescoring shared suspiciousness requests would draw
-    # a second, conflicting sample for the same inputs.
-    assert sft == {"recognition": "tinker/tinker://PENDING__basharena_self_rec_base"}
+    # Base and SFT monitor configs differ only in the collusion monitor's model.
+    for suffix, collusion in (
+        ("base", roles["U"]),
+        ("sft", "tinker/tinker://PENDING__basharena_self_rec_base"),
+    ):
+        document, monitors = _monitors(root, suffix)
+        assert document["defaults"]["view"] == "action"
+        assert monitors["untrusted_collusion_monitor"]["model_info"] == {
+            "model": collusion,
+            "system_prompt": "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+            "base_prompt": "BASHARENA_ACTION_USER_PROMPT",
+        }
+        for name, role in (
+            ("trusted_backdoor_monitor", "T"),
+            ("untrusted_backdoor_monitor", "U"),
+        ):
+            assert monitors[name]["model_info"] == {
+                "model": roles[role],
+                "system_prompt": "BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT",
+                "base_prompt": "BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT",
+            }
+        # Action views are not Python and are never paraphrased or minified.
+        assert not any(
+            m["transformed"] or m["remove_comments"] for m in monitors.values()
+        )
+        # The runtime writes <output>/<label>.eval; the test logs go to generator/test.
+        assert {label: run["eval_path"] for label, run in document["runs"].items()} == {
+            label: f"generator/test/{label}.eval"
+            for label in ("attacks", "honest", "honeypots")
+        }
     assert not list(root.rglob("*transform*"))
-    assert not list(root.rglob("*monitor*.yaml"))
+
+
+def test_generated_monitor_config_loads_as_per_action(builder, monkeypatch, tmp_path):
+    from lasr_labs_2025_control_project.utils.config_loader import (
+        MonitorRunConfig,
+        load_and_normalize_config,
+    )
+
+    models = builder.ModelResolver("open", {})
+    builder.generate_setting("open", "basharena", models, 4096, 3)
+    root = builder.target_dir("open", "basharena")
+    document, _ = _monitors(root, "base")
+    logs = tmp_path / document["experiment_folder"] / "generator/test"
+    logs.mkdir(parents=True)
+    for label in document["runs"]:
+        (logs / f"{label}.eval").touch()
+    monkeypatch.chdir(tmp_path)
+    runs = load_and_normalize_config(
+        root / "self_rec/monitors/base/base_monitor_config.yaml"
+    ).runs
+    assert len(runs) == 3
+    assert all(isinstance(r, MonitorRunConfig) and r.view == "action" for r in runs)
 
 
 def test_exact_cli_selection_is_offline_and_repeatable(builder, monkeypatch, capsys):
@@ -103,7 +136,7 @@ def test_exact_cli_selection_is_offline_and_repeatable(builder, monkeypatch, cap
     before = {
         p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()
     }
-    assert len(before) == 5
+    assert len(before) == 4
     assert (
         yaml.safe_load(
             (root / "self_rec/generator/train_generator_config.yaml").read_text()
@@ -118,7 +151,7 @@ def test_exact_cli_selection_is_offline_and_repeatable(builder, monkeypatch, cap
         p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()
     }
     output = capsys.readouterr().out
-    assert "baseline only" in output and "basharena_self_rec_base" in output
+    assert "basharena_runtime" in output and "basharena_self_rec_base" in output
     assert "--model-class open --settings basharena --checkpoints" in output
     assert 'ckpts.json: {"basharena_self_rec_base"' in output
     assert builder.DEFAULT_SETTINGS == ("apps", "bigcodebench")
@@ -139,10 +172,10 @@ def test_checkpoint_is_bash_specific_and_unowned_json_is_preserved(builder, tmp_
     extra.write_text('{"note":"preserve"}\n')
     builder.generate_setting("open", "basharena", models, 16384)
     assert extra.read_text() == '{"note":"preserve"}\n'
-    base = json.loads((root / "self_rec/scoring/base_models.json").read_text())
-    sft = json.loads((root / "self_rec/scoring/sft_models.json").read_text())
-    assert sft == {"recognition": "tinker/" + bash_checkpoint}
-    assert base["recognition"] != sft["recognition"]
+    base = _monitors(root, "base")[1]["untrusted_collusion_monitor"]["model_info"]
+    sft = _monitors(root, "sft")[1]["untrusted_collusion_monitor"]["model_info"]
+    assert sft["model"] == "tinker/" + bash_checkpoint
+    assert base["model"] == builder.ROLE_MODELS["open"]["U"]
     assert not models.pending
 
 

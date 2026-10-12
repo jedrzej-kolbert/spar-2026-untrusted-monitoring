@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,8 +34,9 @@ from control_arena.settings.bash_arena.protocol.auto_submit_protocol_wrapper imp
 )
 from inspect_ai.log import read_eval_log
 
+from lasr_labs_2025_control_project.utils.basharena_views import trajectory_view
+
 from basharena_runtime import check_runtime
-from basharena_runtime.views import trajectory_view
 
 # Fixed agent limits; move into the config if pilots need tuning. gpt-oss hit 40
 # steps on 2/5 pilot tasks, so both actors get the same larger budget.
@@ -201,18 +201,7 @@ def add_trajectory_views(log_path: str, run: Run) -> Any:
 
 
 def use_project_tinker_provider() -> None:
-    """Register the main project's `tinker/` model provider with Inspect.
-
-    The provider lives in the main package, which is not installed here (it pins
-    control-arena 2). Its module only needs inspect-ai and tinker, so it is
-    imported from the checkout this file sits in.
-    """
-    source = Path(__file__).resolve().parents[3] / "src"
-    if not (
-        source / "lasr_labs_2025_control_project/utils/tinker_provider.py"
-    ).exists():
-        raise RuntimeError(f"Main project source not found at {source}")
-    sys.path.append(str(source))
+    """Register the main project's `tinker/` model provider with Inspect."""
     import lasr_labs_2025_control_project.utils.tinker_provider  # noqa: F401
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import basharena_runtime.monitor_prompts as bmp
+import lasr_labs_2025_control_project.prompts.basharena_monitor_prompts as bmp
 
 
 def test_constants_exist_and_non_empty():

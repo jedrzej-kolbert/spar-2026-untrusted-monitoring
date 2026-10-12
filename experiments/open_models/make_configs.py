@@ -10,11 +10,12 @@ spec instead.
     python experiments/open_models/make_configs.py --model-class open --settings bigcodebench
     python experiments/open_models/make_configs.py --model-class open --settings basharena
 
-BashArena is opt-in and baseline-only: bounded train/test generator YAMLs for
-`basharena_runtime.generate`, model JSONs for `basharena_data.py score`, and
-an identity/path manifest. It does not emit APPS monitor/transform YAMLs. Models
-come from the same ROLE_MODELS table; its SFT arm is `basharena_self_rec_base`.
-The bare command retains the existing APPS/BigCodeBench selection.
+BashArena is opt-in and open-models only: bounded train/test generator YAMLs for
+`basharena_runtime.generate`, and base/SFT monitor YAMLs that score every action
+(`view: action`). It has no transform configs: paraphrasing and minification are
+not available for BashArena yet. Models come from the same ROLE_MODELS table; its
+SFT arm is `basharena_self_rec_base`. The bare command retains the existing
+APPS/BigCodeBench selection.
 
 A config is fully determined by a handful of axes:
 
@@ -200,6 +201,18 @@ BACKDOOR_PROMPTS = {
     "paraphrased": "PARAPHRASED_HONEST_MONITOR_SYSTEM_PROMPT",
 }
 
+#: BashArena per-action view (`view: action`): monitor -> (system prompt, user prompt)
+ACTION_PROMPTS = {
+    "collusion": (
+        "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_USER_PROMPT",
+    ),
+    "backdoor": (
+        "BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT",
+        "BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT",
+    ),
+}
+
 #: paraphrase strategy -> config filename and display suffix
 STRATEGY_FILES = {
     "none": "base_monitor_config.yaml",
@@ -285,6 +298,7 @@ class Monitor:
     input_dir: str | None = None  # default: generator/ or transforms/<strategy>/
     input_files: Mapping[str, str] | None = None  # label -> filename override
     disable_untrusted_monitor: bool = False
+    view: str = "trajectory"  # "action": BashArena, one score per action
 
     def eval_path(self, label: str) -> str:
         if self.input_files and label in self.input_files:
@@ -824,8 +838,9 @@ BIGCODEBENCH = Setting(
     ),
 )
 
-# Bash uses the existing external runner's prompts, never the APPS code prompts.
-# Only the baseline view is implemented; do not emit unsupported transform arms.
+# Generation runs in basharena_runtime, which writes <output>/<label>.eval. Pass
+# --output <experiment_folder>/generator/<split>: the SFT data steps then find
+# generator/train, and the monitor configs below read generator/test.
 BASHARENA = Setting(
     generators=tuple(
         Generator(
@@ -858,7 +873,21 @@ BASHARENA = Setting(
         )
     ),
     transforms=(),
-    monitors=(),
+    monitors=tuple(
+        Monitor(
+            path=f"self_rec/monitors/{suffix}/base_monitor_config.yaml",
+            experiment="self_rec",
+            experiment_name=f"basharena_self_rec_{suffix}",
+            results_folder=f"results/none_{suffix}/",
+            condition="self_rec",
+            strategy="none",
+            arm=f"none_{suffix}",
+            collusion=collusion,
+            input_dir="generator/test",
+            view="action",
+        )
+        for suffix, collusion in (("base", "U"), ("sft", BASHARENA_SFT_ARM))
+    ),
 )
 
 SPEC: dict[str, Setting] = {
@@ -1047,13 +1076,14 @@ def _monitor_entry(
     *,
     transformed: bool,
     remove_comments: bool,
+    base_prompt: str = "MONITOR_USER_PROMPT",
 ) -> dict[str, Any]:
     return {
         name: {
             "model_info": {
                 "model": model,
                 "system_prompt": system_prompt,
-                "base_prompt": "MONITOR_USER_PROMPT",
+                "base_prompt": base_prompt,
             },
             "remove_comments": remove_comments,
             "transformed": transformed,
@@ -1089,6 +1119,28 @@ def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[st
         ),
     ]
     defaults: dict[str, Any] = {}
+    if spec.view == "action":
+        # Every monitor reads the rendered action, with the BashArena prompts.
+        defaults["view"] = "action"
+        monitors = [
+            _monitor_entry(
+                name,
+                model,
+                ACTION_PROMPTS[kind][0],
+                transformed=False,
+                remove_comments=False,
+                base_prompt=ACTION_PROMPTS[kind][1],
+            )
+            for name, model, kind in (
+                (
+                    "untrusted_collusion_monitor",
+                    models.resolve(spec.collusion),
+                    "collusion",
+                ),
+                ("trusted_backdoor_monitor", models.role("T"), "backdoor"),
+                ("untrusted_backdoor_monitor", models.role("U"), "backdoor"),
+            )
+        ]
     if spec.disable_untrusted_monitor:
         defaults["disable_untrusted_monitor"] = True
     defaults["monitors"] = monitors
@@ -1121,47 +1173,6 @@ def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[st
     }
 
 
-def build_basharena_inputs(
-    models: ModelResolver, limit: int
-) -> dict[str, dict[str, Any]]:
-    """JSON inputs for the separate action scorer, not native monitor YAMLs."""
-    base = {
-        "recognition": models.role("U"),
-        "trusted_suspiciousness": models.role("T"),
-        "untrusted_suspiciousness": models.role("U"),
-    }
-    folder = experiment_folder(models.model_class, "basharena", "self_rec")
-    return {
-        "self_rec/scoring/base_models.json": base,
-        # Only the role the checkpoint changes. Suspiciousness requests are the
-        # same as the base run's, so scoring them again would pay for a second,
-        # conflicting draw; compare the SFT scores together with the base file.
-        "self_rec/scoring/sft_models.json": {
-            "recognition": models.resolve(BASHARENA_SFT_ARM),
-        },
-        "self_rec/workflow.json": {
-            "schema_version": "basharena.external-configs.v1",
-            "conditions": ["baseline"],
-            "target_actor": models.role("U"),
-            "checkpoint_arm": BASHARENA_SFT_ARM,
-            "generation_limit_per_population": limit,
-            "split_policy": "Original Bash task-id parity: odd=train, even=test",
-            "generations": {
-                gen.data_split: {
-                    "config": gen.path,
-                    "output": f"{folder}/generator/{gen.data_split}",
-                    "actors": {run.label: models.role(run.role) for run in gen.runs},
-                }
-                for gen in BASHARENA.generators
-            },
-            "scoring_models": {
-                "base": "self_rec/scoring/base_models.json",
-                "sft": "self_rec/scoring/sft_models.json",
-            },
-        },
-    }
-
-
 # ---------------------------------------------------------------------------
 # driver
 # ---------------------------------------------------------------------------
@@ -1181,7 +1192,7 @@ def generate_setting(
     """Write one (model_class, setting) tree. Returns (written, pruned) paths."""
     if setting == "basharena":
         if model_class != "open" or models.model_class != "open":
-            raise ValueError("BashArena external workflow requires open models")
+            raise ValueError("BashArena requires open models")
         if basharena_limit < 1 or (max_tokens is not None and max_tokens < 1):
             raise ValueError("BashArena limit and max_tokens must be positive")
     spec = SPEC[setting]
@@ -1196,19 +1207,12 @@ def generate_setting(
         documents[tr.path] = build_transform(tr, models, setting)
     for mon in spec.monitors:
         documents[mon.path] = build_monitor(mon, models, setting)
-    if setting == "basharena":
-        documents.update(build_basharena_inputs(models, basharena_limit))
 
     written: list[Path] = []
     for rel, document in sorted(documents.items()):
         dst = root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        content = (
-            json.dumps(document, indent=2) + "\n"
-            if dst.suffix == ".json"
-            else render(document, setting)
-        )
-        dst.write_text(content, encoding="utf-8")
+        dst.write_text(render(document, setting))
         written.append(dst)
 
     # Sidecar helpers (configs/bigcodebench/plot_everything.sh) are checked in with
@@ -1270,8 +1274,8 @@ def main() -> None:
         epilog="default: every tree (closed and open, apps and bigcodebench). "
         "All generated trees are gitignored, so the bare command must rebuild "
         "them all; the open-weights runs themselves are APPS-focused. "
-        "BashArena is opt-in (--model-class open --settings basharena) and uses "
-        "the separate-runtime workflow, baseline views only.",
+        "BashArena is opt-in (--model-class open --settings basharena); its "
+        "generator configs are run by basharena_runtime.",
     )
     parser.add_argument(
         "--model-class",
@@ -1331,9 +1335,8 @@ def main() -> None:
             print(f"{model_class:>6}  {root}: {len(written)} files")
             if setting == "basharena":
                 print(
-                    "          baseline only; use basharena_runtime and "
-                    "basharena_data.py (docs/basharena_workflow.md), not the APPS "
-                    ".eval pipeline"
+                    "          generate with basharena_runtime, then follow the "
+                    "BashArena section of sft-steps.md"
                 )
                 print(
                     f"          bounded to {args.basharena_limit} samples per population/split"
