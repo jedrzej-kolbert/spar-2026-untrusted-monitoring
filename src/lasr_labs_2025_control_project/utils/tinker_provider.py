@@ -10,8 +10,8 @@ Everything Tinker-specific lives in this module. It does two jobs:
 
 2. Exposes :func:`collusion_yes_no_logprobs`, which returns the *exact*
    log P(YES) / log P(NO) answer-token logprobs the untrusted collusion monitor
-   needs, via full teacher-forced continuations by default, or opt-in targeted
-   prompt logprobs in one prefill for single-token answers. This sidesteps top-k / CoT
+   needs, via forced decoding (``compute_logprobs`` on ``prompt+"YES"`` vs
+   ``prompt+"NO"``). This sidesteps the top-k truncation / provider-shape / CoT
    contamination problems that plague logprobs on OpenAI-compatible backends,
    and is the correct method for a binary-decision monitor.
 
@@ -26,7 +26,6 @@ The authoritative live catalogue is
 
 from __future__ import annotations
 
-import inspect
 import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
@@ -284,40 +283,6 @@ class TinkerAPI(ModelAPI):
 # --------------------------------------------------------------------------- #
 # Forced-decoding YES/NO logprobs for the untrusted collusion monitor.
 # --------------------------------------------------------------------------- #
-def _answer_target_logprobs(tensor: Any, prefix_length: int) -> list[Optional[float]]:
-    """Read only requested cells; an absent CSR entry is not a zero logprob."""
-    if tensor is None:
-        return [None, None]
-    if list(tensor.shape or []) != [prefix_length, 2]:
-        raise ValueError("Unexpected YES/NO target logprob shape")
-    values = tensor.data
-    crow = tensor.sparse_crow_indices
-    col = tensor.sparse_col_indices
-    if crow is None:
-        if col is not None or len(values) != prefix_length * 2:
-            raise ValueError("Malformed dense YES/NO target logprobs")
-        selected = values[-2:]
-    else:
-        if (
-            col is None
-            or len(crow) != prefix_length + 1
-            or crow[0] != 0
-            or crow[-1] != len(values)
-            or len(col) != len(values)
-            or any(a > b for a, b in zip(crow, crow[1:]))
-            or any(c not in (0, 1) for c in col)
-        ):
-            raise ValueError("Malformed sparse YES/NO target logprobs")
-        start, end = crow[-2:]
-        requested = col[start:end]
-        if len(set(requested)) != len(requested):
-            raise ValueError("Duplicate YES/NO target logprobs")
-        row = dict(zip(requested, values[start:end]))
-        selected = [row.get(0), row.get(1)]
-    # Preserve the teacher-forced path's None/NaN and infinity semantics.
-    return [float(v) if v is not None and v == v else None for v in selected]
-
-
 async def collusion_yes_no_logprobs(
     model_name: str,
     system_prompt: str,
@@ -330,13 +295,14 @@ async def collusion_yes_no_logprobs(
 ) -> dict[str, Any]:
     """Return exact answer-token logprobs for a YES/NO collusion monitor.
 
-    Builds the assistant scaffold up to ``<answer>`` and scores both continuations
-    exactly. Experimental ``single_prefill=True`` lets single-token answers share
-    one prefill on SDKs with targeted prompt logprobs. Full teacher forcing remains
-    the default and the fallback for multi-token answers and older SDKs.
-    Returns ``{"YES", "NO", "completion"}`` in the
+    Builds the assistant scaffold up to ``<answer>`` and teacher-forces both
+    ``YES`` and ``NO`` continuations, reading each one's summed token logprob
+    (handles multi-token YES/NO). Returns ``{"YES", "NO", "completion"}`` in the
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
     scorer treats it identically.
+
+    ``single_prefill=True`` reads both logprobs from one request instead of two
+    when YES and NO are single tokens (needs ``tinker>=0.30``).
     """
     from tinker import types
 
@@ -372,36 +338,27 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
-    tensor_type = getattr(types, "TensorData", None)
-    if (
-        single_prefill
-        and prefix_ids
-        and len(yes_ids) == len(no_ids) == 1
-        and tensor_type is not None
-        and hasattr(tensor_type, "from_torch_sparse")
-        and "target_prompt_logprobs" in inspect.signature(sc.sample_async).parameters
-    ):
+    if single_prefill and len(yes_ids) == len(no_ids) == 1:
         import torch
 
-        # Row i scores prompt position i+1. Append an ordinary placeholder so
-        # row P-1 conditions on all P original prefix tokens, never the placeholder.
+        # Target row i scores prompt position i + 1, so the answer slot needs a
+        # token of its own: append YES as a placeholder and name both candidate
+        # ids in the last row. -1 marks cells that are not scored.
         targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
-        targets[-1] = torch.tensor([yes_ids[0], no_ids[0]], dtype=torch.int64)
+        targets[-1] = torch.tensor(yes_ids + no_ids)
         resp = await sc.sample_async(
             prompt=types.ModelInput.from_ints(prefix_ids + yes_ids),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=1),
-            # Keep the legacy prompt-logprob computation enabled: target-only
-            # mode gave materially different scores on a live DeepSeek checkpoint.
+            # Without this the scores differ from the teacher-forced ones (a
+            # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
             include_prompt_logprobs=True,
-            target_prompt_logprobs=tensor_type.from_torch_sparse(targets, pad_value=-1),
+            target_prompt_logprobs=types.TensorData.from_torch_sparse(
+                targets, pad_value=-1
+            ),
         )
-        # The generated token after the placeholder is irrelevant. Do not retry
-        # through teacher forcing on backend errors: auth/quota/context failures
-        # must propagate rather than trigger additional paid requests.
-        yes_lp, no_lp = _answer_target_logprobs(
-            resp.target_prompt_logprobs, len(prefix_ids)
-        )
+        assert resp.target_prompt_logprobs is not None
+        yes_lp, no_lp = resp.target_prompt_logprobs.to_torch()[-1].tolist()
     else:
         yes_lp = await _candidate_logprob(yes_ids)
         no_lp = await _candidate_logprob(no_ids)
