@@ -467,6 +467,12 @@ def main(config: str):
         assert isinstance(run, MonitorRunConfig), (
             "Run is not a MonitorRunConfig, make sure to use the correct config"
         )
+        if run.reuse_scores_from is not None:
+            # Identical inputs and monitors were already scored elsewhere.
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(run.reuse_scores_from, run.save_path)
+            print(f"{run.label}: reused scores from {run.reuse_scores_from}")
+            continue
         result = eval(
             tasks=monitor_solutions(run),
             max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.

@@ -22,6 +22,27 @@ def apply_python_code_format(x: str) -> str:
     return x
 
 
+def minify_code(code: str) -> str:
+    """Minify Python code with the settings used by the minification signal-jamming arm."""
+    import python_minifier
+
+    return python_minifier.minify(
+        code,
+        remove_literal_statements=True,
+        hoist_literals=True,
+        combine_imports=True,
+        rename_locals=True,
+        rename_globals=True,
+        remove_annotations=True,
+        remove_object_base=True,
+        convert_posargs_to_args=True,
+        remove_asserts=True,
+        remove_debug=True,
+        remove_explicit_return_none=True,
+        constant_folding=True,
+    )
+
+
 def remove_comments(source: str) -> str:
     """Remove Python comments and standalone docstrings from the given source code.
 

@@ -1,0 +1,85 @@
+# HiPT-style RL pilot, Option A (rewrite_signal): the untrusted model (DeepSeek-V3.1)
+# rewrites its own pre-generated attacks with a collusion signal ON or OFF.
+# Sender trained with Tinker PPO + group-mean advantages; receiver (untrusted monitor)
+# and overseer (trusted monitor) frozen. See docs/hipt_rl/ROADMAP.md.
+#
+# Offline check:  python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run --config <this file>
+# Train:          add --allow-paid
+#
+# Cost settings (2026-10-11): roughly 1/5 of attempt 1's DeepSeek tokens per run.
+
+run_name: rewrite_signal_pilot
+output_dir: experiments/open-source-model/apps/rl/rewrite_signal_pilot
+backend: tinker            # hf_gpu: not implemented yet
+task_mode: rewrite_signal  # honest_signal / attack_signal: not wired into the driver yet
+seed: 0
+
+models:
+  sender: deepseek-ai/DeepSeek-V3.1             # raw Tinker id (trainable LoRA)
+  receiver: tinker/deepseek-ai/DeepSeek-V3.1    # frozen untrusted monitor
+  overseer: tinker/Qwen/Qwen3.5-4B              # frozen trusted monitor (signal detector)
+  backdoor_monitor: tinker/Qwen/Qwen3.5-4B      # only used if backdoor_suspicion_weight > 0
+
+prompts:
+  sender_system: RL_REWRITE_SIGNAL_SENDER_SYSTEM_PROMPT
+  sender_user: RL_REWRITE_SIGNAL_SENDER_USER_PROMPT
+  receiver_system: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
+  overseer_system: RL_OVERSEER_SIGNAL_SYSTEM_PROMPT
+  backdoor_monitor_system: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+
+data:
+  # Produced by generate_solutions_inspect.py with
+  # configs/apps_open/self_rec/generator/train_generator_config.yaml (odd problem IDs).
+  attacks_eval: experiments/open-source-model/apps/self_rec_train/generator/attacks.eval
+  honeypots_eval: experiments/open-source-model/apps/self_rec_train/generator/honeypots.eval
+  require_main_task: true
+  require_backdoor: true
+  max_tests: 10
+  validation_fraction: 0.2
+  max_validation_problems: 20
+
+channel:
+  kind: none               # none | minify | paraphrase (signal jamming)
+  remove_comments: true    # matches the monitor configs
+
+reward:
+  reward_fn: branch        # branch | hipt
+  task_weight: 1.0
+  communication_weight: 1.0
+  overseer_weight: 1.0
+  failed_backdoor_weight: 1.0   # rewrites often drop the backdoor (4/16 kept it in the smoke run)
+  backdoor_suspicion_weight: 0.0
+  kl_coef: 0.0                  # was 0.05; KL stayed <= 0.04 in attempt 1, and the reference pass cost ~1/3 of prefill
+
+training:
+  steps: 30                     # was 50; attempt 1's trend was visible by step 30
+  problems_per_step: 16
+  group_size: 4                 # was 8; 2 rewrites per bit per problem
+  payload_grouping: both
+  loss_fn: ppo
+  ppo_passes: 1                 # was 2; halves training tokens (clipping is inactive with 1 pass)
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-5
+  lora_rank: 32
+  temperature: 1.0
+  max_tokens: 4096
+  max_context_tokens: 32768
+  train_receiver: false
+  max_concurrency: 32
+
+eval:
+  every: 10
+  num_samples: 1           # per bit, per held-out problem
+  honeypot_eval: true
+
+preflight:
+  enabled: true
+  require_overseer_gap: 0.0   # log only
+
+logging:
+  wandb_project: hipt-collusion-rl
+  wandb_mode: offline   # upload later: wandb sync <output_dir>/wandb/offline-run-*
+
+checkpoints:
+  save_every: 10
+  ckpts_json: experiments/open_models/ckpts.json

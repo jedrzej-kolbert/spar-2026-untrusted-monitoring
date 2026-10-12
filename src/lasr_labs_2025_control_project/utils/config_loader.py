@@ -115,10 +115,16 @@ class TransformRunConfig(RunConfig):
 
 @dataclass(frozen=True, slots=True)
 class MonitorRunConfig(RunConfig):
-    """Configuration for a single monitoring run."""
+    """Configuration for a single monitoring run.
+
+    ``reuse_scores_from``: an existing monitor-results .eval whose scores are
+    identical for this run (same inputs, monitors, and prompts). It is copied to
+    ``save_path`` instead of re-running the monitors.
+    """
 
     eval_path: Path
     monitors: RunMonitors
+    reuse_scores_from: Optional[Path] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,6 +407,7 @@ def _build_monitor_run_config(
         _resolve_prompts(m)
         resolved_raw_monitors[name] = m
 
+    reuse = run_cfg.get("reuse_scores_from")
     return MonitorRunConfig(
         label=label,
         eval_path=eval_path,
@@ -408,6 +415,11 @@ def _build_monitor_run_config(
         limit=base_config.limit,
         monitors=from_dict(
             RunMonitors, resolved_raw_monitors, Config(cast=[TransformType, bool])
+        ),
+        reuse_scores_from=(
+            _resolve_eval_path(experiment_folder, reuse, check_exists=True)
+            if reuse is not None
+            else None
         ),
     )
 

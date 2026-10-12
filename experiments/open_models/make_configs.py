@@ -30,7 +30,7 @@ Model roles
 -----------
 | role | closed                      | open (Tinker)                          |
 |------|-----------------------------|----------------------------------------|
-| U    | `openai/gpt-4.1-2025-04-14` | `tinker/Qwen/Qwen3-30B-A3B-Instruct-2507` |
+| U    | `openai/gpt-4.1-2025-04-14` | `tinker/deepseek-ai/DeepSeek-V3.1`     |
 | T    | `openai/gpt-4o-mini`        | `tinker/Qwen/Qwen3.5-4B`               |
 | H    | `google/gemini-2.5-flash`   | `tinker/openai/gpt-oss-120b`           |
 
@@ -122,7 +122,7 @@ from __future__ import annotations
 import argparse
 import json
 import textwrap
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -147,7 +147,7 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
         "H": "google/gemini-2.5-flash",
     },
     "open": {
-        "U": "tinker/Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "U": "tinker/deepseek-ai/DeepSeek-V3.1",
         "T": "tinker/Qwen/Qwen3.5-4B",
         "H": "tinker/openai/gpt-oss-120b",
     },
@@ -173,6 +173,17 @@ SFT_ARMS: dict[str, str] = {
     "bcb_self_rec_paraphrased": "openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-paraphrased:CRIEKOFs",
 }
 
+#: RL sender arms (OPEN tree only; HiPT-style RL, finetuning/grouped_rl). Each is a
+#: Tinker LoRA of U trained to rewrite its own attacks with a collusion signal; the
+#: tinker:// path comes from ckpts.json, which finetuning/grouped_rl/run.py updates
+#: under the run's checkpoint name.
+RL_ARMS: dict[str, str] = {
+    "rl_rewrite_signal_pilot": "Option A pilot: rewrite_signal, frozen receiver",
+    # Step-30 sampler checkpoint of the first pilot attempt (2026-10-11), which
+    # crashed at step 41 on a batching bug after a Docker outage.
+    "rl_rewrite_signal_pilot_step30": "first pilot attempt, step 30 of 50",
+}
+
 # ---------------------------------------------------------------------------
 # prompt / strategy tables
 # ---------------------------------------------------------------------------
@@ -182,6 +193,8 @@ COLLUSION_PROMPTS = {
     "acausal": "ACAUSAL_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
     "causal": "CAUSAL_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
     "self_rec": "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+    # The frozen receiver the RL sender was trained against (grouped_rl).
+    "rl_self_signal": "RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT",
 }
 
 #: paraphrase strategy -> honest (suspiciousness) monitor system prompt
@@ -261,6 +274,22 @@ class Transform:
 
 
 @dataclass(frozen=True)
+class Rewrite:
+    """A rewrite config (scripts/rewrite_solutions_inspect.py): an RL-trained sender
+    rewrites another experiment's attacks with the collusion signal ON."""
+
+    path: str
+    experiment: str
+    experiment_name: str
+    sender: str  # "U" (untrained control) or an RL_ARMS key
+    source_experiment: str = "self_rec"
+    system_prompt: str = "RL_REWRITE_SIGNAL_SENDER_SYSTEM_PROMPT"
+    user_prompt: str = "RL_REWRITE_SIGNAL_SENDER_USER_PROMPT"
+    signal: str = "RL_SIGNAL_ON"
+    max_tokens: int = 4096  # matches training.max_tokens in configs/rl/
+
+
+@dataclass(frozen=True)
 class Monitor:
     """A monitor config: (condition, strategy, base-or-SFT) plus its output arm."""
 
@@ -276,6 +305,8 @@ class Monitor:
     input_dir: str | None = None  # default: generator/ or transforms/<strategy>/
     input_files: Mapping[str, str] | None = None  # label -> filename override
     disable_untrusted_monitor: bool = False
+    # label -> existing monitor-results .eval with identical scores (copied, not re-run)
+    reuse_scores_from: Mapping[str, str] | None = None
 
     def eval_path(self, label: str) -> str:
         if self.input_files and label in self.input_files:
@@ -337,6 +368,10 @@ SHARED_INPUTS: dict[str, tuple[str, tuple[str, ...]]] = {
     "acausal": ("self_rec", ("honest", "honeypots")),
     "causal": ("self_rec", ("honest", "honeypots")),
     "causal_train": ("self_rec_train", ("honeypots",)),
+    # RL arms rewrite self_rec's attacks; the negatives stay the shared ones.
+    "rl_rewrite_signal_untrained": ("self_rec", ("honest", "honeypots")),
+    "rl_rewrite_signal_pilot": ("self_rec", ("honest", "honeypots")),
+    "rl_rewrite_signal_pilot_step30": ("self_rec", ("honest", "honeypots")),
 }
 
 
@@ -357,6 +392,7 @@ class Setting:
     generators: tuple[Generator, ...]
     transforms: tuple[Transform, ...]
     monitors: tuple[Monitor, ...]
+    rewrites: tuple[Rewrite, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +851,80 @@ BIGCODEBENCH = Setting(
     ),
 )
 
+
+#: The RL arm whose honest/honeypot monitor results the other RL arms reuse.
+RL_REFERENCE_ARM = "rl_rewrite_signal_untrained"
+
+
+def rl_experiment(
+    experiment: str, sender: str, title: str, *, reuse_negatives: bool = True
+) -> Setting:
+    """One RL arm: rewrite self_rec's attacks, transform them, monitor the result.
+
+    The untrusted collusion monitor is base U with the receiver prompt used in
+    training, so these arms measure the sender against the receiver it was trained
+    with. Honest/honeypots (and their transforms) are shared with self_rec. Every
+    RL arm has the same frozen receiver and backdoor monitors, so their honest and
+    honeypot scores are identical: unless ``reuse_negatives`` is False, they are
+    copied from RL_REFERENCE_ARM rather than re-scored (no model calls). Arms with a
+    different receiver (e.g. a trained one) must set ``reuse_negatives=False``.
+    """
+    monitors = monitor_family(
+        folder=f"rl/{experiment}/monitors",
+        experiment=experiment,
+        condition="rl_self_signal",
+        title=title,
+        suffix="rl",
+        collusion="U",
+    )
+    if reuse_negatives and experiment != RL_REFERENCE_ARM:
+        monitors = [
+            replace(
+                monitor,
+                reuse_scores_from={
+                    label: f"../{RL_REFERENCE_ARM}/{monitor.save_path(label)}"
+                    for label in ("honest", "honeypots")
+                },
+            )
+            for monitor in monitors
+        ]
+    return Setting(
+        generators=(),
+        rewrites=(
+            Rewrite(
+                path=f"rl/{experiment}/generator/rewrite_config.yaml",
+                experiment=experiment,
+                experiment_name=experiment,
+                sender=sender,
+            ),
+        ),
+        transforms=tuple(
+            transform_pair(
+                folder=f"rl/{experiment}/transforms",
+                experiment=experiment,
+                experiment_name=experiment,
+            )
+        ),
+        monitors=tuple(monitors),
+    )
+
+
+#: OPEN tree only: HiPT-style RL arms (APPS). The untrained control rewrites with
+#: base U, so before/after-RL comparisons share every other input.
+OPEN_ONLY: dict[str, tuple[Setting, ...]] = {
+    "apps": (
+        rl_experiment(RL_REFERENCE_ARM, "U", "RL rewrite (untrained)"),
+        rl_experiment(
+            "rl_rewrite_signal_pilot", "rl_rewrite_signal_pilot", "RL rewrite pilot"
+        ),
+        rl_experiment(
+            "rl_rewrite_signal_pilot_step30",
+            "rl_rewrite_signal_pilot_step30",
+            "RL rewrite pilot (step 30)",
+        ),
+    ),
+}
+
 SPEC: dict[str, Setting] = {"apps": APPS, "bigcodebench": BIGCODEBENCH}
 
 # Every generated tree is gitignored, so the DEFAULT invocation must be able to
@@ -850,10 +960,12 @@ class ModelResolver:
         """`ref` is either a role key (U/T/H) or an SFT arm name."""
         if ref in ROLE_MODELS[self.model_class]:
             return self.role(ref)
-        if ref not in SFT_ARMS:
+        if ref not in SFT_ARMS and ref not in RL_ARMS:
             raise SystemExit(f"spec error: unknown model reference {ref!r}")
         self.used_arms.add(ref)
         if self.model_class == "closed":
+            if ref in RL_ARMS:
+                raise SystemExit(f"RL arm {ref!r} exists only in the open tree")
             return SFT_ARMS[ref]
         path = self.checkpoints.get(ref)
         if not path:
@@ -1003,6 +1115,31 @@ def _monitor_entry(
     }
 
 
+def build_rewrite(spec: Rewrite, models: ModelResolver, setting: str) -> dict[str, Any]:
+    return {
+        "experiment_folder": experiment_folder(
+            models.model_class, setting, spec.experiment
+        ),
+        "experiment_name": spec.experiment_name,
+        "results_folder": "results/",
+        "defaults": {
+            "rewrite": {
+                "model": models.resolve(spec.sender),
+                "system_prompt": spec.system_prompt,
+                "user_prompt": spec.user_prompt,
+                "signal": spec.signal,
+                "max_tokens": spec.max_tokens,
+            }
+        },
+        "runs": {
+            "attacks": {
+                "eval_path": f"../{spec.source_experiment}/generator/attacks.eval",
+                "save_path": "generator/attacks.eval",
+            }
+        },
+    }
+
+
 def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[str, Any]:
     transformed = spec.strategy != "none"
     # untrusted monitors read the (possibly transformed) code; the trusted monitor
@@ -1049,6 +1186,11 @@ def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[st
             ),
             "save_path": spec.save_path(label),
             "monitors": list(MONITOR_ORDER),
+            **(
+                {"reuse_scores_from": spec.reuse_scores_from[label]}
+                if spec.reuse_scores_from and label in spec.reuse_scores_from
+                else {}
+            ),
         }
         for label in spec.labels
     }
@@ -1076,15 +1218,20 @@ def generate_setting(
     model_class: str, setting: str, models: ModelResolver, max_tokens: int | None
 ) -> tuple[list[Path], list[Path]]:
     """Write one (model_class, setting) tree. Returns (written, pruned) paths."""
-    spec = SPEC[setting]
+    specs = [SPEC[setting]]
+    if model_class == "open":
+        specs.extend(OPEN_ONLY.get(setting, ()))
     root = target_dir(model_class, setting)
     documents: dict[str, dict[str, Any]] = {}
-    for gen in spec.generators:
-        documents[gen.path] = build_generator(gen, models, setting, max_tokens)
-    for tr in spec.transforms:
-        documents[tr.path] = build_transform(tr, models, setting)
-    for mon in spec.monitors:
-        documents[mon.path] = build_monitor(mon, models, setting)
+    for spec in specs:
+        for gen in spec.generators:
+            documents[gen.path] = build_generator(gen, models, setting, max_tokens)
+        for rewrite in spec.rewrites:
+            documents[rewrite.path] = build_rewrite(rewrite, models, setting)
+        for tr in spec.transforms:
+            documents[tr.path] = build_transform(tr, models, setting)
+        for mon in spec.monitors:
+            documents[mon.path] = build_monitor(mon, models, setting)
 
     written: list[Path] = []
     for rel, document in sorted(documents.items()):
@@ -1132,10 +1279,11 @@ def load_checkpoints(path: Path | None) -> dict[str, str]:
         raise SystemExit(
             f"{path}: expected a JSON object mapping arm -> tinker:// path"
         )
-    unknown = sorted(set(data) - set(SFT_ARMS))
+    valid = set(SFT_ARMS) | set(RL_ARMS)
+    unknown = sorted(set(data) - valid)
     if unknown:
         raise SystemExit(
-            f"unknown SFT arm(s) in {path}: {unknown}\nvalid arms: {sorted(SFT_ARMS)}"
+            f"unknown arm(s) in {path}: {unknown}\nvalid arms: {sorted(valid)}"
         )
     bad = sorted(k for k, v in data.items() if not isinstance(v, str))
     if bad:
