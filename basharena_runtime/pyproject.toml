@@ -1,0 +1,34 @@
+[project]
+name = "basharena-runtime"
+version = "0.1.0"
+description = "BashArena generation and export, pinned to control-arena 17"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # 17.1.2 is the newest release with bash_arena (BashArena 1.1) that still
+    # accepts inspect-ai <0.3.250; 18.x requires >=0.3.250.
+    "control-arena==17.1.2",
+    # The version control-arena 17.1.2 locks and tests against.
+    "inspect-ai==0.3.201",
+    "pyyaml>=6.0.1",
+    "python-dotenv>=1.0.0",
+    # The main project's tinker/ provider, imported from the checkout: per-family
+    # tool-call rendering comes from tinker-cookbook.
+    "tinker>=0.29.0",
+    "tinker-cookbook>=0.5.7",
+    "jinja2>=3.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
