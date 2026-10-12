@@ -86,7 +86,16 @@ failed. Each record keeps the model's raw answer, including answers that had no
 usable score. The command exits non-zero while any score is missing.
 
 A score file belongs to one set of models and inputs. Use a new `--output` for a
-different checkpoint.
+different checkpoint, and give that run only the roles that changed:
+
+```json
+{"recognition": "tinker/tinker://<run>/sampler_weights/<name>"}
+```
+
+Monitor calls are sampled, so scoring the same role, model and action twice
+gives two different draws, and `compare` refuses files that disagree on one.
+Compare the checkpoint's file together with the base file instead; the base
+suspiciousness scores are then used for both.
 
 ## 4. Compare
 
