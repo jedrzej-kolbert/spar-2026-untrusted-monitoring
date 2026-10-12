@@ -129,3 +129,134 @@ async def test_generate_via_provider(stub_tinker):
     assert out.usage is not None
     assert out.usage.output_tokens == 1
     assert out.usage.total_tokens == out.usage.input_tokens + 1
+
+
+# --------------------------------------------------------------------------- #
+# Tool calling (stubbed tinker-cookbook renderer)
+# --------------------------------------------------------------------------- #
+class _FakeRendererToolCall:
+    class FunctionBody:
+        def __init__(self, name, arguments):
+            self.name, self.arguments = name, arguments
+
+    def __init__(self, function, id=None):
+        self.function, self.id = function, id
+
+
+class _FakeRenderer:
+    """Records the rendered conversation; replies with a fixed parsed message."""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.rendered = None
+
+    def create_conversation_prefix_with_tools(self, specs, system_prompt):
+        return [{"role": "system", "content": system_prompt, "tools": specs}]
+
+    def build_generation_prompt(self, messages):
+        from tinker import types
+
+        self.rendered = messages
+        return types.ModelInput.from_ints([1, 2, 3, 4])
+
+    def get_stop_sequences(self):
+        return ["<stop>"]
+
+    def parse_response(self, tokens):
+        return self.reply, True
+
+
+@pytest.fixture
+def stub_renderer(stub_tinker, monkeypatch):
+    import sys
+    import types
+
+    module, _sc, _tok = stub_tinker
+    monkeypatch.setitem(sys.modules, "tinker_cookbook", types.ModuleType("cookbook"))
+    renderers = types.ModuleType("tinker_cookbook.renderers")
+    renderers.ToolCall = _FakeRendererToolCall
+    renderers.get_text_content = lambda message: message["content"]
+    monkeypatch.setitem(sys.modules, "tinker_cookbook.renderers", renderers)
+
+    def install(reply):
+        renderer = _FakeRenderer(reply)
+        monkeypatch.setattr(module, "_renderer", lambda model_ref: renderer)
+        return renderer
+
+    return install
+
+
+def _bash_tool():
+    from inspect_ai.tool import ToolInfo, ToolParam, ToolParams
+
+    return ToolInfo(
+        name="bash",
+        description="Run a command.",
+        parameters=ToolParams(
+            properties={"cmd": ToolParam(type="string", description="The command.")},
+            required=["cmd"],
+        ),
+    )
+
+
+async def test_generate_with_tools_returns_tool_call(stub_renderer):
+    from inspect_ai.model import (
+        ChatMessageAssistant,
+        ChatMessageSystem,
+        ChatMessageTool,
+        ChatMessageUser,
+    )
+    from inspect_ai.tool import ToolCall
+
+    call = _FakeRendererToolCall(
+        _FakeRendererToolCall.FunctionBody("bash", '{"cmd": "ls /tmp"}'), id="c1"
+    )
+    renderer = stub_renderer({"content": "Listing.", "tool_calls": [call]})
+    history = [
+        ChatMessageSystem(content="Use bash."),
+        ChatMessageUser(content="List /tmp."),
+        ChatMessageAssistant(
+            content="",
+            tool_calls=[ToolCall(id="c0", function="bash", arguments={"cmd": "pwd"})],
+        ),
+        ChatMessageTool(content="/root", tool_call_id="c0", function="bash"),
+    ]
+    out = await get_model("tinker/Qwen/Qwen3-32B").api.generate(
+        input=history,
+        tools=[_bash_tool()],
+        tool_choice="auto",
+        config=GenerateConfig(max_tokens=8),
+    )
+    [parsed] = out.message.tool_calls
+    assert (parsed.id, parsed.function, parsed.arguments) == (
+        "c1",
+        "bash",
+        {"cmd": "ls /tmp"},
+    )
+    assert out.message.text == "Listing."
+    assert out.stop_reason == "tool_calls"
+    assert out.usage.input_tokens == 4 and out.usage.output_tokens == 1
+    # The earlier call and its result are rendered back in the native format.
+    assert [m["role"] for m in renderer.rendered] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert renderer.rendered[0]["tools"][0]["name"] == "bash"
+    assert renderer.rendered[2]["tool_calls"][0].function.arguments == '{"cmd": "pwd"}'
+    assert renderer.rendered[3]["tool_call_id"] == "c0"
+
+
+async def test_malformed_tool_arguments_become_parse_errors(stub_renderer):
+    bad = _FakeRendererToolCall(_FakeRendererToolCall.FunctionBody("bash", "[1]"))
+    stub_renderer({"content": "", "tool_calls": [bad]})
+    out = await get_model("tinker/Qwen/Qwen3-32B").api.generate(
+        input=[],
+        tools=[_bash_tool()],
+        tool_choice="auto",
+        config=GenerateConfig(max_tokens=8),
+    )
+    [parsed] = out.message.tool_calls
+    assert parsed.arguments == {} and "JSON object" in parsed.parse_error
+    assert parsed.id.startswith("bash_")
