@@ -59,7 +59,7 @@ def eval_to_dataset(
             scores,
             sample.metadata.get("eval_mode"),
             base_solution=metadata.get("base_solution"),
-            errored=getattr(sample, "error", None) is not None,
+            errored=sample.error is not None,
         )
         if not is_valid_sample:
             continue

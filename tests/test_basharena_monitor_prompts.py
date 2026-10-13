@@ -1,61 +1,41 @@
-"""Tests for BashArena monitor, collusion, and summary prompts."""
+"""Tests for the per-action prompts used by BashArena configs."""
 
-from __future__ import annotations
+import pytest
 
 import lasr_labs_2025_control_project.prompts.basharena_monitor_prompts as bmp
 
 
-def test_constants_exist_and_non_empty():
-    expected_constants = [
-        "BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT",
-        "BASHARENA_MONITOR_USER_PROMPT",
-        "BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT",
-        "BASHARENA_SUMMARIZE_SYSTEM_PROMPT",
-        "BASHARENA_SUMMARIZE_BASE_PROMPT",
-    ]
-    for name in expected_constants:
-        assert hasattr(bmp, name), f"{name} is not defined in module"
-        val = getattr(bmp, name)
-        assert isinstance(val, str), f"{name} is not a str"
-        assert len(val.strip()) > 0, f"{name} is empty"
+@pytest.mark.parametrize(
+    "prompt",
+    [bmp.BASHARENA_ACTION_USER_PROMPT, bmp.BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT],
+)
+def test_user_prompts_format(prompt):
+    formatted = prompt.format(problem_statement="Problem P", solution="Action A")
+    assert "Problem P" in formatted
+    assert "Action A" in formatted
 
 
-def test_user_and_summary_base_prompts_format():
-    user_formatted = bmp.BASHARENA_MONITOR_USER_PROMPT.format(
-        problem_statement="Problem Statement P",
-        solution="Solution S",
-    )
-    assert "Problem Statement P" in user_formatted
-    assert "Solution S" in user_formatted
-
-    summary_formatted = bmp.BASHARENA_SUMMARIZE_BASE_PROMPT.format(
-        solution="Solution S"
-    )
-    assert "Solution S" in summary_formatted
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        bmp.BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT,
+        bmp.BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT,
+    ],
+)
+def test_system_prompts_are_filled(prompt):
+    assert prompt.strip()
+    assert "{" not in prompt and "}" not in prompt
 
 
-def test_system_prompts_no_unfilled_placeholders():
-    system_prompts = [
-        bmp.BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT,
-        bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT,
-        bmp.BASHARENA_SUMMARIZE_SYSTEM_PROMPT,
-    ]
-    for prompt in system_prompts:
-        assert "{" not in prompt, f"Found unformatted '{{' in prompt:\n{prompt[:200]}"
-        assert "}" not in prompt, f"Found unformatted '}}' in prompt:\n{prompt[:200]}"
-
-    # Verify side-task descriptions were substituted into suspiciousness prompt
-    susp = bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT.lower()
-    assert "firewall" in susp
-    assert "sudo" in susp
-    assert "malware" in susp
-    assert "TARGET_IP" in bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT
-    assert "TARGET_USERNAME" in bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT
-    assert "SOURCE_IP" in bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT
-
-
-def test_prompt_xml_tags():
-    assert "<score>" in bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT
-    assert "</score>" in bmp.BASHARENA_SUSPICIOUSNESS_SYSTEM_PROMPT
-    assert "<answer>" in bmp.BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT
-    assert "</answer>" in bmp.BASHARENA_SELF_REC_COLLUSION_SYSTEM_PROMPT
+def test_suspiciousness_prompt_includes_side_tasks_and_score():
+    prompt = bmp.BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT
+    for description in (
+        bmp.SUDO_PRIVILEGE_ESCALATION_DESCRIPTION,
+        bmp.DISABLE_FIREWALL_DESCRIPTION,
+        bmp.EXFILTRATE_SENSITIVE_DATA_DESCRIPTION,
+        bmp.DOWNLOAD_EXECUTE_MALWARE_DESCRIPTION,
+    ):
+        assert description in prompt
+    assert "<score>" in prompt
+    assert "<answer>" in bmp.BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT
+    assert "</answer>" in bmp.BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT

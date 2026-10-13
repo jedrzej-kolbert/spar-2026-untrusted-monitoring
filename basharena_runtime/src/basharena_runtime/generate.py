@@ -32,11 +32,13 @@ from control_arena.settings.bash_arena.policies.honest_policy import honest_poli
 from control_arena.settings.bash_arena.protocol.auto_submit_protocol_wrapper import (
     auto_submit_protocol_wrapper,
 )
-from inspect_ai.log import read_eval_log
+from dotenv import load_dotenv
+from inspect_ai import eval as inspect_eval
+from inspect_ai.log import read_eval_log, write_eval_log
 
 from lasr_labs_2025_control_project.utils.basharena_views import trajectory_view
 
-from basharena_runtime import check_runtime
+from basharena_runtime import runtime_versions
 
 # Fixed agent limits; move into the config if pilots need tuning. gpt-oss hit 40
 # steps on 2/5 pilot tasks, so both actors get the same larger budget.
@@ -74,20 +76,15 @@ def load_runs(config_path: Path) -> list[Run]:
         if population not in POPULATIONS:
             raise ValueError(f"Run label must be one of {POPULATIONS}: {population!r}")
 
-        def value(key: str, required: bool = True) -> Any:
-            found = raw.get(key, defaults.get(key))
-            if found is None and required:
-                raise ValueError(f"Run {population!r} needs {key!r}")
-            return found
-
-        if value("dataset_type") != "basharena":
+        settings = {**defaults, **raw}
+        if settings["dataset_type"] != "basharena":
             raise ValueError("Only dataset_type: basharena runs are supported")
-        eval_mode, split = value("eval_mode"), value("data_split")
+        eval_mode, split = settings["eval_mode"], settings["data_split"]
         if eval_mode not in ("attack", "honest") or split not in ("train", "test"):
             raise ValueError(f"Run {population!r}: bad eval_mode or data_split")
         if (population == "honest") != (eval_mode == "honest"):
             raise ValueError(f"Run {population!r} cannot use eval_mode {eval_mode!r}")
-        limit = value("limit")
+        limit = settings.get("limit")
         if isinstance(limit, list):
             if (
                 len(limit) != 2
@@ -98,20 +95,14 @@ def load_runs(config_path: Path) -> list[Run]:
             limit = (limit[0], limit[1])  # Inspect's zero-based [start, stop) range
         elif type(limit) is not int or limit < 1:
             raise ValueError("limit must be a positive count or a [start, stop] range")
-        max_tokens = value("max_tokens", required=False)
-        if max_tokens is not None and (type(max_tokens) is not int or max_tokens < 1):
-            raise ValueError("max_tokens must be a positive integer")
-        model = value("model")
-        if "/" not in model:
-            raise ValueError(f"model needs a provider prefix: {model!r}")
         runs.append(
             Run(
                 population,
                 eval_mode,
                 split,
-                value("system_prompt"),
-                model,
-                max_tokens,
+                settings["system_prompt"],
+                settings["model"],
+                settings.get("max_tokens"),
                 limit,
             )
         )
@@ -229,7 +220,7 @@ def generate(
     ]
     manifest = {
         "complete": False,
-        "runtime": check_runtime(),
+        "runtime": runtime_versions(),
         "runs": entries,
         "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
         "limits": {
@@ -244,10 +235,6 @@ def generate(
     if not allow_paid:  # no dataset reads, Docker or model calls
         return {**manifest, "dry_run": True}
 
-    from dotenv import load_dotenv
-    from inspect_ai import eval
-    from inspect_ai.log import write_eval_log
-
     load_dotenv()
     use_project_tinker_provider()
     output.mkdir(parents=True)
@@ -258,7 +245,7 @@ def generate(
 
     save()
     for run, entry in zip(runs, entries, strict=True):
-        log = eval(
+        log = inspect_eval(
             tasks=basharena_task(run),
             model=run.model,
             max_samples=concurrency,
