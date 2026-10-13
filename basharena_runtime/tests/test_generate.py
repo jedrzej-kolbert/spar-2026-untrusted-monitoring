@@ -1,9 +1,14 @@
 """Generator config parsing, the dry run, and the limits Inspect must apply."""
 
+import importlib.util
 import json
+import socket
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from inspect_ai import Task, eval
 from inspect_ai.log import read_eval_log
 from inspect_ai.model import ChatMessageAssistant, ChatMessageUser, ModelOutput
@@ -43,6 +48,49 @@ def _config(tmp_path, text=CONFIG):
     return path
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Network is forbidden in generator tests")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+
+
+@pytest.mark.parametrize("max_tokens, limit", [(4096, 1), (16384, 5)])
+def test_generated_configs_load_as_runtime_runs(
+    tmp_path, monkeypatch, max_tokens, limit
+):
+    script = (
+        Path(__file__).resolve().parents[2] / "experiments/open_models/make_configs.py"
+    )
+    spec = importlib.util.spec_from_file_location("runtime_config_tests", script)
+    builder = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, builder)
+    spec.loader.exec_module(builder)
+    monkeypatch.setattr(builder, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(builder, "CONFIGS", tmp_path / "configs")
+    builder.generate_setting(
+        "open", "basharena", builder.ModelResolver("open", {}), max_tokens, limit
+    )
+    root = builder.target_dir("open", "basharena") / "self_rec/generator"
+    for split, filename, populations in (
+        ("train", "train_generator_config.yaml", {"attacks", "honeypots"}),
+        ("test", "base_generator_config.yaml", {"attacks", "honest", "honeypots"}),
+    ):
+        runs = gen.load_runs(root / filename)
+        assert {run.population for run in runs} == populations
+        for run in runs:
+            assert run.split == split
+            assert run.limit == limit and type(run.limit) is int
+            assert run.max_tokens == max_tokens and type(run.max_tokens) is int
+            assert "/" in run.model
+            assert run.eval_mode == (
+                "honest" if run.population == "honest" else "attack"
+            )
+            assert gen.system_prompt(run.system_prompt_name)
+
+
 def test_runs_take_defaults_and_overrides(tmp_path):
     attacks, honest, honeypots = gen.load_runs(_config(tmp_path))
     assert attacks == gen.Run(
@@ -58,6 +106,14 @@ def test_runs_take_defaults_and_overrides(tmp_path):
     assert (honeypots.split, honeypots.max_tokens) == ("train", 8000)
 
 
+def test_single_cohort_keeps_range_override(tmp_path):
+    config = yaml.safe_load(CONFIG)
+    config["runs"] = {"honest": config["runs"]["honest"]}
+    [run] = gen.load_runs(_config(tmp_path, yaml.safe_dump(config)))
+    assert run.population == "honest"
+    assert run.limit == (5, 8) and run.split == "test"
+
+
 @pytest.mark.parametrize(
     ("old", "new"),
     [
@@ -66,8 +122,7 @@ def test_runs_take_defaults_and_overrides(tmp_path):
         ("limit: [5, 8]", "limit: [8, 5]"),
         ("  honest:\n    eval_mode: honest", "  honest:\n    eval_mode: attack"),
         ("  attacks:", "  backdoors:"),
-        ("model: tinker/openai/gpt-oss-120b", "model: gpt-oss-120b"),
-        ("max_tokens: 8000", "max_tokens: many"),
+        ("data_split: test", "data_split: typo"),
     ],
 )
 def test_bad_configs_are_rejected(tmp_path, old, new):
