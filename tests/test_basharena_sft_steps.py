@@ -147,11 +147,17 @@ def test_paraphrasing_and_minification_refuse_basharena(
         )
 
 
+@pytest.mark.parametrize("missing_score", [None, float("nan")])
 def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    missing_score: float | None,
 ):
     def action_sample(
-        traj: str, k: int, total: int, scores: tuple[float, float, float]
+        traj: str,
+        k: int,
+        total: int,
+        scores: tuple[float | None, float | None, float | None],
     ) -> SimpleNamespace:
         u_col, t_sus, u_sus = scores
         return SimpleNamespace(
@@ -172,7 +178,10 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     samples = [
         action_sample("1", 1, 2, (0.5, 1, 2)),
         action_sample("1", 2, 2, (-0.5, 7, 3)),
-        action_sample("2", 1, 1, (0.1, float("nan"), 4)),
+        action_sample("2", 1, 2, (0.1, 9, 4)),
+        action_sample("2", 2, 2, (0.2, missing_score, 5)),
+        action_sample("3", 1, 1, (missing_score, missing_score, missing_score)),
+        action_sample("4", 1, 1, (0.1, missing_score, 4)),
     ]
     monkeypatch.setattr(
         plot_data, "read_eval_log", lambda _: SimpleNamespace(samples=samples)
@@ -180,11 +189,13 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     df = plot_data.build_jsonl_dataframe_from_eval_log(Path("x.eval")).set_index(
         "sample_id"
     )
-    assert list(df.index) == ["1", "2"]
+    assert list(df.index) == ["1", "2", "4"]
     scores = df["trusted_suspiciousness_score"].to_numpy(dtype=float)
     assert df["untrusted_collusion_score"].to_numpy(dtype=float)[0] == 0.5
-    assert scores[0] == 7 and np.isnan(scores[1])  # a NaN action is not skipped
-    assert df["n_actions_scored"].tolist() == [2, 1]
+    assert scores[:2].tolist() == [7, 9]  # missing actions do not erase valid scores
+    assert np.isnan(scores[2])  # only ROCs requiring this monitor omit trajectory 4
+    assert df["n_actions_scored"].tolist() == [2, 2, 1]
+    assert "no available monitor scores: ['3']" in caplog.text
 
     # A trajectory with only some of its actions scored cannot give a max.
     monkeypatch.setattr(
