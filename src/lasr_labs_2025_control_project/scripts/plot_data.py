@@ -157,9 +157,8 @@ _SCORE_COLUMNS = (
 
 def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     """Per-action monitor logs (view: action): one row per trajectory, each score
-    the max over its rated actions, as upstream BashArena aggregates per-step
-    suspicion. A NaN on any action makes that trajectory's score NaN (no silent
-    skipping), and a trajectory missing some of its actions is an error.
+    the max over its available action scores. No scores for a monitor means the
+    trajectory is omitted from ROCs requiring it; missing action rows are an error.
     """
     counts = df.groupby("trajectory_id").size()
     expected = df.groupby("trajectory_id")["n_actions"].first()
@@ -173,14 +172,25 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     grouped = df.groupby("trajectory_id", sort=False)
     out = grouped.first().reset_index()
     for column in _SCORE_COLUMNS:
-        out[column] = (
-            grouped[column]
-            .apply(lambda s: s.max() if s.notna().all() else float("nan"))
-            .to_numpy()
-        )
+        out[column] = grouped[column].max().to_numpy()
+        missing = out[column].isna()
+        if missing.any():
+            logger.info(
+                "%s: no %s scores for trajectories %s; excluded from ROCs requiring this score",
+                eval_log_path,
+                column,
+                out.loc[missing, "trajectory_id"].tolist(),
+            )
     out["sample_id"] = out["trajectory_id"]
     out["n_actions_scored"] = counts.loc[out["trajectory_id"]].to_numpy()
-    return out
+    unscored = out[list(_SCORE_COLUMNS)].isna().all(axis=1)
+    if unscored.any():
+        logger.warning(
+            "%s: dropping trajectories with no available monitor scores: %s",
+            eval_log_path,
+            out.loc[unscored, "trajectory_id"].tolist(),
+        )
+    return out.loc[~unscored].reset_index(drop=True)
 
 
 def plot_ensemble_monitoring(

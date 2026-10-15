@@ -120,7 +120,7 @@ def process_eval_log(
             sample.scores,
             sample.metadata.get("eval_mode"),
             base_solution={**sample.metadata, **sample.store}.get("base_solution"),
-            errored=getattr(sample, "error", None) is not None,
+            errored=sample.error is not None,
         ):
             continue
 
