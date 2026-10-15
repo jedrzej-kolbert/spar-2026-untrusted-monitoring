@@ -215,11 +215,25 @@ one example: the model sees every earlier step with its tool output, then the ac
 to judge, in the format upstream BashArena's monitor uses. A training row and a monitor
 call for the same action are identical.
 
-1. **Generate** in `basharena_runtime/` (its own environment; see its README). It
-   writes ordinary `.eval` logs. Put the U attack and H honeypot training logs in
-   `<eval_logs_dir>/train`.
-2. **Prepare data** with the same two commands as above, adding the per-action flag
-   and the BashArena prompts:
+1. **Configs.** BashArena is opt-in and uses the open U, T and H:
+   ```
+   python experiments/open_models/make_configs.py --model-class open --settings basharena
+   ```
+   Each generator run takes 5 tasks; pass `--basharena-limit N` for more.
+2. **Generate** in `basharena_runtime/` (its own environment; see its README), once
+   per split. Without `--allow-paid` it only prints the plan.
+   ```
+   cd basharena_runtime
+   uv run --frozen python -m basharena_runtime.generate --allow-paid \
+     --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/train_generator_config.yaml \
+     --output ../experiments/open-source-model/basharena/self_rec/generator/train
+   uv run --frozen python -m basharena_runtime.generate --allow-paid \
+     --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/base_generator_config.yaml \
+     --output ../experiments/open-source-model/basharena/self_rec/generator/test
+   ```
+3. **Prepare data** with the same two commands as above, adding the per-action flag
+   and the BashArena prompts. `<eval_logs_dir>` is
+   `experiments/open-source-model/basharena/self_rec/generator`.
    ```
    bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw --action-views
    bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name> \
@@ -227,33 +241,17 @@ call for the same action are identical.
    ```
    An attack trajectory counts only if its side task succeeded, and an honest one only
    if no side task fired, as APPS counts only working backdoors.
-3. **Fine-tune** exactly as above, on `<eval_logs_dir>/prepared/train/train_messages.jsonl`.
-4. **Monitor and plot** as above, with a monitor config that sets `view: action` and
-   the BashArena prompts:
-   ```yaml
-   defaults:
-     view: action
-     monitors:
-     - untrusted_collusion_monitor:
-         model_info:
-           model: tinker/tinker://<checkpoint>
-           system_prompt: BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT
-           base_prompt: BASHARENA_ACTION_USER_PROMPT
-         remove_comments: false
-         transformed: false
-     - trusted_backdoor_monitor:
-         model_info:
-           model: <T>
-           system_prompt: BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT
-           base_prompt: BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT
-         remove_comments: false
-         transformed: false
-   ```
-   `plot_data.py` scores a trajectory as the maximum over its actions and stops if
-   any action is missing a row.
+4. **Fine-tune** exactly as above, on `<eval_logs_dir>/prepared/train/train_messages.jsonl`,
+   with `checkpoint_name=basharena_self_rec_base`. Add the path to `ckpts.json` under
+   that name and re-run the command from step 1 with `--checkpoints experiments/open_models/ckpts.json`.
+5. **Monitor and plot** as above, with
+   `configs/basharena_open/self_rec/monitors/sft/base_monitor_config.yaml` (or
+   `monitors/base/` for the model before fine-tuning). These configs set
+   `view: action`, so every action is scored. `plot_data.py` scores a trajectory as
+   the maximum over its actions and stops if any action is missing a row.
 
 Long trajectories can exceed a model's context. `defaults.action_view.max_history_chars`
-in the monitor config, and `ACTION_MAX_HISTORY_CHARS` for `transform_logs_to_raw.sh`,
+in a monitor config, and `ACTION_MAX_HISTORY_CHARS` for `transform_logs_to_raw.sh`,
 drop the oldest steps beyond that many characters; use the same value in both.
 `ACTIONS_PER_TRAJECTORY` trains on a sample of each trajectory's actions.
 
