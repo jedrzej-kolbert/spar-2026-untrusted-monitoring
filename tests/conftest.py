@@ -219,6 +219,10 @@ class _StubModelInput:
     def from_ints(cls, ids):
         return cls(ids)
 
+    @property
+    def length(self):
+        return len(self._ids)
+
     def to_ints(self):
         return self._ids
 
