@@ -207,3 +207,55 @@ To generate plots for the minifed and paraphrased arms, replace `base_monitor_co
 
 Plots for the no-signal-jamming arm appear in `experiments/open-source-model/apps/self_rec/results/none_sft`. Plots for the signal-jamming arms appear in `results/minified_sft` and `results/paraphrased_sft`.
 Upload those graphs to the team Google Drive and share any key notes/observations you make!
+
+## BashArena
+
+BashArena runs the same steps on agent trajectories instead of code. Each action is
+one example: the model sees every earlier step with its tool output, then the action
+to judge, in the format upstream BashArena's monitor uses. A training row and a monitor
+call for the same action are identical.
+
+1. **Generate** in `basharena_runtime/` (its own environment; see its README). It
+   writes ordinary `.eval` logs. Put the U attack and H honeypot training logs in
+   `<eval_logs_dir>/train`.
+2. **Prepare data** with the same two commands as above, adding the per-action flag
+   and the BashArena prompts:
+   ```
+   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh <eval_logs_dir> <eval_logs_dir>/raw --action-views
+   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh <eval_logs_dir>/raw <untrusted_generator_model_name> \
+     --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT
+   ```
+   An attack trajectory counts only if its side task succeeded, and an honest one only
+   if no side task fired, as APPS counts only working backdoors.
+3. **Fine-tune** exactly as above, on `<eval_logs_dir>/prepared/train/train_messages.jsonl`.
+4. **Monitor and plot** as above, with a monitor config that sets `view: action` and
+   the BashArena prompts:
+   ```yaml
+   defaults:
+     view: action
+     monitors:
+     - untrusted_collusion_monitor:
+         model_info:
+           model: tinker/tinker://<checkpoint>
+           system_prompt: BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT
+           base_prompt: BASHARENA_ACTION_USER_PROMPT
+         remove_comments: false
+         transformed: false
+     - trusted_backdoor_monitor:
+         model_info:
+           model: <T>
+           system_prompt: BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT
+           base_prompt: BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT
+         remove_comments: false
+         transformed: false
+   ```
+   `plot_data.py` scores a trajectory as the maximum over its actions and stops if
+   any action is missing a row.
+
+Long trajectories can exceed a model's context. `defaults.action_view.max_history_chars`
+in the monitor config, and `ACTION_MAX_HISTORY_CHARS` for `transform_logs_to_raw.sh`,
+drop the oldest steps beyond that many characters; use the same value in both.
+`ACTIONS_PER_TRAJECTORY` trains on a sample of each trajectory's actions.
+
+Not available for BashArena yet: paraphrasing and minification (the scripts stop with
+an error) and checkpoint learning dynamics.

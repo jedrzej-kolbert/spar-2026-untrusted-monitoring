@@ -1,7 +1,7 @@
 [project]
 name = "basharena-runtime"
 version = "0.1.0"
-description = "BashArena generation and export, pinned to control-arena 17"
+description = "BashArena generation, pinned to control-arena 17"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
