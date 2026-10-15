@@ -5,8 +5,18 @@ Live end-to-end tests against the real Tinker API live in test_tinker_live.py.
 
 from __future__ import annotations
 
+import types as pytypes
+
 import pytest
-from inspect_ai.model import GenerateConfig, get_model
+from inspect_ai.model import (
+    ChatMessageAssistant,
+    ChatMessageSystem,
+    ChatMessageTool,
+    ChatMessageUser,
+    GenerateConfig,
+    get_model,
+)
+from inspect_ai.tool import ToolCall, ToolInfo
 
 from lasr_labs_2025_control_project.utils import tinker_provider as tp
 
@@ -125,3 +135,325 @@ async def test_generate_via_provider(stub_tinker):
     # stub emits token id 10 -> tokenizer decodes to "YES"
     assert out.completion == "YES"
     assert out.stop_reason == "stop"
+    # one sampled token, plus whatever the chat template produced for the prompt
+    assert out.usage is not None
+    assert out.usage.output_tokens == 1
+    assert out.usage.total_tokens == out.usage.input_tokens + 1
+
+
+# --------------------------------------------------------------------------- #
+# Tool calling (stubbed tinker-cookbook renderer)
+# --------------------------------------------------------------------------- #
+class _FakeRendererToolCall:
+    class FunctionBody:
+        def __init__(self, name, arguments):
+            self.name, self.arguments = name, arguments
+
+    def __init__(self, function, id=None):
+        self.function, self.id = function, id
+
+
+class _FakeRenderer:
+    """Records the rendered conversation; replies with a fixed parsed message."""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.rendered = None
+
+    def create_conversation_prefix_with_tools(self, specs, system_prompt):
+        return [{"role": "system", "content": system_prompt, "tools": specs}]
+
+    def build_generation_prompt(self, messages):
+        from tinker import types
+
+        self.rendered = messages
+        return types.ModelInput.from_ints([1, 2, 3, 4])
+
+    def get_stop_sequences(self):
+        return ["<stop>"]
+
+    def parse_response(self, tokens):
+        return self.reply, True
+
+
+@pytest.fixture
+def fake_cookbook(monkeypatch):
+    """Stand-in for tinker-cookbook, which the main environment does not install."""
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "tinker_cookbook", types.ModuleType("cookbook"))
+    renderers = types.ModuleType("tinker_cookbook.renderers")
+    renderers.ToolCall = _FakeRendererToolCall
+    renderers.get_text_content = lambda message: message["content"]
+    monkeypatch.setitem(sys.modules, "tinker_cookbook.renderers", renderers)
+
+
+@pytest.fixture
+def stub_renderer(stub_tinker, fake_cookbook, monkeypatch):
+    module, _sc, _tok = stub_tinker
+    monkeypatch.setattr(module, "_context_window", lambda model_ref: None)
+
+    def install(reply):
+        renderer = _FakeRenderer(reply)
+        monkeypatch.setattr(module, "_renderer", lambda model_ref: renderer)
+        return renderer
+
+    return install
+
+
+def _bash_tool():
+    from inspect_ai.tool import ToolInfo, ToolParam, ToolParams
+
+    return ToolInfo(
+        name="bash",
+        description="Run a command.",
+        parameters=ToolParams(
+            properties={"cmd": ToolParam(type="string", description="The command.")},
+            required=["cmd"],
+        ),
+    )
+
+
+async def test_generate_with_tools_returns_tool_call(stub_renderer):
+    from inspect_ai.model import (
+        ChatMessageAssistant,
+        ChatMessageSystem,
+        ChatMessageTool,
+        ChatMessageUser,
+    )
+    from inspect_ai.tool import ToolCall
+
+    call = _FakeRendererToolCall(
+        _FakeRendererToolCall.FunctionBody("bash", '{"cmd": "ls /tmp"}'), id="c1"
+    )
+    renderer = stub_renderer({"content": "Listing.", "tool_calls": [call]})
+    history = [
+        ChatMessageSystem(content="Use bash."),
+        ChatMessageUser(content="List /tmp."),
+        ChatMessageAssistant(
+            content="",
+            tool_calls=[ToolCall(id="c0", function="bash", arguments={"cmd": "pwd"})],
+        ),
+        ChatMessageTool(content="/root", tool_call_id="c0", function="bash"),
+    ]
+    out = await get_model("tinker/Qwen/Qwen3-32B").api.generate(
+        input=history,
+        tools=[_bash_tool()],
+        tool_choice="auto",
+        config=GenerateConfig(max_tokens=8),
+    )
+    [parsed] = out.message.tool_calls
+    assert (parsed.id, parsed.function, parsed.arguments) == (
+        "c1",
+        "bash",
+        {"cmd": "ls /tmp"},
+    )
+    assert out.message.text == "Listing."
+    assert out.stop_reason == "tool_calls"
+    assert out.usage.input_tokens == 4 and out.usage.output_tokens == 1
+    # The earlier call and its result are rendered back in the native format.
+    assert [m["role"] for m in renderer.rendered] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert renderer.rendered[0]["tools"][0]["name"] == "bash"
+    assert renderer.rendered[2]["tool_calls"][0].function.arguments == '{"cmd": "pwd"}'
+    assert renderer.rendered[3]["tool_call_id"] == "c0"
+
+
+async def test_malformed_tool_arguments_become_parse_errors(stub_renderer):
+    bad = _FakeRendererToolCall(_FakeRendererToolCall.FunctionBody("bash", "[1]"))
+    stub_renderer({"content": "", "tool_calls": [bad]})
+    out = await get_model("tinker/Qwen/Qwen3-32B").api.generate(
+        input=[],
+        tools=[_bash_tool()],
+        tool_choice="auto",
+        config=GenerateConfig(max_tokens=8),
+    )
+    [parsed] = out.message.tool_calls
+    assert parsed.arguments == {} and "JSON object" in parsed.parse_error
+    assert parsed.id.startswith("bash_")
+
+
+# --------------------------------------------------------------------------- #
+# Agent runs: fitting the history to the context window
+# --------------------------------------------------------------------------- #
+def _agent_messages(steps: int, output: str = "x" * 200) -> list:
+    messages: list = [
+        ChatMessageSystem(content="system"),
+        ChatMessageUser(content="task"),
+    ]
+    for i in range(steps):
+        call = ToolCall(id=f"call{i}", function="bash", arguments={"cmd": "ls"})
+        messages.append(ChatMessageAssistant(content=f"step {i}", tool_calls=[call]))
+        messages.append(
+            ChatMessageTool(content=output, tool_call_id=call.id, function="bash")
+        )
+    return messages
+
+
+def _chars(messages: list) -> pytypes.SimpleNamespace:
+    """A prompt whose token length is the number of characters in the messages."""
+    return pytypes.SimpleNamespace(length=sum(len(m.text) for m in messages))
+
+
+def test_shortened_omits_oldest_outputs_first():
+    messages = _agent_messages(4)
+    short = tp._shortened(messages, 2)
+    assert [m.text for m in short if m.role == "tool"] == [
+        tp._OMITTED_OUTPUT,
+        tp._OMITTED_OUTPUT,
+        "x" * 200,
+        "x" * 200,
+    ]
+    assert [m.role for m in short] == [m.role for m in messages]
+    assert messages[3].text == "x" * 200  # the caller's messages are not changed
+
+
+def test_shortened_then_drops_oldest_steps():
+    messages = _agent_messages(4)  # three earlier outputs, three earlier steps
+    short = tp._shortened(messages, 3 + 2)
+    assert short[:2] == messages[:2]
+    assert short[2].role == "user" and short[2].text.startswith("[2 earlier steps")
+    assert [m.text for m in short[3:]] == [
+        "step 2",
+        tp._OMITTED_OUTPUT,
+        "step 3",
+        "x" * 200,  # the latest step keeps its output
+    ]
+    # past the last level there is nothing more to drop
+    assert [m.text for m in tp._shortened(messages, 99)[3:]] == ["step 3", "x" * 200]
+
+
+def test_fit_history_omits_no_more_than_needed():
+    messages = _agent_messages(6)
+    full = _chars(messages).length
+
+    assert tp._fit_history(_chars, messages, full) == (_chars(messages), None)
+
+    budget = full - 300  # two 200-character outputs must go
+    prompt, omitted = tp._fit_history(_chars, messages, budget)
+    assert omitted == {"outputs": 2, "steps": 0}
+    assert prompt.length <= budget < _chars(tp._shortened(messages, 1)).length
+
+    # room for the task and the latest step only
+    latest = _chars(messages[:2] + messages[-2:]).length
+    prompt, omitted = tp._fit_history(_chars, messages, latest + 60)
+    assert omitted == {"outputs": 5, "steps": 5}
+    assert prompt.length <= latest + 60
+
+    assert tp._fit_history(_chars, messages, latest - 1) is None
+
+
+def test_context_window_reads_server_capabilities(monkeypatch):
+    models = [
+        pytypes.SimpleNamespace(model_name="a/small", max_context_length=32768),
+        pytypes.SimpleNamespace(model_name="a/large", max_context_length=65536),
+    ]
+    service = pytypes.SimpleNamespace(
+        get_server_capabilities=lambda: pytypes.SimpleNamespace(supported_models=models)
+    )
+    monkeypatch.setattr(tp, "_service", lambda: service)
+    tp._context_window.cache_clear()
+    try:
+        assert tp._context_window("a/small") == 32768
+        assert tp._context_window("a/large") == 65536
+        assert tp._context_window("a/unlisted") is None
+    finally:
+        tp._context_window.cache_clear()
+
+
+class _StubRenderer:
+    """Renders a conversation to one token per character of message content."""
+
+    def create_conversation_prefix_with_tools(self, specs, system_prompt):
+        return []
+
+    def build_generation_prompt(self, messages):
+        return pytypes.SimpleNamespace(length=sum(len(m["content"]) for m in messages))
+
+    def get_stop_sequences(self):
+        return []
+
+    def parse_response(self, tokens):
+        return {"role": "assistant", "content": "ok"}, True
+
+
+@pytest.fixture
+def agent_api(fake_cookbook, monkeypatch):
+    """The provider with a stub renderer; returns (api, recorded sample calls)."""
+    calls = []
+
+    class Client:
+        async def sample_async(self, prompt, num_samples, sampling_params):
+            calls.append((prompt, sampling_params))
+            return pytypes.SimpleNamespace(
+                sequences=[pytypes.SimpleNamespace(tokens=[1], stop_reason="stop")]
+            )
+
+    monkeypatch.setattr(tp, "_renderer", lambda model_ref: _StubRenderer())
+    monkeypatch.setattr(tp, "_sampling_client", lambda model_ref: Client())
+    monkeypatch.setattr(tp, "_AGENT_MIN_OUTPUT_TOKENS", 100)
+    return get_model("tinker/Qwen/Qwen3-32B").api, calls
+
+
+_BASH = [ToolInfo(name="bash", description="Run a command.")]
+_STEP_CONFIG = GenerateConfig(max_tokens=400)
+
+
+async def test_generate_fits_agent_history_to_window(agent_api, monkeypatch):
+    api, calls = agent_api
+    monkeypatch.setattr(tp, "_context_window", lambda model_ref: 1000)
+    messages = _agent_messages(6)  # 1240 characters; omitting an output saves 150
+    before = [m.text for m in messages]
+
+    out = await api.generate(messages, _BASH, "auto", _STEP_CONFIG)
+
+    prompt, params = calls[0]
+    assert prompt.length <= 1000 - 100  # room for a step is kept
+    assert params.max_tokens == min(400, 1000 - prompt.length)
+    assert out.message.metadata == {"history_omitted": {"outputs": 3, "steps": 0}}
+    assert out.usage is not None and out.usage.input_tokens == prompt.length
+    assert [m.text for m in messages] == before  # the trajectory itself is untouched
+
+
+async def test_generate_sends_a_short_history_unchanged(agent_api, monkeypatch):
+    api, calls = agent_api
+    monkeypatch.setattr(tp, "_context_window", lambda model_ref: 100_000)
+    messages = _agent_messages(6)
+
+    out = await api.generate(messages, _BASH, "auto", _STEP_CONFIG)
+
+    prompt, params = calls[0]
+    # the system message is the renderer's prefix, which the stub leaves empty
+    assert prompt.length == sum(len(m.text) for m in messages[1:])
+    assert params.max_tokens == 400
+    assert out.message.metadata is None
+
+
+async def test_generate_ends_the_run_when_one_step_is_too_long(agent_api, monkeypatch):
+    api, calls = agent_api
+    monkeypatch.setattr(tp, "_context_window", lambda model_ref: 1000)
+    messages = _agent_messages(1, output="x" * 2000)
+
+    out = await api.generate(messages, _BASH, "auto", _STEP_CONFIG)
+
+    assert out.stop_reason == "model_length"  # Inspect's agent loop stops on this
+    assert calls == []
+
+
+async def test_generate_without_a_reported_window_sends_everything(
+    agent_api, monkeypatch
+):
+    api, calls = agent_api
+    monkeypatch.setattr(tp, "_context_window", lambda model_ref: None)
+    messages = _agent_messages(6)
+
+    await api.generate(messages, _BASH, "auto", _STEP_CONFIG)
+
+    prompt, params = calls[0]
+    assert prompt.length == sum(len(m.text) for m in messages[1:])
+    assert params.max_tokens == 400

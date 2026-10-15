@@ -6,7 +6,9 @@ Everything Tinker-specific lives in this module. It does two jobs:
    ``get_model("tinker/Qwen/Qwen3-32B")`` and ``eval(model="tinker/...")`` work
    for solution *generation* (attacks / honest / honeypots), the text-``<score>``
    suspiciousness monitors, and the LLM paraphraser -- i.e. every plain-sampling
-   role -- with no other pipeline changes.
+   role -- with no other pipeline changes. Requests that carry tools (agentic
+   settings like BashArena) go through tinker-cookbook's native renderers, and
+   their history is shortened when it would not fit the model's context window.
 
 2. Exposes :func:`collusion_yes_no_logprobs`, which returns the *exact*
    log P(YES) / log P(NO) answer-token logprobs the untrusted collusion monitor
@@ -26,20 +28,27 @@ The authoritative live catalogue is
 
 from __future__ import annotations
 
+import json
 import threading
+import uuid
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
 from inspect_ai.model import (
+    ChatCompletionChoice,
     ChatMessage,
+    ChatMessageAssistant,
+    ChatMessageUser,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
+    ModelUsage,
 )
 from inspect_ai.model import (
     modelapi as _modelapi,
 )
-from inspect_ai.tool import ToolChoice, ToolInfo
+from inspect_ai.tool import ToolCall, ToolChoice, ToolInfo
 
 if TYPE_CHECKING:  # avoid importing tinker at module load
     from tinker import SamplingClient, ServiceClient
@@ -193,6 +202,238 @@ def _messages_to_dicts(input: list[ChatMessage]) -> list[dict[str, str]]:
 
 
 # --------------------------------------------------------------------------- #
+# Tool calling (agentic settings such as BashArena). Each model family has its
+# own tool-call wire format (DeepSeek special tokens, Qwen <tool_call>, gpt-oss
+# harmony, ...), so we use tinker-cookbook's per-family renderers rather than
+# the plain chat-template path above.
+# --------------------------------------------------------------------------- #
+@lru_cache(maxsize=None)
+def _base_model(model_ref: str) -> str:
+    """Base model of a ``tinker://`` checkpoint; any other ref is already one."""
+    if not model_ref.startswith("tinker://"):
+        return model_ref
+    rest = _service().create_rest_client()
+    run = rest.get_training_run_by_tinker_path(model_ref, access_scope="accessible")
+    return run.result().base_model
+
+
+@lru_cache(maxsize=None)
+def _renderer(model_ref: str):
+    try:
+        import tinker_cookbook  # noqa: F401
+    except ImportError as err:
+        # Not a dependency of this project's own environment: only the agentic
+        # runtimes (which pin their own control-arena) send requests with tools.
+        raise RuntimeError(
+            "Tool calling on tinker/ models needs tinker-cookbook>=0.5.7, which "
+            "this environment does not install"
+        ) from err
+    from tinker_cookbook.model_info import get_recommended_renderer_name
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    base = _base_model(model_ref)  # a fine-tuned checkpoint renders like its base
+    return get_renderer(
+        get_recommended_renderer_name(base), get_tokenizer(base), model_name=base
+    )
+
+
+@lru_cache(maxsize=None)
+def _context_window(model_ref: str) -> int | None:
+    """Context length in tokens that Tinker serves for a model, if it reports one."""
+    base = _base_model(model_ref)
+    for model in _service().get_server_capabilities().supported_models:
+        if model.model_name == base:
+            return model.max_context_length
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Fitting an agent's history to the context window. An agent policy re-sends the
+# whole trajectory on every step. As the prompt nears the window Tinker silently
+# cuts the output to the room left, whatever max_tokens says, and once the prompt
+# itself exceeds the window it rejects the call ("Prompt length plus max_tokens
+# exceeds the model's context window"), which ends the run unscored. In the
+# BashArena runs that died this way, the last steps before the error had as few
+# as 28 output tokens. Only the prompt of a call is shortened: the trajectory
+# saved in the eval log stays complete.
+# --------------------------------------------------------------------------- #
+# Room kept for one step's reasoning and tool call, however long the history.
+_AGENT_MIN_OUTPUT_TOKENS = 4096
+
+_OMITTED_OUTPUT = "[output omitted to fit the model's context window]"
+
+
+def _history_levels(input: list[ChatMessage]) -> tuple[int, int]:
+    """``(outputs, steps)`` that `_shortened` can omit from an agent's messages."""
+    assistants = [i for i, m in enumerate(input) if m.role == "assistant"]
+    if len(assistants) < 2:
+        return 0, 0
+    earlier = input[assistants[0] : assistants[-1]]
+    outputs = sum(_is_long_output(m) for m in earlier)
+    return outputs, len(assistants) - 1
+
+
+def _is_long_output(message: ChatMessage) -> bool:
+    return message.role == "tool" and len(message.text) > len(_OMITTED_OUTPUT)
+
+
+def _shortened(input: list[ChatMessage], level: int) -> list[ChatMessage]:
+    """An agent's messages with older history removed, more at each level.
+
+    Level k up to the number of earlier tool outputs replaces the k oldest of them
+    with a placeholder, so the agent still sees which commands it ran. Each level
+    beyond that also drops the oldest remaining step (an assistant message and its
+    tool results). The messages before the first step and the latest step are kept.
+
+    Example:
+        _shortened(messages, 0) == messages
+        _shortened(messages, 3)[5].text  # "[output omitted to fit ...]"
+    """
+    outputs, steps = _history_levels(input)
+    assistants = [i for i, m in enumerate(input) if m.role == "assistant"]
+    if level <= 0 or not steps:
+        return list(input)
+    first, last = assistants[0], assistants[-1]
+    earlier = list(input[first:last])
+    omit = min(level, outputs)
+    for i, message in enumerate(earlier):
+        if omit and _is_long_output(message):
+            earlier[i] = message.model_copy(
+                update={"content": _OMITTED_OUTPUT, "error": None}
+            )
+            omit -= 1
+    dropped = min(level - outputs, steps)
+    note: list[ChatMessage] = []
+    if dropped > 0:
+        earlier = earlier[assistants[dropped] - first :]
+        note = [
+            ChatMessageUser(
+                content=f"[{dropped} earlier steps omitted to fit the model's context window]"
+            )
+        ]
+    return [*input[:first], *note, *earlier, *input[last:]]
+
+
+def _fit_history(
+    build: Callable[[list[ChatMessage]], Any], input: list[ChatMessage], budget: int
+) -> tuple[Any, dict[str, int] | None] | None:
+    """Prompt for an agent step that fits in `budget` tokens, shortening its history.
+
+    Example:
+        prompt, omitted = _fit_history(build, messages, 32768 - 4096)
+        omitted  # None, or {"outputs": 12, "steps": 0}
+
+    Args:
+        build: Renders messages into a prompt with a token ``length``.
+        input: The agent's messages for this step.
+        budget: Most prompt tokens allowed.
+
+    Returns:
+        The prompt and what was omitted from it (None if nothing was), or None if
+        even the shortest history does not fit.
+    """
+    prompt = build(input)
+    if prompt.length <= budget:
+        return prompt, None
+    outputs, steps = _history_levels(input)
+    low, high = 1, outputs + steps  # the lowest level that fits is in [low, high]
+    best = build(_shortened(input, high)) if high else None
+    if best is None or best.length > budget:
+        return None
+    while low < high:
+        level = (low + high) // 2
+        candidate = build(_shortened(input, level))
+        if candidate.length <= budget:
+            best, high = candidate, level
+        else:
+            low = level + 1
+    return best, {
+        "outputs": min(high, outputs),
+        "steps": max(high - outputs, 0),
+    }
+
+
+def _renderer_messages(
+    renderer: Any, input: list[ChatMessage], tools: list[ToolInfo]
+) -> list[Any]:
+    from tinker_cookbook.renderers import ToolCall as RendererToolCall
+
+    specs = [
+        {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters.model_dump(exclude_none=True),
+        }
+        for t in tools
+    ]
+    system = "\n\n".join(m.text for m in input if m.role == "system")
+    messages = renderer.create_conversation_prefix_with_tools(
+        specs, system_prompt=system
+    )
+    for m in input:
+        if m.role == "user":
+            messages.append({"role": "user", "content": m.text})
+        elif m.role == "assistant":
+            message: dict[str, Any] = {"role": "assistant", "content": m.text}
+            if m.tool_calls:
+                message["tool_calls"] = [
+                    RendererToolCall(
+                        id=call.id,
+                        function=RendererToolCall.FunctionBody(
+                            name=call.function, arguments=json.dumps(call.arguments)
+                        ),
+                    )
+                    for call in m.tool_calls
+                ]
+            messages.append(message)
+        elif m.role == "tool":
+            messages.append(
+                {
+                    "role": "tool",
+                    "content": f"Error: {m.error.message}" if m.error else m.text,
+                    # Renderers differ in which of these they need; supply both.
+                    "tool_call_id": m.tool_call_id or "",
+                    "name": m.function or "",
+                }
+            )
+    return messages
+
+
+def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
+    calls = []
+    for call in message.get("tool_calls", []):
+        call_id = call.id or f"{call.function.name}_{uuid.uuid4().hex[:8]}"
+        try:
+            arguments = json.loads(call.function.arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("arguments must be a JSON object")
+            calls.append(
+                ToolCall(id=call_id, function=call.function.name, arguments=arguments)
+            )
+        except ValueError as err:
+            calls.append(
+                ToolCall(
+                    id=call_id,
+                    function=call.function.name,
+                    arguments={},
+                    parse_error=f"Could not parse tool arguments: {err}",
+                )
+            )
+    # Malformed calls are returned as parse errors so the agent sees them and retries.
+    for bad in message.get("unparsed_tool_calls", []):
+        calls.append(
+            ToolCall(
+                id=f"unparsed_{uuid.uuid4().hex[:8]}",
+                function="unknown",
+                arguments={},
+                parse_error=f"{bad.error}\n{bad.raw_text}",
+            )
+        )
+    return calls
+
+
+# --------------------------------------------------------------------------- #
 # inspect-ai provider: handles plain sampling (generation / text monitors /
 # paraphrasing). Collusion logprobs go through collusion_yes_no_logprobs below.
 # --------------------------------------------------------------------------- #
@@ -229,42 +470,103 @@ class TinkerAPI(ModelAPI):
     ) -> ModelOutput:
         from tinker import types
 
-        prompt_ids = _apply_chat_template(
-            self.base_model,
-            _messages_to_dicts(input),
-            add_generation_prompt=True,
-            reasoning_effort=config.reasoning_effort,
-        )
+        # Generous default for callers that set no max_tokens (monitors, the
+        # paraphraser): a short cap truncates generators mid-output, e.g.
+        # before the closing </final_code> tag. Generator configs override
+        # this via RunGenerator.max_tokens.
+        max_tokens = config.max_tokens or _DEFAULT_MAX_TOKENS
+        omitted: dict[str, int] | None = None
+        if tools:
+            renderer = _renderer(self.base_model)
+
+            def build(messages: list[ChatMessage]) -> Any:
+                return renderer.build_generation_prompt(
+                    _renderer_messages(renderer, messages, tools)
+                )
+
+            window = _context_window(self.base_model)
+            if window is None:
+                prompt = build(input)
+            else:
+                reserve = min(max_tokens, _AGENT_MIN_OUTPUT_TOKENS)
+                fitted = _fit_history(build, input, window - reserve)
+                if fitted is None:
+                    # One step alone is too long. Inspect's agent loop ends the run
+                    # on this stop reason, and the trajectory so far is scored.
+                    return ModelOutput.from_content(
+                        model=self.model_name, content="", stop_reason="model_length"
+                    )
+                prompt, omitted = fitted
+                max_tokens = min(max_tokens, window - prompt.length)
+            stop = renderer.get_stop_sequences()
+        else:
+            prompt = types.ModelInput.from_ints(
+                _apply_chat_template(
+                    self.base_model,
+                    _messages_to_dicts(input),
+                    add_generation_prompt=True,
+                    reasoning_effort=config.reasoning_effort,
+                )
+            )
+            stop = config.stop_seqs
         sampling_params = types.SamplingParams(
-            # Generous default for callers that set no max_tokens (monitors, the
-            # paraphraser): a short cap truncates generators mid-output, e.g.
-            # before the closing </final_code> tag. Generator configs override
-            # this via RunGenerator.max_tokens.
-            max_tokens=config.max_tokens or _DEFAULT_MAX_TOKENS,
+            max_tokens=max_tokens,
             temperature=1.0 if config.temperature is None else config.temperature,
             top_p=1.0 if config.top_p is None else config.top_p,
             top_k=-1 if config.top_k is None else config.top_k,
-            stop=config.stop_seqs,
+            stop=stop,
             seed=config.seed,
         )
         sc = _sampling_client(self.base_model)
         resp = await sc.sample_async(
-            prompt=types.ModelInput.from_ints(prompt_ids),
+            prompt=prompt,
             num_samples=1,
             sampling_params=sampling_params,
         )
         seq = resp.sequences[0]
-        text = _tokenizer(self.base_model).decode(
-            list(seq.tokens), skip_special_tokens=True
-        )
         # tinker's StopReason is Literal["length", "stop"] (lowercase); compare
         # case-insensitively or truncation is silently reported as a clean stop,
         # which is exactly how the generator truncation went unnoticed in a pilot.
         stop_reason = (
             "max_tokens" if str(seq.stop_reason).lower().endswith("length") else "stop"
         )
-        return ModelOutput.from_content(
-            model=self.model_name, content=text, stop_reason=stop_reason
+        # Token counts so eval logs record usage (cost estimates); Tinker bills the
+        # full prompt on every call.
+        usage = ModelUsage(
+            input_tokens=prompt.length,
+            output_tokens=len(seq.tokens),
+            total_tokens=prompt.length + len(seq.tokens),
+        )
+        if not tools:
+            text = _tokenizer(self.base_model).decode(
+                list(seq.tokens), skip_special_tokens=True
+            )
+            output = ModelOutput.from_content(
+                model=self.model_name, content=text, stop_reason=stop_reason
+            )
+            output.usage = usage
+            return output
+
+        from tinker_cookbook.renderers import get_text_content
+
+        message, _ = renderer.parse_response(list(seq.tokens))
+        tool_calls = _inspect_tool_calls(message)
+        return ModelOutput(
+            model=self.model_name,
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatMessageAssistant(
+                        content=get_text_content(message),
+                        tool_calls=tool_calls or None,
+                        model=self.model_name,
+                        source="generate",
+                        # Marks the steps generated from a shortened history.
+                        metadata={"history_omitted": omitted} if omitted else None,
+                    ),
+                    stop_reason="tool_calls" if tool_calls else stop_reason,
+                )
+            ],
+            usage=usage,
         )
 
     def connection_key(self) -> str:
@@ -282,6 +584,7 @@ async def collusion_yes_no_logprobs(
     answer_open: str = "<answer>",
     yes_text: str = "YES",
     no_text: str = "NO",
+    single_prefill: bool = False,
 ) -> dict[str, Any]:
     """Return exact answer-token logprobs for a YES/NO collusion monitor.
 
@@ -290,6 +593,9 @@ async def collusion_yes_no_logprobs(
     (handles multi-token YES/NO). Returns ``{"YES", "NO", "completion"}`` in the
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
     scorer treats it identically.
+
+    ``single_prefill=True`` reads both logprobs from one request instead of two
+    when YES and NO are single tokens (needs ``tinker>=0.30``).
     """
     from tinker import types
 
@@ -309,8 +615,10 @@ async def collusion_yes_no_logprobs(
     )
     prefix_ids += tok.encode(answer_open, add_special_tokens=False)
 
-    async def _candidate_logprob(text: str) -> Optional[float]:
-        cand_ids = tok.encode(text, add_special_tokens=False)
+    yes_ids = tok.encode(yes_text, add_special_tokens=False)
+    no_ids = tok.encode(no_text, add_special_tokens=False)
+
+    async def _candidate_logprob(cand_ids: list[int]) -> Optional[float]:
         if not cand_ids:
             return None
         full = prefix_ids + cand_ids
@@ -323,8 +631,30 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
-    yes_lp = await _candidate_logprob(yes_text)
-    no_lp = await _candidate_logprob(no_text)
+    if single_prefill and len(yes_ids) == len(no_ids) == 1:
+        import torch
+
+        # Target row i scores prompt position i + 1, so the answer slot needs a
+        # token of its own: append YES as a placeholder and name both candidate
+        # ids in the last row. -1 marks cells that are not scored.
+        targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
+        targets[-1] = torch.tensor(yes_ids + no_ids)
+        resp = await sc.sample_async(
+            prompt=types.ModelInput.from_ints(prefix_ids + yes_ids),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=1),
+            # Without this the scores differ from the teacher-forced ones (a
+            # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
+            include_prompt_logprobs=True,
+            target_prompt_logprobs=types.TensorData.from_torch_sparse(
+                targets, pad_value=-1
+            ),
+        )
+        assert resp.target_prompt_logprobs is not None
+        yes_lp, no_lp = resp.target_prompt_logprobs.to_torch()[-1].tolist()
+    else:
+        yes_lp = await _candidate_logprob(yes_ids)
+        no_lp = await _candidate_logprob(no_ids)
 
     if yes_lp is not None and no_lp is not None:
         answer = yes_text if yes_lp >= no_lp else no_text
