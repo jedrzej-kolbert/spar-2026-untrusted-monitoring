@@ -3,6 +3,7 @@ Read solutions from an eval log and score them with monitors
 Append the scores to the resulting eval log while keeping the original solutions and scores
 """
 
+import dataclasses
 import math
 import shutil
 from dataclasses import asdict
@@ -34,6 +35,17 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     CollusionMonitorInfo,
     MonitorConfig,
     RunLabel,
+)
+from lasr_labs_2025_control_project.tracking import (
+    ALLOW_UNLINKED_HELP,
+    StageRun,
+    config_tags,
+    input_counts,
+    input_name,
+    load_raw_config,
+    names,
+    prompt_digest,
+    resolve_input,
 )
 from lasr_labs_2025_control_project.utils.config_loader import (
     MonitorRunConfig,
@@ -450,14 +462,34 @@ def monitor_solutions(
     )
 
 
+def monitor_segment(raw: dict[str, Any], selected: list[str]) -> str:
+    """Name segment from the collusion monitor (else the first selected monitor)."""
+    monitors = {
+        name: cfg
+        for entry in raw["defaults"]["monitors"]
+        for name, cfg in entry.items()
+    }
+    key = (
+        "untrusted_collusion_monitor"
+        if "untrusted_collusion_monitor" in selected
+        else selected[0]
+    )
+    model_info = monitors[key]["model_info"]
+    return names.stage_segment(
+        "mon", model_info["model"], model_info.get("system_prompt")
+    )
+
+
 @click.command()
 @click.option("--config", type=str, required=True)
-def main(config: str):
+@click.option("--allow-unlinked", is_flag=True, help=ALLOW_UNLINKED_HELP)
+def main(config: str, allow_unlinked: bool):
     from dotenv import load_dotenv
 
     load_dotenv()
     config_path = Path(config)
     normalized = load_and_normalize_config(config, config_type="monitor")
+    raw = load_raw_config(config_path)
     Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
     shutil.copy(
         config_path, normalized.experiment_folder / "configs" / "monitor_config.yaml"
@@ -467,17 +499,54 @@ def main(config: str):
         assert isinstance(run, MonitorRunConfig), (
             "Run is not a MonitorRunConfig, make sure to use the correct config"
         )
-        result = eval(
-            tasks=monitor_solutions(run),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
-            reasoning_tokens=0,
-            reasoning_effort="minimal",  # openai models
-            limit=run.limit,
+        source = resolve_input(run.eval_path)
+        run = dataclasses.replace(run, eval_path=source.local_path)
+        selected = list(raw["runs"][run.label]["monitors"])
+        monitors = {
+            name: cfg
+            for name, cfg in dataclasses.asdict(run.monitors).items()
+            if cfg is not None
+        }
+        tracker = StageRun(
+            "monitor",
+            names.extend(input_name(source, run.label), monitor_segment(raw, selected)),
+            config={
+                "config_file": str(config_path),
+                "yaml": raw,
+                "label": run.label,
+                "prompt_digests": {
+                    name: prompt_digest(cfg["model_info"]["system_prompt"])
+                    for name, cfg in monitors.items()
+                },
+                "run": run,
+            },
+            tags=["monitor", run.label, *config_tags(raw)],
+            inputs=[source],
+            models=[cfg["model_info"]["model"] for cfg in monitors.values()],
+            allow_unlinked=allow_unlinked,
         )
-        run.save_path.parent.mkdir(parents=True, exist_ok=True)
-        run.save_path.touch()
-        shutil.copy(result[0].location, run.save_path)
+        with tracker:
+            result = eval(
+                tasks=monitor_solutions(run),
+                max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
+                max_sandboxes=8,
+                reasoning_tokens=0,
+                reasoning_effort="minimal",  # openai models
+                limit=run.limit,
+                metadata=tracker.eval_metadata(),
+            )
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            run.save_path.touch()
+            shutil.copy(result[0].location, run.save_path)
+            tracker.finish_eval(
+                result[0],
+                run.save_path,
+                limit=run.limit,
+                metadata={"label": run.label},
+                extra_counts=input_counts(
+                    source.local_path, result[0].eval.dataset.samples or 0
+                ),
+            )
         if result[0].status != "success":
             raise SystemExit(
                 f"{run.label}: eval ended with status {result[0].status!r}, "

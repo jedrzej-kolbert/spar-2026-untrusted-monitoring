@@ -93,26 +93,10 @@ truncated paraphrases, which are stored verbatim as the transformed solution.
 Both failures are silent, so still check the NaN rate (monitors) and the
 max_tokens rate (transforms) on the first arm of a sweep.
 
-Full run order for a fresh open-weights run
--------------------------------------------
-1. `python experiments/open_models/make_configs.py --model-class open`
-2. `scripts/generate_solutions_inspect.py` on the **train** split, for the SFT
-   training generations: `.../self_rec/generator/train_generator_config.yaml`
-   (attack mode -- the distribution the monitor faces at eval), plus
-   `.../self_rec/generator/honest_train_generator_config.yaml` if you need the
-   honest-label control arms. Then `transform_solutions_inspect.py` on the
-   matching `*_config_train.yaml` pairs, so the minified/paraphrased arms train
-   on the representation they will be shown.
-3. `finetuning/binary_tuning/transform_logs_to_raw.sh` (add `--transformed` for
-   the minified/paraphrased arms) -> `transform_raw_to_prepared.sh`, per SFT arm.
-   Pass `--target-model` explicitly: it defaults to an unrelated model, and a
-   mismatch silently labels every example NO.
-   (label ablations via `randomise_labels.py` / `permute_labels.py`)
-4. `finetuning/tinker_lora_finetune.py --train-jsonl ...` per arm -> a `tinker://` path each
-5. re-run this script with `--checkpoints ckpts.json` to bake the paths in
-6. `generate_solutions_inspect.py` on the **test** split -> `transform_solutions_inspect.py`
-   -> `monitor_solutions_inspect.py`
-7. `scripts/plot_data.py` for histograms / ROC / safety-usefulness curves
+Run order
+---------
+The researcher-facing run order (generate -> transform -> fine-tune -> monitor
+-> analyse) is in the top-level README.md.
 
 Run from the repo root.
 """
@@ -917,8 +901,25 @@ def render(document: Mapping[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+# TODO(local output names): local .eval paths (generator/<label>.eval,
+# transforms/<t>/<stem>_transformed.eval, outputs/<arm>/...) are planned to
+# follow the W&B artifact naming scheme in tracking/names.py, so a file's name
+# alone says which model, prompt, split, label and stages produced it.
+# W&B lineage no longer depends on paths, so only humans browsing folders gain;
+# it was deferred to the Hydra config port because downstream configs here
+# hard-code these paths. Delete this comment once that is done.
 def experiment_folder(model_class: str, setting: str, experiment: str) -> str:
     return f"experiments/{MODEL_CLASS_DIRS[model_class]}/{setting}/{experiment}"
+
+
+def wandb_block(
+    models: "ModelResolver", spec_experiment: str, **condition: str
+) -> dict[str, Any]:
+    """The config's `wandb:` block: tags, plus the condition for monitor configs."""
+    block: dict[str, Any] = {"tags": [models.model_class, spec_experiment]}
+    if condition:
+        block["condition"] = condition
+    return block
 
 
 def build_generator(
@@ -944,6 +945,7 @@ def build_generator(
             models.model_class, setting, spec.experiment
         ),
         "experiment_name": spec.experiment_name,
+        "wandb": wandb_block(models, spec.experiment),
         "results_folder": spec.results_folder,
         "defaults": defaults,
         "runs": runs,
@@ -976,6 +978,7 @@ def build_transform(
             models.model_class, setting, spec.experiment
         ),
         "experiment_name": spec.experiment_name,
+        "wandb": wandb_block(models, spec.experiment),
         "results_folder": f"results/{spec.transform_dir}/",
         "defaults": {"transform": transform},
         "runs": runs,
@@ -1057,6 +1060,14 @@ def build_monitor(spec: Monitor, models: ModelResolver, setting: str) -> dict[st
             models.model_class, setting, spec.experiment
         ),
         "experiment_name": spec.experiment_name,
+        "wandb": wandb_block(
+            models,
+            spec.experiment,
+            setting=setting,
+            collusion_strategy=spec.experiment,
+            transform=spec.strategy,
+            monitor_arm="base" if spec.collusion == "U" else spec.collusion,
+        ),
         "results_folder": spec.results_folder,
         "defaults": defaults,
         "runs": runs,

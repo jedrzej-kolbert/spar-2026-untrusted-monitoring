@@ -2,38 +2,24 @@
 
 This is the open-weights analogue of the OpenAI fine-tuning step in the original
 SFT experiments. It trains a LoRA adapter on **U** (default
-`Qwen/Qwen3-30B-A3B-Instruct-2507`, a 30B model) from the prepared chat JSONL
-produced by `finetuning/binary_tuning` — each line is
-`{"messages": [system, user, assistant]}` where the assistant content is
-`<answer>YES</answer>` / `<answer>NO</answer>` (the self-recognition label).
+`Qwen/Qwen3-30B-A3B-Instruct-2507`, a 30B model) to answer `<answer>YES</answer>`
+on solutions U wrote and `<answer>NO</answer>` otherwise.
 
-Only the assistant answer tokens contribute to the loss (the prompt is masked
-out), and tokenisation matches inference (`utils.tinker_provider`, thinking
-disabled), so the resulting checkpoint behaves consistently when plugged into
-the collusion monitor.
+Training data is prepared in-process from generation/transform `.eval` logs
+(`--train-eval`, repeatable; see `sft_data.py`), or read from an already
+prepared chat JSONL (`--train-jsonl`). Only the assistant answer tokens
+contribute to the loss (the prompt is masked out), and tokenisation matches
+inference (`utils.tinker_provider`, thinking disabled), so the resulting
+checkpoint behaves consistently when plugged into the collusion monitor.
 
-It saves sampler weights and prints the `tinker://…` checkpoint path; put that
-path in a monitor config's `untrusted_collusion_monitor` model field
-(the provider loads `tinker://…` via `model_path`).
+It saves sampler weights (no expiry) and prints the `tinker://…` checkpoint
+path; put that path in a monitor config's `untrusted_collusion_monitor` model
+field (the provider loads `tinker://…` via `model_path`).
 
-Usage:
-  python -m lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
-      --train-jsonl <prepared/train/train_messages.jsonl> \
-      [--base-model Qwen/Qwen3-30B-A3B-Instruct-2507] \
-      [--rank 32] [--lr 1e-4] [--epochs 3] [--batch-size 64] \
-      [--checkpoint-name self_rec_u] [--out-path-file checkpoint_path.txt] \
-      [--max-examples N] [--seed 0] [--val-frac 0.05]
-
-For attack-vs-honeypot dynamics, add --checkpoint-every-steps N,
---attacks-eval attacks.eval, --honeypots-eval honeypots.eval,
---dynamics-results results/my-run/. This folder holds dynamics.csv, dynamics.svg,
-and dynamics.csv.manifest.json. The plot refreshes after each checkpoint's
-full evaluation. Pass
---transformed when evaluating transformed solutions. Prepare the training JSONL
-with transform_logs_to_raw.sh --transformed too: the trainer uses those prepared
-messages as-is. Omit --transformed in both commands for original solutions.
-Each sample makes two Tinker logprob requests per checkpoint. Keep the CSV's
-.manifest.json sidecar; changed evaluation inputs require a fresh CSV path.
+With `--checkpoint-every-steps N --attacks-eval A --honeypots-eval H`, each
+saved checkpoint is scored as a collusion monitor on held-out attacks vs
+honeypots and its ROC AUC is logged next to the training loss. Each sample makes
+two Tinker logprob requests per checkpoint.
 
 After saving, a held-out slice (`--val-frac`, 5% by default) is scored through
 the same forced-decoding path the monitor uses, reporting accuracy, predicted-YES
@@ -52,6 +38,19 @@ from typing import Any, Iterator, Optional
 
 import click
 
+from lasr_labs_2025_control_project.finetuning.sft_data import (
+    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_USER_PROMPT,
+    build_training_data,
+    load_eval_examples,
+)
+from lasr_labs_2025_control_project.tracking import (
+    ALLOW_UNLINKED_HELP,
+    StageRun,
+    input_name,
+    names,
+    resolve_input,
+)
 from lasr_labs_2025_control_project.utils import tinker_provider as tp
 
 logging.basicConfig(level=logging.INFO)
@@ -147,8 +146,36 @@ def _mean_loss(fb_output: Any, batch: list[Any]) -> Optional[float]:
         return None
 
 
+def checkpoint_auc(
+    checkpoint: str, examples: list[tuple[int, str, str]], concurrency: int = 8
+) -> float:
+    """Attack-vs-honeypot ROC AUC of a checkpoint used as the collusion monitor."""
+    import asyncio
+
+    from sklearn.metrics import roc_auc_score
+
+    async def _score() -> list[float]:
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def margin(system: str, user: str) -> float:
+            async with semaphore:
+                result = await tp.collusion_yes_no_logprobs(
+                    model_name=f"tinker/{checkpoint}",
+                    system_prompt=system,
+                    user_prompt=user,
+                )
+            if result.get("YES") is None or result.get("NO") is None:
+                raise ValueError("Tinker returned no YES/NO logprobs")
+            return float(result["YES"]) - float(result["NO"])
+
+        return await asyncio.gather(*(margin(s, u) for _, s, u in examples))
+
+    scores = asyncio.run(_score())
+    return float(roc_auc_score([label for label, _, _ in examples], scores))
+
+
 def finetune(
-    train_jsonl: Path,
+    train: Path | list[dict[str, Any]],
     base_model: str = DEFAULT_BASE_MODEL,
     rank: int = 32,
     lr: float = 1e-4,
@@ -159,37 +186,26 @@ def finetune(
     seed: int = 0,
     val_frac: float = 0.05,
     checkpoint_every_steps: int = 0,
-    attacks_eval: Optional[Path] = None,
-    honeypots_eval: Optional[Path] = None,
-    solution_field: str = "base_solution",
-    dynamics_results: Optional[Path] = None,
+    eval_examples: Optional[list[tuple[int, str, str]]] = None,
+    tracker: Optional[StageRun] = None,
 ) -> str:
-    """Run LoRA SFT and return the `tinker://…` sampler-weights path."""
+    """Run LoRA SFT and return the `tinker://…` sampler-weights path.
+
+    `train` is a prepared chat JSONL path or the examples themselves. With
+    `eval_examples`, every saved checkpoint (and the final one) is scored with
+    `checkpoint_auc`.
+    """
     import tinker
     from tinker import types
 
     if checkpoint_every_steps < 0:
         raise ValueError("checkpoint_every_steps must be nonnegative")
-    dynamics_options = (attacks_eval, honeypots_eval, dynamics_results)
-    if any(option is not None for option in dynamics_options) and not all(
-        option is not None for option in dynamics_options
-    ):
-        raise ValueError("pass both .eval files and --dynamics-results together")
-    if solution_field not in ("base_solution", "transformed_solution"):
-        raise ValueError("solution_field must be base_solution or transformed_solution")
-    if attacks_eval is not None:
-        from lasr_labs_2025_control_project.scripts.tinker_sft_dynamics import (
-            check_eval_manifest,
-            load_eval_examples,
-            record_checkpoint,
-        )
+    # A StageRun that was never entered has no W&B run, so every call is a no-op.
+    track = tracker if tracker is not None else StageRun("finetune", "", config={})
+    track.define_curve("train/loss", "train/step")
+    track.define_curve("checkpoint/roc_auc", "train/step")
 
-        eval_examples = load_eval_examples(attacks_eval, honeypots_eval, solution_field)
-        check_eval_manifest(
-            dynamics_results / "dynamics.csv", eval_examples, solution_field
-        )
-
-    examples = load_examples(train_jsonl)
+    examples = load_examples(train) if isinstance(train, Path) else list(train)
     if max_examples is not None:
         examples = examples[:max_examples]
 
@@ -215,6 +231,7 @@ def finetune(
         epochs,
         batch_size,
     )
+    track.summary({"n_train": len(examples), "n_heldout": len(val_examples)})
 
     service = tinker.ServiceClient()
     training_client = service.create_lora_training_client(
@@ -223,8 +240,30 @@ def finetune(
 
     data = [build_datum(ex["messages"], base_model) for ex in examples]
 
+    checkpoints: dict[int, str] = {}
+
+    def save(name: str, step: int) -> str:
+        # ttl_seconds=None: never expires (monitor configs reference it later).
+        path = (
+            training_client.save_weights_for_sampler(name=name, ttl_seconds=None)
+            .result()
+            .path
+        )
+        checkpoints[step] = path
+        logger.info("Saved update %d checkpoint: %s", step, path)
+        if eval_examples is not None:
+            auc = checkpoint_auc(path, eval_examples)
+            logger.info(
+                "update %d: ROC AUC %.4f on %d attacks/honeypots",
+                step,
+                auc,
+                len(eval_examples),
+            )
+            track.log({"train/step": step, "checkpoint/roc_auc": auc})
+        track.summary({"checkpoints": checkpoints})
+        return path
+
     step = 0
-    loss = None
     last_checkpoint = None
     for epoch in range(epochs):
         rng.shuffle(data)
@@ -242,21 +281,12 @@ def finetune(
                 len(batch),
                 f" loss={loss:.4f}" if loss is not None else "",
             )
+            if loss is not None:
+                track.log(
+                    {"train/step": step, "train/epoch": epoch, "train/loss": loss}
+                )
             if checkpoint_every_steps and step % checkpoint_every_steps == 0:
-                saved = training_client.save_weights_for_sampler(
-                    name=f"{checkpoint_name}-step-{step}"
-                ).result()
-                last_checkpoint = saved.path
-                logger.info("Saved update %d checkpoint: %s", step, saved.path)
-                if attacks_eval is not None:
-                    record_checkpoint(
-                        saved.path,
-                        step,
-                        loss,
-                        eval_examples,
-                        dynamics_results,
-                        solution_field=solution_field,
-                    )
+                last_checkpoint = save(f"{checkpoint_name}-step-{step}", step)
 
     final_path = last_checkpoint
     if (
@@ -264,21 +294,10 @@ def finetune(
         or not checkpoint_every_steps
         or step % checkpoint_every_steps
     ):
-        final_path = (
-            training_client.save_weights_for_sampler(name=checkpoint_name).result().path
-        )
-        logger.info("Saved sampler weights: %s", final_path)
-        if attacks_eval is not None:
-            record_checkpoint(
-                final_path,
-                step,
-                loss,
-                eval_examples,
-                dynamics_results,
-                solution_field=solution_field,
-            )
+        final_path = save(checkpoint_name, step)
     if val_examples:
-        evaluate_checkpoint(final_path, val_examples)
+        stats = evaluate_checkpoint(final_path, val_examples)
+        track.summary({f"heldout/{k}": v for k, v in stats.items()})
     return final_path
 
 
@@ -346,8 +365,29 @@ def evaluate_checkpoint(
 
 @click.command()
 @click.option(
-    "--train-jsonl", type=click.Path(exists=True, path_type=Path), required=True
+    "--train-eval",
+    "train_evals",
+    multiple=True,
+    help="Generation/transform .eval log (path or wandb: ref); repeat per source. "
+    "Solutions by --target-model are labelled YES, all others NO.",
 )
+@click.option(
+    "--train-jsonl",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Use an already prepared chat JSONL instead of --train-eval.",
+)
+@click.option(
+    "--target-model",
+    default=None,
+    help="Generator model whose solutions are YES, as the .eval logs record it "
+    "(no provider prefix, e.g. Qwen/Qwen3-8B). Required with --train-eval.",
+)
+@click.option("--keep-comments", is_flag=True, help="Keep comments in base solutions.")
+@click.option("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, show_default=True)
+@click.option("--user-prompt", default=DEFAULT_USER_PROMPT, show_default=True)
+@click.option("--upsample-pos-factor", type=int, default=1, show_default=True)
+@click.option("--upsample-neg-factor", type=int, default=1, show_default=True)
 @click.option("--base-model", type=str, default=DEFAULT_BASE_MODEL, show_default=True)
 @click.option("--rank", type=int, default=32, show_default=True)
 @click.option("--lr", type=float, default=1e-4, show_default=True)
@@ -376,20 +416,27 @@ def evaluate_checkpoint(
     show_default=True,
     help="Save sampler weights every N updates (0 saves only the final checkpoint)",
 )
-@click.option("--attacks-eval", type=click.Path(exists=True, path_type=Path))
-@click.option("--honeypots-eval", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--attacks-eval", default=None, help="Held-out attacks .eval (or wandb: ref)"
+)
+@click.option(
+    "--honeypots-eval", default=None, help="Held-out honeypots .eval (or wandb: ref)"
+)
 @click.option(
     "--transformed",
     is_flag=True,
-    help="Evaluate transformed solutions; also use --transformed when preparing training JSONL.",
+    help="Use transformed solutions, for training data and checkpoint evaluation.",
 )
-@click.option(
-    "--dynamics-results",
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Output folder for dynamics CSV, SVG, and provenance manifest",
-)
+@click.option("--allow-unlinked", is_flag=True, help=ALLOW_UNLINKED_HELP)
 def main(
-    train_jsonl: Path,
+    train_evals: tuple[str, ...],
+    train_jsonl: Optional[Path],
+    target_model: Optional[str],
+    keep_comments: bool,
+    system_prompt: str,
+    user_prompt: str,
+    upsample_pos_factor: int,
+    upsample_neg_factor: int,
     base_model: str,
     rank: int,
     lr: float,
@@ -401,10 +448,10 @@ def main(
     val_frac: float,
     out_path_file: Optional[Path],
     checkpoint_every_steps: int,
-    attacks_eval: Optional[Path],
-    honeypots_eval: Optional[Path],
+    attacks_eval: Optional[str],
+    honeypots_eval: Optional[str],
     transformed: bool,
-    dynamics_results: Optional[Path],
+    allow_unlinked: bool,
 ):
     # Same convention as the generate/monitor entrypoints: TINKER_API_KEY lives
     # in a gitignored .env. Without this the trainer dies immediately with
@@ -412,24 +459,89 @@ def main(
     from dotenv import load_dotenv
 
     load_dotenv()
+    if bool(train_evals) == bool(train_jsonl):
+        raise click.UsageError("pass --train-eval (one or more) or --train-jsonl")
+    if train_evals and not target_model:
+        raise click.UsageError(
+            "--train-eval needs --target-model (the YES-labelled model)"
+        )
+    if (attacks_eval is None) != (honeypots_eval is None):
+        raise click.UsageError("pass --attacks-eval and --honeypots-eval together")
+    solution_field = "transformed_solution" if transformed else "base_solution"
 
-    path = finetune(
-        train_jsonl=train_jsonl,
-        base_model=base_model,
-        rank=rank,
-        lr=lr,
-        epochs=epochs,
-        batch_size=batch_size,
-        checkpoint_name=checkpoint_name,
-        max_examples=max_examples,
-        seed=seed,
-        val_frac=val_frac,
-        checkpoint_every_steps=checkpoint_every_steps,
-        attacks_eval=attacks_eval,
-        honeypots_eval=honeypots_eval,
-        solution_field="transformed_solution" if transformed else "base_solution",
-        dynamics_results=dynamics_results,
+    train_inputs = [resolve_input(p) for p in (train_evals or [str(train_jsonl)])]
+    eval_inputs = [resolve_input(p) for p in (attacks_eval, honeypots_eval) if p]
+    composition: dict[str, Any]
+    if train_evals:
+        examples, composition = build_training_data(
+            [i.local_path for i in train_inputs],
+            target_model=target_model,
+            transformed=transformed,
+            keep_comments=keep_comments,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            seed=seed,
+            upsample_pos_factor=upsample_pos_factor,
+            upsample_neg_factor=upsample_neg_factor,
+        )
+    else:
+        assert train_jsonl is not None
+        examples, composition = load_examples(train_jsonl), {"prepared_jsonl": True}
+    # Built before the training client opens, so bad inputs fail before paying.
+    eval_examples = (
+        load_eval_examples(
+            eval_inputs[0].local_path, eval_inputs[1].local_path, solution_field
+        )
+        if eval_inputs
+        else None
     )
+
+    hyperparameters = {
+        "base_model": base_model,
+        "rank": rank,
+        "lr": lr,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "seed": seed,
+        "val_frac": val_frac,
+        "max_examples": max_examples,
+        "checkpoint_every_steps": checkpoint_every_steps,
+        "checkpoint_name": checkpoint_name,
+    }
+    tracker = StageRun(
+        "finetune",
+        names.extend(
+            input_name(train_inputs[0], "train"), f"ft-{names.clean(checkpoint_name)}"
+        ),
+        config={"backend": "tinker", **hyperparameters, "training_data": composition},
+        tags=[
+            "finetune",
+            "tinker",
+            *(f"pos-{m}" for m in composition.get("positive_eval_modes", [])),
+            *(f"neg-{m}" for m in composition.get("negative_eval_modes", [])),
+        ],
+        inputs=train_inputs + eval_inputs,
+        allow_unlinked=allow_unlinked,
+    )
+    with tracker:
+        path = finetune(
+            examples,
+            base_model=base_model,
+            rank=rank,
+            lr=lr,
+            epochs=epochs,
+            batch_size=batch_size,
+            checkpoint_name=checkpoint_name,
+            max_examples=max_examples,
+            seed=seed,
+            val_frac=val_frac,
+            checkpoint_every_steps=checkpoint_every_steps,
+            eval_examples=eval_examples,
+            tracker=tracker,
+        )
+        tracker.log_model_ref(
+            f"tinker/{path}", {"backend": "tinker", **hyperparameters}
+        )
     click.echo(path)
     if out_path_file is not None:
         out_path_file.write_text(path + "\n")

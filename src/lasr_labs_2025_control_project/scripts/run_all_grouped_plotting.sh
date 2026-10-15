@@ -4,6 +4,11 @@
 # Exit on error
 set -e
 
+# These are local, fixed-layout figures that re-analyse the same conditions in
+# several groupings; the per-condition analyse runs and their comparisons live
+# in W&B (plot_data.py per config), so don't log or bootstrap duplicates here.
+export WANDB_MODE=disabled
+
 echo "Starting plot generation for apps and bigcodebench datasets..."
 echo "================================================================"
 
@@ -18,14 +23,14 @@ run_dataset_commands() {
 
     echo "Running Self-rec no mitigations - UM Only..."
     if [ "$dataset" == "apps" ]; then
-        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
             --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/control_self_rec/monitors/no_backdoors/base_monitor_config_randomised.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
             --grouped-path no_mitigation \
             --disable-trusted-monitor True
     else
-        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
             --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
             --grouped-path no_mitigation \
@@ -34,13 +39,13 @@ run_dataset_commands() {
 
     echo "Running Self-rec no mitigations - All Monitors..."
     if [ "$dataset" == "apps" ]; then
-        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
             --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/control_self_rec/monitors/no_backdoors/base_monitor_config_randomised.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
             --grouped-path no_mitigation
     else
-        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+        uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
             --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                      src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
             --grouped-path no_mitigation
@@ -49,7 +54,7 @@ run_dataset_commands() {
     # Self-rec paraphrasing: None Minifier, SFT Minifier, None Paraphraser, SFT Paraphraser
 
     echo "Running Self-rec mitigations - UM Only..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/paraphrased_monitor_config.yaml \
@@ -58,7 +63,7 @@ run_dataset_commands() {
         --disable-trusted-monitor True
 
     echo "Running Self-rec mitigations - All Monitors..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/paraphrased_monitor_config.yaml \
@@ -68,7 +73,7 @@ run_dataset_commands() {
     # Self Rec without SFT
 
     echo "Running Self Rec without SFT - UM Only..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/paraphrased_monitor_config.yaml \
@@ -76,7 +81,7 @@ run_dataset_commands() {
         --disable-trusted-monitor True
 
     echo "Running Self Rec without SFT - All Monitors..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/base/paraphrased_monitor_config.yaml \
@@ -85,7 +90,7 @@ run_dataset_commands() {
     # Self Rec with SFT
 
     echo "Running Self Rec with SFT - UM Only..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/paraphrased_monitor_config.yaml \
@@ -93,7 +98,7 @@ run_dataset_commands() {
         --disable-trusted-monitor True
 
     echo "Running Self Rec with SFT - All Monitors..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/self_rec/monitors/sft/paraphrased_monitor_config.yaml \
@@ -102,7 +107,7 @@ run_dataset_commands() {
     # Acausal + all paraphrasers
 
     echo "Running Acausal + all mitigations - UM Only..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/paraphrased_monitor_config.yaml \
@@ -110,7 +115,7 @@ run_dataset_commands() {
         --disable-trusted-monitor True
 
     echo "Running Acausal + all paraphrasers - All Monitors..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/acausal/monitors/paraphrased_monitor_config.yaml \
@@ -119,7 +124,7 @@ run_dataset_commands() {
     # Causal + all paraphrasers
 
     echo "Running Causal + all mitigations - UM Only..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/paraphrased_monitor_config.yaml \
@@ -127,14 +132,14 @@ run_dataset_commands() {
         --disable-trusted-monitor True
 
     echo "Running Causal + all mitigations - All Monitors..."
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
         --config src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/base_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/minified_monitor_config.yaml \
                  src/lasr_labs_2025_control_project/configs/$dataset/causal/monitors/paraphrased_monitor_config.yaml \
         --grouped-path causal_mitigations
 
     echo "Produce Key Figure Plot"
-    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py \
+    uv run src/lasr_labs_2025_control_project/scripts/plot_data.py --bootstrap-replicates 0 \
   --config \
     src/lasr_labs_2025_control_project/configs/apps/causal/monitors/minified_monitor_config.yaml \
     src/lasr_labs_2025_control_project/configs/apps/self_rec/monitors/sft/minified_monitor_config.yaml \

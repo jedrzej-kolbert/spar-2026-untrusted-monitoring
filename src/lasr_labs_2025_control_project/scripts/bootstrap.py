@@ -1,13 +1,12 @@
-"""Bootstrap the full analysis per condition, saving per-replicate data.
+"""Bootstrap the full analysis for many conditions, resumably, saving every replicate.
 
-Supersedes the prototype on the `bootstrapping` branch. For every replicate we
-resample the attack / honeypot / benign dataframes with replacement (rows,
-i.e. whole samples -- preserving the joint dependence structure the stats
-model exists to capture), rebuild the joint ROC model, re-solve the game, and
-persist the complete analysis payload (safety/usefulness sweep, blue/red Nash
-mixed strategies, empirical ROC curves, joint-surface samples) as one JSON
-line, so CI bands and strategy diagnostics can be computed later without
-re-running anything.
+The analyse stage (plot_data.py) already bootstraps each condition it runs
+(`--bootstrap-replicates`); this runner is for large overnight sweeps across
+whole config trees. The replicate logic lives in
+utils/numerical_pipeline/bootstrap.py: each replicate's complete analysis
+payload (safety/usefulness sweep, blue/red Nash mixed strategies, empirical ROC
+curves, joint-surface samples) is persisted as one JSON line, so CI bands and
+strategy diagnostics can be computed later without re-running anything.
 
 Conditions are enumerated the same way as the analysis driver: from monitor
 configs whose output triples exist on disk (see
@@ -36,11 +35,6 @@ import time
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
-
-import numpy as np
-import pandas as pd
-from joblib import Parallel, delayed
 
 from lasr_labs_2025_control_project.scripts.helpers.list_runnable_monitor_configs import (
     runnable_configs,
@@ -53,22 +47,11 @@ from lasr_labs_2025_control_project.utils.config_loader import (
     load_and_normalize_config,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (
-    build_analysis_payload,
-    build_optimization_config,
-    optimize_parameters,
+    PAPER_GAME_PARAMETERS,
+    run_replicates,
 )
 
 logger = logging.getLogger(__name__)
-
-# Paper game parameters -- keep in lockstep with plot_data.run_single_config.
-NUM_TASKS = 5000
-SLACK_HONEYPOTS = 5.0
-BLUE_TEAM_BUDGET_FRACTION = 0.02
-
-# Per-replicate payload size knobs: no optimizer history, coarser surface grid
-# than the point estimate (31x21 instead of 61x41).
-SURFACE_T_POINTS = 31
-SURFACE_F_POINTS = 21
 
 
 def _git_commit() -> str:
@@ -78,79 +61,6 @@ def _git_commit() -> str:
         ).stdout.strip()
     except Exception:
         return "unknown"
-
-
-def run_single_replicate(
-    replicate: int,
-    *,
-    condition_seed: int,
-    attacks_df: pd.DataFrame,
-    honeypots_df: pd.DataFrame,
-    benign_df: pd.DataFrame,
-    disable_trusted_monitor: bool,
-    disable_untrusted_monitor: bool,
-) -> Dict[str, Any]:
-    """Resample, re-fit, re-solve; return the analysis payload for one replicate.
-
-    A failed replicate (e.g. a degenerate resample making the LP solver choke,
-    observed as "HiGHS Status 4: Solve error") is recorded as an error row
-    rather than killing the whole overnight run; downstream analysis filters
-    on the presence of "sweep" and can report the failure rate from "error".
-    """
-    try:
-        return _run_single_replicate_inner(
-            replicate,
-            condition_seed=condition_seed,
-            attacks_df=attacks_df,
-            honeypots_df=honeypots_df,
-            benign_df=benign_df,
-            disable_trusted_monitor=disable_trusted_monitor,
-            disable_untrusted_monitor=disable_untrusted_monitor,
-        )
-    except Exception as exc:
-        return {
-            "bootstrap_replicate": replicate,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-
-
-def _run_single_replicate_inner(
-    replicate: int,
-    *,
-    condition_seed: int,
-    attacks_df: pd.DataFrame,
-    honeypots_df: pd.DataFrame,
-    benign_df: pd.DataFrame,
-    disable_trusted_monitor: bool,
-    disable_untrusted_monitor: bool,
-) -> Dict[str, Any]:
-    seeds = np.random.SeedSequence([condition_seed, replicate]).generate_state(3)
-    config = build_optimization_config(
-        num_tasks=NUM_TASKS,
-        blue_team_budget_fraction=BLUE_TEAM_BUDGET_FRACTION,
-        blue_team_replace_fnr=0.0,
-        attacks_df=attacks_df.sample(
-            len(attacks_df), replace=True, random_state=int(seeds[0])
-        ),
-        honeypots_df=honeypots_df.sample(
-            len(honeypots_df), replace=True, random_state=int(seeds[1])
-        ),
-        benign_df=benign_df.sample(
-            len(benign_df), replace=True, random_state=int(seeds[2])
-        ),
-        slack_honeypots=SLACK_HONEYPOTS,
-        disable_trusted_monitor=disable_trusted_monitor,
-        disable_untrusted_monitor=disable_untrusted_monitor,
-    )
-    result = optimize_parameters(base_config=config, max_iterations=100)
-    payload = build_analysis_payload(
-        result,
-        include_history=False,
-        joint_t_points=SURFACE_T_POINTS,
-        joint_f_points=SURFACE_F_POINTS,
-    )
-    payload["bootstrap_replicate"] = replicate
-    return payload
 
 
 def _existing_replicates(path: Path) -> int:
@@ -202,11 +112,7 @@ def bootstrap_condition(
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "replicates_target": replicates,
         "condition_seed": condition_seed,
-        "game_parameters": {
-            "num_tasks": NUM_TASKS,
-            "slack_honeypots": SLACK_HONEYPOTS,
-            "blue_team_budget_fraction": BLUE_TEAM_BUDGET_FRACTION,
-        },
+        "game_parameters": dict(PAPER_GAME_PARAMETERS),
         "sample_counts": {
             "attacks": len(attacks_df),
             "honeypots": len(honeypots_df),
@@ -220,17 +126,15 @@ def bootstrap_condition(
     start = time.time()
     for chunk_start in range(done, replicates, chunk_size):
         chunk = range(chunk_start, min(chunk_start + chunk_size, replicates))
-        payloads = Parallel(n_jobs=n_jobs)(
-            delayed(run_single_replicate)(
-                r,
-                condition_seed=condition_seed,
-                attacks_df=attacks_df,
-                honeypots_df=honeypots_df,
-                benign_df=benign_df,
-                disable_trusted_monitor=disable_tm,
-                disable_untrusted_monitor=disable_um,
-            )
-            for r in chunk
+        payloads = run_replicates(
+            chunk,
+            n_jobs=n_jobs,
+            condition_seed=condition_seed,
+            attacks_df=attacks_df,
+            honeypots_df=honeypots_df,
+            benign_df=benign_df,
+            disable_trusted_monitor=disable_tm,
+            disable_untrusted_monitor=disable_um,
         )
         # Appending opens a new gzip member; readers see one continuous stream.
         failed = [p["bootstrap_replicate"] for p in payloads if "error" in p]

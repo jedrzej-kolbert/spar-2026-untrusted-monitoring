@@ -36,6 +36,9 @@ notebooks/
 
 mlruns/
 cache/
+# W&B local run data (synced to wandb.ai) and downloaded wandb: input artifacts
+wandb/
+artifacts/
 
 # Agent instructions (local, not part of the project)
 CLAUDE.md

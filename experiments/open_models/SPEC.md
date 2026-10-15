@@ -152,8 +152,8 @@ the resulting checkpoint as the untrusted collusion monitor. The open-weights
 analogue LoRA-finetunes U on Tinker:
 
 - **`finetuning/tinker_lora_finetune.py`** — LoRA-finetunes U (default
-  `Qwen/Qwen3-30B-A3B-Instruct-2507`; **U, not the small T**) from the prepared
-  chat JSONL that `finetuning/binary_tuning` already emits. It masks the loss to
+  `Qwen/Qwen3-30B-A3B-Instruct-2507`; **U, not the small T**) on chat examples
+  it prepares from the training `.eval` logs (`finetuning/sft_data.py`). It masks the loss to
   the assistant answer tokens (prompt not trained), tokenises exactly as
   inference does (`tinker_provider`, thinking disabled), then
   `save_weights_for_sampler()` and prints the `tinker://…` checkpoint path.
@@ -195,43 +195,18 @@ the `self_rec_honest` / `self_rec_permuted` label-control arms -- their closed
 counterparts carry a `-honest` suffix and `permute_labels.py` still points at
 that data.
 
-End-to-end SFT reproduction (all generation steps need Docker):
-1. `generate_solutions_inspect.py` on the **train** split (`odd_train`) for U and
-   the other author models → the separate training generations.
-1b. `transform_solutions_inspect.py` on the `*_config_train.yaml` transform pair
-   → the minified / paraphrased training solutions. Skip this and only the
-   `none`-strategy checkpoint can be trained.
-2. `finetuning/binary_tuning/transform_logs_to_raw.sh` (with `--transformed` for
-   the minified/paraphrased arms) + `transform_raw_to_prepared.sh` →
-   `train_messages.jsonl` (reused unchanged;
-   label-ablation variants via `randomise_labels.py` / `permute_labels.py`).
-3. `python -m lasr_labs_2025_control_project.finetuning.tinker_lora_finetune
-   --train-jsonl <…/train_messages.jsonl> --out-path-file ckpt.txt` → checkpoint.
-4. Collect the checkpoints into `ckpts.json` (`{"<arm>": "tinker://…", …}`) and
-   re-run `experiments/open_models/make_configs.py --model-class open
-   --checkpoints ckpts.json`, which bakes them into the `*_sft` monitor configs;
-   then run `monitor_solutions_inspect.py` as in the prompted track.
+The end-to-end SFT run order is in the top-level README.md.
 
 Verified: the trainer runs on U live (forward_backward/optim_step reduce the
 loss, `save_weights_for_sampler` + sampling round-trip succeed); the data
 adapter (shift + answer-only mask) and checkpoint routing are unit-tested. Not
 yet run on real training data (needs the Docker generations from step 1).
 
-## Running (not done here — needs Docker)
+## Running
 
-The APPS/BigCodeBench scorers execute generated code in a Docker sandbox
-(`SandboxEnvironmentSpec(type="docker")`), which the CPU-only dev box lacks. On
-a Docker-capable machine, with `TINKER_API_KEY` set:
-
-```bash
-python -m lasr_labs_2025_control_project.scripts.generate_solutions_inspect \
-  --config src/lasr_labs_2025_control_project/configs/apps_open/acausal/generator/generator_config.yaml
-python -m lasr_labs_2025_control_project.scripts.monitor_solutions_inspect \
-  --config src/lasr_labs_2025_control_project/configs/apps_open/acausal/monitors/base_monitor_config.yaml
-```
-
-Pilot with a small `limit` first, confirm YES/NO logprobs are non-NaN and the
-honest-vs-attack separation is sane, then launch the full sweep.
+See the top-level README.md. Pilot with a small `limit` first, confirm YES/NO
+logprobs are non-NaN and the honest-vs-attack separation is sane, then launch
+the full sweep.
 
 ### Operational notes from the APPS run
 
