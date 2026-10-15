@@ -217,9 +217,9 @@ call for the same action are identical.
 
 1. **Configs.** BashArena is opt-in and uses the open U, T and H:
    ```
-   python experiments/open_models/make_configs.py --model-class open --settings basharena
+   python experiments/open_models/make_configs.py --model-class open --settings basharena --basharena-limit N
    ```
-   Each generator run takes 5 tasks; pass `--basharena-limit N` for more.
+   Set `N` to the maximum tasks per population/split; omitting the flag defaults to 5.
 2. **Generate** in `basharena_runtime/` (its own environment; see its README), once
    per split. Without `--allow-paid` it only prints the plan.
    ```
