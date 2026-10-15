@@ -10,7 +10,9 @@ folder. With several configs, the local figures compare them on shared axes.
 Each condition is one W&B run. Curves are logged as raw numbers for W&B's own
 panels: each point is logged with its x-axis as a second metric
 (`StageRun.define_curve`; metric meanings are in the README's Results
-section). The per-condition figures are also logged as images, for plots W&B
+section). Equilibrium strategies go in their own `strategy/` panel section,
+one metric per strategy variable, so new variables appear without code
+changes. The per-condition figures are also logged as images, for plots W&B
 doesn't draw by default. The analysis files are logged as an artifact.
 """
 
@@ -104,15 +106,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Aggregate results keyed by experiment_name
+    # Aggregate results (and bootstrap replicates) keyed by experiment_name
     aggregated: dict[str, OptimizationResult] = {}
+    bootstraps: dict[str, list[dict[str, Any]]] = {}
 
     for cfg in args.config:
         cfg_path = Path(cfg)
         normalized = load_and_normalize_config(cfg_path, config_type="monitor")
         if args.disable_trusted_monitor:
             normalized.defaults["disable_trusted_monitor"] = True
-        aggregated[normalized.experiment_name] = analyse_condition(
+        (
+            aggregated[normalized.experiment_name],
+            bootstraps[normalized.experiment_name],
+        ) = analyse_condition(
             normalized,
             cfg_path,
             replicates=args.bootstrap_replicates,
@@ -136,7 +142,7 @@ def main() -> None:
                 / f"results/grouped/all_monitors/{args.grouped_path}"
             )
     logger.info("Generating visualizations across %d experiments", len(aggregated))
-    plot_data(aggregated, destination_folder=dest_folder)
+    plot_data(aggregated, destination_folder=dest_folder, bootstrap=bootstraps)
     logger.info("Visualizations saved to %s", dest_folder)
 
 
@@ -169,8 +175,11 @@ def analyse_condition(
     ci: float = 0.80,
     n_jobs: int = -1,
     allow_unlinked: bool = False,
-) -> OptimizationResult:
-    """Solve, bootstrap and log one condition; returns the primary variant's result."""
+) -> tuple[OptimizationResult, list[dict[str, Any]]]:
+    """Solve, bootstrap and log one condition.
+
+    Returns the primary variant's result and its bootstrap replicates.
+    """
     raw = load_raw_config(cfg_path)
     runs = {run.label: run for run in normalized.runs}
     labels = (RunLabel.ATTACKS, RunLabel.HONEYPOTS, RunLabel.HONEST)
@@ -201,6 +210,7 @@ def analyse_condition(
         allow_unlinked=allow_unlinked,
     )
     primary: OptimizationResult | None = None
+    primary_reps: list[dict[str, Any]] = []
     with tracker, tempfile.TemporaryDirectory() as tmp:
         files: list[Path] = []
         out_dir = results_folder or Path(tmp)
@@ -240,13 +250,19 @@ def analyse_condition(
                     f.writelines(json.dumps(r) + "\n" for r in reps)
                 files.append(path)
             log_variant(tracker, variant, payload, reps, ci)
+            log_strategies(tracker, variant, payload)
             if index == 0:
-                primary = result
+                primary, primary_reps = result, reps
                 log_payload_overview(tracker, payload)
 
         assert primary is not None
         figures = Path(tmp) / "figures"
-        plot_data({normalized.experiment_name: primary}, figures, file_format="png")
+        plot_data(
+            {normalized.experiment_name: primary},
+            figures,
+            file_format="png",
+            bootstrap={normalized.experiment_name: primary_reps},
+        )
         for image in sorted(figures.glob("*.png")):
             tracker.log_image(f"figures/{image.stem}", image)
         tracker.log_artifact(
@@ -254,7 +270,7 @@ def analyse_condition(
             type="analysis",
             metadata={"variants": [v[0] for v in variants]},
         )
-    return primary
+    return primary, primary_reps
 
 
 def log_variant(
@@ -301,6 +317,41 @@ def log_variant(
         summary[f"{variant}/bootstrap_failed"] = sum("error" in r for r in replicates)
     summary[f"{variant}/converged"] = payload.get("converged")
     tracker.summary(summary)
+
+
+def log_strategies(tracker: StageRun, variant: str, payload: dict[str, Any]) -> None:
+    """Equilibrium strategies across the sweep, in the `strategy/` panel section.
+
+    Each strategy variable is logged under its game-parameter name, taken
+    from `best_parameters`: blue's most likely pure strategy and red's best
+    response to blue's mix (what safety is computed against). Alongside them,
+    how mixed each team's Nash strategy is.
+    """
+    prefix = f"strategy/{variant}"
+    x = f"{prefix}/usefulness"
+    points = []
+    for entry in sorted(payload["sweep"], key=lambda e: e["usefulness"]):
+        blue_mix = entry.get("blue_mixed_strategy") or []
+        point = {
+            **{
+                f"{prefix}/{name}": value
+                for name, value in (entry.get("best_parameters") or {}).items()
+            },
+            f"{prefix}/blue_top_probability": max(
+                (prob for _, prob in blue_mix), default=None
+            ),
+            f"{prefix}/blue_support_size": len(blue_mix),
+            f"{prefix}/red_nash_support_size": len(
+                entry.get("red_mixed_strategy") or []
+            ),
+        }
+        points.append(
+            (entry["usefulness"], {k: v for k, v in point.items() if v is not None})
+        )
+    for key in dict.fromkeys(k for _, point in points for k in point):
+        tracker.define_curve(key, x)
+    for usefulness, point in points:
+        tracker.log({x: usefulness, **point})
 
 
 def log_payload_overview(tracker: StageRun, payload: dict[str, Any]) -> None:
