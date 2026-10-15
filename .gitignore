@@ -28,6 +28,9 @@ results/
 *.svg
 *.png
 
+# Recorded offline SFT preparation fixture.
+!/tests/data/sft_steps/apps_train.json
+
 notebooks/
 # Experiment data trees (symlinks into the local HF-dataset copy) are ignored;
 # experiments/open_models holds tracked code (the config-generator spec).
