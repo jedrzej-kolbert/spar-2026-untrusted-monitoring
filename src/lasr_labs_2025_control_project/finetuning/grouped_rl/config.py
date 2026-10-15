@@ -67,8 +67,7 @@ class RewardSettings(_Strict):
     # hipt reward
     stego_scale: float = Field(default=1.0, ge=0)
     overseer_scale: float = Field(default=1.0, ge=0)
-    overseer_threshold: float = Field(default=0.5, gt=0, lt=1)
-    hipt_gate_on_pass: bool = False
+    overseer_log_odds_threshold: float = Field(default=0.75, allow_inf_nan=False)
     # penalties
     failed_backdoor_weight: float = Field(default=0.0, ge=0)
     backdoor_suspicion_weight: float = Field(default=0.0, ge=0)
