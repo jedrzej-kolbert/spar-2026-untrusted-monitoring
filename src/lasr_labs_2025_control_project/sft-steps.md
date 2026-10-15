@@ -15,6 +15,39 @@ Save their model strings. Make sure you select models that are sampleable.
 
 Configure the Tinker API key in the .env file.
 
+## BashArena generated configs
+
+For the BashArena steps below, generate configs with:
+
+```bash
+python experiments/open_models/make_configs.py --model-class open --settings basharena --basharena-limit N
+```
+
+Set `N` to the maximum tasks per population/split; omitting the flag defaults to 5.
+Generate once per split in the isolated runtime:
+
+```bash
+cd basharena_runtime
+uv run --frozen python -m basharena_runtime.generate --allow-paid \
+  --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/train_generator_config.yaml \
+  --output ../experiments/open-source-model/basharena/self_rec/generator/train
+uv run --frozen python -m basharena_runtime.generate --allow-paid \
+  --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/base_generator_config.yaml \
+  --output ../experiments/open-source-model/basharena/self_rec/generator/test
+cd ..
+```
+
+Without `--allow-paid`, these commands only print the plan. Use
+`experiments/open-source-model/basharena/self_rec/generator` as `<eval_logs_dir>`
+for the BashArena preparation steps below. Fine-tune with
+`checkpoint_name=basharena_self_rec_base`, add the checkpoint to
+`experiments/open_models/ckpts.json`, and regenerate configs with the same task limit
+and `--checkpoints experiments/open_models/ckpts.json`.
+
+For monitoring, use
+`configs/basharena_open/self_rec/monitors/sft/base_monitor_config.yaml` (or
+`monitors/base/` before fine-tuning) instead of the inline monitor example below.
+
 ## Configs
 
 Before making your config files, open `experiments/open_models/make_configs.py` to line 142:
