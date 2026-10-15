@@ -27,6 +27,9 @@ from inspect_ai.solver import (
 )
 from inspect_ai.util import store
 
+from lasr_labs_2025_control_project.scripts.helpers.eval_status import (
+    finished_successfully,
+)
 from lasr_labs_2025_control_project.scripts.helpers.eval_to_dataset import (
     eval_to_dataset,
 )
@@ -469,7 +472,21 @@ def monitor_solutions(
 
 @click.command()
 @click.option("--config", type=str, required=True)
-def main(config: str):
+@click.option(
+    "--skip-existing",
+    is_flag=True,
+    help="Skip runs whose save_path already holds a successful log, so an "
+    "interrupted config resumes without redoing finished runs.",
+)
+@click.option(
+    "--max-connections",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Max parallel samples: caps both API connections and Docker sandboxes. "
+    "Raise it on a machine with spare RAM; each sandbox may use up to 0.5 GB.",
+)
+def main(config: str, skip_existing: bool, max_connections: int):
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -484,10 +501,14 @@ def main(config: str):
         assert isinstance(run, MonitorRunConfig), (
             "Run is not a MonitorRunConfig, make sure to use the correct config"
         )
+        if skip_existing and finished_successfully(run.save_path):
+            print(f"Skipping run, {run.save_path} already finished")
+            continue
         result = eval(
             tasks=monitor_solutions(run),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
+            # Cap parallel API/Docker work; total example count is unchanged.
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             limit=run.limit,

@@ -1009,12 +1009,18 @@ def experiment_folder(model_class: str, setting: str, experiment: str) -> str:
 
 
 def build_generator(
-    spec: Generator, models: ModelResolver, setting: str, max_tokens: int | None
+    spec: Generator,
+    models: ModelResolver,
+    setting: str,
+    max_tokens: int | None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     defaults: dict[str, Any] = {"data_split": spec.data_split}
     defaults.update(spec.extra_defaults)
     if max_tokens is not None:
         defaults["max_tokens"] = max_tokens
+    if limit is not None:
+        defaults["limit"] = limit
     runs = {
         run.label: {
             "eval_mode": run.eval_mode,
@@ -1188,6 +1194,7 @@ def generate_setting(
     models: ModelResolver,
     max_tokens: int | None,
     basharena_limit: int = DEFAULT_BASHARENA_LIMIT,
+    limit: int | None = None,
 ) -> tuple[list[Path], list[Path]]:
     """Write one (model_class, setting) tree. Returns (written, pruned) paths."""
     if setting == "basharena":
@@ -1199,7 +1206,7 @@ def generate_setting(
     root = target_dir(model_class, setting)
     documents: dict[str, dict[str, Any]] = {}
     for gen in spec.generators:
-        document = build_generator(gen, models, setting, max_tokens)
+        document = build_generator(gen, models, setting, max_tokens, limit)
         if setting == "basharena":
             document["defaults"]["limit"] = basharena_limit
         documents[gen.path] = document
@@ -1310,6 +1317,23 @@ def main() -> None:
         default=DEFAULT_BASHARENA_LIMIT,
         help="BashArena native samples per population/split (default: 5)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="dry run: cap every generator run at the first N problems "
+        "(transforms and monitors follow the generated .eval files). "
+        "Re-run without it to restore full-size configs.",
+    )
+    for role, desc in (("U", "untrusted"), ("T", "trusted"), ("H", "honeypot")):
+        parser.add_argument(
+            f"--{role}",
+            dest=role,
+            default=None,
+            metavar="MODEL",
+            help=f"override the OPEN {desc} model ({role}); the tinker/ prefix is "
+            f"optional (default: {ROLE_MODELS['open'][role]})",
+        )
     args = parser.parse_args()
     settings = args.settings or DEFAULT_SETTINGS
     if "basharena" in settings:
@@ -1318,7 +1342,24 @@ def main() -> None:
         if args.basharena_limit < 1 or args.max_tokens < 1:
             parser.error("BashArena limit and max-tokens must be positive")
 
+    overrides = {r: getattr(args, r) for r in ("U", "T", "H") if getattr(args, r)}
+    if overrides:
+        if "closed" in args.model_class:
+            parser.error(
+                "--U/--T/--H only apply to open models; pass --model-class open"
+            )
+        for role, model in overrides.items():
+            ROLE_MODELS["open"][role] = (
+                model if model.startswith("tinker/") else f"tinker/{model}"
+            )
+
     checkpoints = load_checkpoints(args.checkpoints)
+
+    if "open" in args.model_class:
+        # The overrides are per-invocation, so a re-run without them silently
+        # reverts to ROLE_MODELS -- always show which models went into the tree.
+        roles = ", ".join(f"{r}={m}" for r, m in ROLE_MODELS["open"].items())
+        print(f"open roles: {roles}")
 
     pending: set[str] = set()
     for model_class in args.model_class:
@@ -1330,6 +1371,7 @@ def main() -> None:
                 models,
                 args.max_tokens if model_class == "open" else None,
                 args.basharena_limit,
+                args.limit,
             )
             root = target_dir(model_class, setting).relative_to(REPO_ROOT)
             print(f"{model_class:>6}  {root}: {len(written)} files")

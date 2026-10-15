@@ -26,6 +26,9 @@ from inspect_ai.solver import (
 )
 from inspect_ai.util import store
 
+from lasr_labs_2025_control_project.scripts.helpers.eval_status import (
+    finished_successfully,
+)
 from lasr_labs_2025_control_project.scripts.helpers.eval_to_dataset import (
     eval_to_dataset,
 )
@@ -221,7 +224,13 @@ def transform_solutions(
 
 @click.command()
 @click.option("--config", type=str, required=True)
-def main(config: str):
+@click.option(
+    "--skip-existing",
+    is_flag=True,
+    help="Skip runs whose save_path already holds a successful log, so an "
+    "interrupted config resumes without redoing finished runs.",
+)
+def main(config: str, skip_existing: bool):
     load_dotenv()
     config_path = Path(config)
     normalized = load_and_normalize_config(config, config_type="transform")
@@ -234,6 +243,9 @@ def main(config: str):
         assert isinstance(run, TransformRunConfig), (
             "Run is not a TransformRunConfig, make sure to use the correct config"
         )
+        if skip_existing and finished_successfully(run.save_path):
+            print(f"Skipping run, {run.save_path} already finished")
+            continue
         result = eval(
             tasks=transform_solutions(run),
             epochs=Epochs(1, ["pass_at_1"]),
