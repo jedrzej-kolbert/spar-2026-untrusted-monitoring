@@ -8,8 +8,7 @@ import numpy as np
 import pandas as pd
 
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers import (
-    double_oracle,  # noqa: F401
-    stackelberg_equilibrium,  # noqa: F401
+    double_oracle,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline.roc_function_builders import (
     DoubleROCFunctionType,
