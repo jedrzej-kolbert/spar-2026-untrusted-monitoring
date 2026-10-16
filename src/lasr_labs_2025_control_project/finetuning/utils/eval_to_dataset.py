@@ -40,14 +40,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def apply_python_code_format(x: str) -> str:
-    """Format code with python markdown blocks if not already formatted."""
-    x = x.strip()
-    if not x.startswith("```python"):
-        return f"```python\n{x}\n```"
-    return x
-
-
 def process_eval_log(
     data_path: str | Path,
     model_name: str,
