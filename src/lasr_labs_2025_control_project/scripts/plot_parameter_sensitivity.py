@@ -1,16 +1,23 @@
+"""One-at-a-time sensitivity of a saved condition to the fixed game parameters.
+
+Re-solves the condition from the monitor outputs, game parameters and variant
+its analyse step recorded, then sweeps each game parameter:
+
+    python -m lasr_labs_2025_control_project.scripts.plot_parameter_sensitivity \
+        experiments/apps/analyse/<condition>-<hash> [--variant um_only]
+"""
+
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
 
 from lasr_labs_2025_control_project.scripts.plot_data import (
-    build_jsonl_dataframe_from_eval_log,
-)
-from lasr_labs_2025_control_project.utils.config_loader import (
-    RunLabel,
-    load_and_normalize_config,
+    VARIANT_FLAGS,
+    load_condition,
+    load_saved_condition,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (
+    PAPER_GAME_PARAMETERS,
     build_optimization_config,
     plot_parameter_sensitivity,
     run_parameter_sensitivity_analysis,
@@ -27,16 +34,12 @@ def main() -> None:
             "sweeps, and render sensitivity plots for the specified config."
         ),
     )
+    parser.add_argument("folder", type=Path, help="an analyse output folder")
     parser.add_argument(
-        "--config",
-        "-cfg",
-        required=True,
-        help="Path to YAML config produced for eval_analysis",
-    )
-    parser.add_argument(
-        "--disable-trusted-monitor",
-        default=False,
-        help="Disable the trusted monitor in optimization",
+        "--variant",
+        default=None,
+        choices=sorted(VARIANT_FLAGS),
+        help="analysis variant (default: the folder's primary one)",
     )
     parser.add_argument(
         "--variation-points",
@@ -46,46 +49,25 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        help=(
-            "Optional destination directory. Defaults to the config's "
-            "plots_destination_folder/parameter_sensitivity/<experiment_name>."
-        ),
+        type=Path,
+        help="Default: <folder>/parameter_sensitivity/<variant>",
     )
     args = parser.parse_args()
 
-    cfg_path = Path(args.config)
-    normalized = load_and_normalize_config(cfg_path)
-    if args.disable_trusted_monitor:
-        normalized.defaults["disable_trusted_monitor"] = True
-    defaults: dict[str, Any] = normalized.defaults or {}
-    experiment_name = normalized.experiment_name
-
-    dest_folder = (
-        normalized.results_folder or "src/lasr_labs_2025_control_project/results"
+    record = load_saved_condition(args.folder, args.variant)["pipeline"]
+    variant = record["variant"]
+    destination = args.output_dir or args.folder / "parameter_sensitivity" / variant
+    frames = load_condition({k: Path(v) for k, v in record["inputs"].items()})
+    attacks_df, honeypots_df, benign_df = (
+        frames["attacks"],
+        frames["honeypots"],
+        frames["honest"],
     )
-    destination = dest_folder / "parameter_sensitivity" / experiment_name
-
-    runs = {run.label: run for run in normalized.runs}
-
-    attacks_result_eval = runs[RunLabel.ATTACKS].save_path
-    honeypots_result_eval = runs[RunLabel.HONEYPOTS].save_path
-    benign_result_eval = runs[RunLabel.HONEST].save_path
-
-    required_labels = {RunLabel.ATTACKS, RunLabel.HONEYPOTS, RunLabel.HONEST}
-    missing = required_labels - set(runs.keys())
-    if missing:
-        raise ValueError(
-            "Config must contain runs labelled 'attacks', 'honeypots', and 'honest' for sensitivity analysis. "
-            f"Missing: {sorted(str(label) for label in missing)}"
-        )
-
-    attacks_df = build_jsonl_dataframe_from_eval_log(attacks_result_eval)
-    honeypots_df = build_jsonl_dataframe_from_eval_log(honeypots_result_eval)
-    benign_df = build_jsonl_dataframe_from_eval_log(benign_result_eval)
-
-    num_tasks = int(defaults.get("num_tasks", 5000))
-    blue_team_budget_fraction = float(defaults.get("blue_team_budget_fraction", 0.02))
-    slack_honeypots = float(defaults.get("slack_honeypots", 5.0))
+    disable_trusted_monitor, disable_untrusted_monitor = VARIANT_FLAGS[variant]
+    game = {**PAPER_GAME_PARAMETERS, **record["solve"]["game"]}
+    num_tasks = int(game["num_tasks"])
+    blue_team_budget_fraction = float(game["blue_team_budget_fraction"])
+    slack_honeypots = float(game["slack_honeypots"])
 
     logger.info(
         "Building optimization config (tasks=%s, budget_fraction=%.4f)",
@@ -100,8 +82,9 @@ def main() -> None:
         attacks_df=attacks_df,
         honeypots_df=honeypots_df,
         benign_df=benign_df,
-        disable_trusted_monitor=defaults.get("disable_trusted_monitor", False),
-        disable_untrusted_monitor=defaults.get("disable_untrusted_monitor", False),
+        human_audit_success_rate=float(game.get("human_audit_success_rate", 1.0)),
+        disable_trusted_monitor=disable_trusted_monitor,
+        disable_untrusted_monitor=disable_untrusted_monitor,
     )
 
     logger.info(
@@ -111,7 +94,7 @@ def main() -> None:
     sensitivity_results = run_parameter_sensitivity_analysis(
         base_config=base_config,
         variation_points=args.variation_points,
-        max_iterations=100,
+        max_iterations=record["solve"]["max_iterations"],
     )
 
     logger.info("Rendering sensitivity plots to %s", destination)

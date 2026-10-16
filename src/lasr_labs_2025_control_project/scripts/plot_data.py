@@ -1,46 +1,45 @@
-"""Analyse stage: solve the game for each condition and plot the results.
+"""Analyse stage: solve the game for one condition, bootstrap it, log and plot it.
 
-For each monitor config (one condition) this reads the attacks / honeypots /
-honest monitor outputs, solves the game for each monitor variant (all monitors
-and untrusted-monitor-only, or just the variant the config/flags select),
-bootstraps each variant (`--bootstrap-replicates`, 0 to skip), and writes
-`analysis_data*.json.gz` / `bootstrap_*.jsonl.gz` to the config's results
-folder. With several configs, the local figures compare them on shared axes.
+The pipeline (``lasr_labs_2025_control_project.pipeline``) calls
+``analyse_condition`` once per condition (collusion strategy x transform x
+monitor arm). It reads the attacks / honeypots / honest monitor outputs,
+solves the game for each analysis variant (all monitors, untrusted-monitor
+only, trusted-monitor only), bootstraps each variant, and writes into the
+condition's folder:
+
+    analysis_data[_<variant>].json.gz   the payload (Nash strategies at every
+                                        sweep point, ROC curves, joint surface)
+                                        plus what produced it, under "pipeline"
+    bootstrap_<variant>.jsonl.gz        one replicate payload per line; an
+                                        interrupted bootstrap resumes here
+    figures/                            the primary variant's figures
 
 Each condition is one W&B run. Curves are logged as raw numbers for W&B's own
 panels: each point is logged with its x-axis as a second metric
 (`StageRun.define_curve`; metric meanings are in the README's Results
-section). Equilibrium strategies go in their own `strategy/` panel section,
-one metric per strategy variable, so new variables appear without code
-changes. The per-condition figures are also logged as images, for plots W&B
-doesn't draw by default. The analysis files are logged as an artifact.
+section). The figures are also logged as images, for plots W&B doesn't draw by
+default, and the folder's files as an artifact.
+
+As a script, this compares saved conditions on shared axes (re-solving each
+from the monitor outputs it recorded, with its recorded settings and seed):
+
+    python -m lasr_labs_2025_control_project.scripts.plot_data \
+        experiments/apps/analyse/<condition>-<hash> ... --out figures/ [--variant um_only]
 """
 
 import argparse
 import gzip
 import json
 import logging
-import tempfile
-import zlib
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 from inspect_ai.log import read_eval_log
 
-from lasr_labs_2025_control_project.tracking import (
-    ALLOW_UNLINKED_HELP,
-    StageRun,
-    config_tags,
-    load_raw_config,
-    names,
-    resolve_input,
-)
-from lasr_labs_2025_control_project.utils.config_loader import (
-    ExperimentConfig,
-    RunLabel,
-    load_and_normalize_config,
-)
+from lasr_labs_2025_control_project.tracking import StageRun
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (
     PAPER_GAME_PARAMETERS,
     OptimizationResult,
@@ -52,173 +51,154 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline import (
     run_replicates,
     save_analysis_payload,
 )
+from lasr_labs_2025_control_project.utils.numerical_pipeline.optimization import (
+    OPTIMIZERS,
+)
+from lasr_labs_2025_control_project.utils.numerical_pipeline.results_io import (
+    load_analysis_payload,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BOOTSTRAP_REPLICATES = 2
+LABELS = ("attacks", "honeypots", "honest")
+#: analysis variant -> (disable_trusted_monitor, disable_untrusted_monitor)
+VARIANT_FLAGS = {
+    "all_monitors": (False, False),
+    "um_only": (True, False),
+    "tm_only": (False, True),
+}
+_SCORE_COLUMNS = (
+    "untrusted_collusion_score",
+    "trusted_suspiciousness_score",
+    "untrusted_suspiciousness_score",
+)
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(
-        prog="plot_data",
-        description=(
-            "Solve the game for each monitor config (condition) and generate "
-            "plots/optimization results. Can pass multiple configs with -cfg"
-        ),
-    )
-    parser.add_argument(
-        "--config",
-        "-cfg",
-        nargs="+",
-        required=True,
-        help="Path(s) to monitor YAML config file(s)",
-    )
-    parser.add_argument(
-        "--disable-trusted-monitor",
-        default=False,
-        help="Only analyse the untrusted-monitor-only variant",
-    )
-    parser.add_argument(
-        "--experiment-default",
-        default="exp",
-        help="Fallback experiment name prefix if a config lacks defaults.experiment_name",
-    )
-    parser.add_argument(
-        "--grouped-path",
-        default=None,
-        help="Save visualizations to a 'grouped' subfolder in the results folder",
-    )
-    parser.add_argument(
-        "--bootstrap-replicates",
-        type=int,
-        default=DEFAULT_BOOTSTRAP_REPLICATES,
-        help="Bootstrap replicates per variant (0 to skip)",
-    )
-    parser.add_argument(
-        "--bootstrap-ci", type=float, default=0.80, help="Bootstrap band width"
-    )
-    parser.add_argument(
-        "--n-jobs", type=int, default=-1, help="Parallel bootstrap workers"
-    )
-    parser.add_argument(
-        "--allow-unlinked", action="store_true", help=ALLOW_UNLINKED_HELP
-    )
-    args = parser.parse_args()
+@dataclass
+class SolveSettings:
+    """How one condition's game is solved (optimization section of the config)."""
 
-    # Aggregate results (and bootstrap replicates) keyed by experiment_name
-    aggregated: dict[str, OptimizationResult] = {}
-    bootstraps: dict[str, list[dict[str, Any]]] = {}
+    game: Mapping[str, float] = field(
+        default_factory=lambda: dict(PAPER_GAME_PARAMETERS)
+    )
+    regeneration_cutoffs: Optional[Sequence[float]] = None
+    solver: str = "double_oracle"
+    max_iterations: int = 100
 
-    for cfg in args.config:
-        cfg_path = Path(cfg)
-        normalized = load_and_normalize_config(cfg_path, config_type="monitor")
-        if args.disable_trusted_monitor:
-            normalized.defaults["disable_trusted_monitor"] = True
-        (
-            aggregated[normalized.experiment_name],
-            bootstraps[normalized.experiment_name],
-        ) = analyse_condition(
-            normalized,
-            cfg_path,
-            replicates=args.bootstrap_replicates,
-            ci=args.bootstrap_ci,
-            n_jobs=args.n_jobs,
-            allow_unlinked=args.allow_unlinked,
+
+@dataclass
+class BootstrapSettings:
+    replicates: int = 2
+    ci: float = 0.80
+    n_jobs: int = -1
+    chunk_size: int = 25
+
+
+def payload_path(folder: Path, variant_index: int, variant: str) -> Path:
+    stem = "analysis_data" if variant_index == 0 else f"analysis_data_{variant}"
+    return folder / f"{stem}.json.gz"
+
+
+def bootstrap_path(folder: Path, variant: str) -> Path:
+    return folder / f"bootstrap_{variant}.jsonl.gz"
+
+
+def variant_seeds(seed: int, index: int) -> tuple[int, int]:
+    """(solver seed, bootstrap condition seed) for the index-th variant."""
+    solver_seed, bootstrap_seed = np.random.SeedSequence([seed, index]).generate_state(
+        2
+    )
+    return int(solver_seed), int(bootstrap_seed)
+
+
+def read_replicates(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except (OSError, EOFError, json.JSONDecodeError):
+        logger.warning("Could not read %s (interrupted write?); starting it over", path)
+        path.unlink()
+        return []
+
+
+def bootstrap_variant(
+    path: Path,
+    settings: BootstrapSettings,
+    *,
+    condition_seed: int,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Run (or resume) a variant's bootstrap, appending replicates in chunks."""
+    replicates = read_replicates(path)[: settings.replicates]
+    done = len(replicates)
+    if done:
+        logger.info("%s: resuming at replicate %d", path.name, done)
+    for start in range(done, settings.replicates, settings.chunk_size):
+        chunk = range(start, min(start + settings.chunk_size, settings.replicates))
+        payloads = run_replicates(
+            chunk, n_jobs=settings.n_jobs, condition_seed=condition_seed, **kwargs
         )
-
-    dest_folder = (
-        normalized.results_folder or "src/lasr_labs_2025_control_project/results"
-    )
-    if args.grouped_path:
-        if args.disable_trusted_monitor:
-            dest_folder = (
-                normalized.experiment_folder
-                / f"results/grouped/um_only/{args.grouped_path}"
-            )
-        else:
-            dest_folder = (
-                normalized.experiment_folder
-                / f"results/grouped/all_monitors/{args.grouped_path}"
-            )
-    logger.info("Generating visualizations across %d experiments", len(aggregated))
-    plot_data(aggregated, destination_folder=dest_folder, bootstrap=bootstraps)
-    logger.info("Visualizations saved to %s", dest_folder)
+        failed = [p["bootstrap_replicate"] for p in payloads if "error" in p]
+        if failed:
+            logger.warning("%s: failed replicate(s) %s", path.name, failed)
+        # Appending opens a new gzip member; readers see one continuous stream.
+        with gzip.open(path, "at", encoding="utf-8") as f:
+            f.writelines(json.dumps(p) + "\n" for p in payloads)
+        replicates.extend(payloads)
+    return replicates
 
 
-def analysis_variants(defaults: dict[str, Any]) -> list[tuple[str, bool, bool]]:
-    """(name, disable_trusted_monitor, disable_untrusted_monitor); first is primary."""
-    if defaults.get("disable_untrusted_monitor", False):
-        return [("tm_only", False, True)]
-    if defaults.get("disable_trusted_monitor", False):
-        return [("um_only", True, False)]
-    return [("all_monitors", False, False), ("um_only", True, False)]
-
-
-def analysis_name(normalized: ExperimentConfig, raw: dict[str, Any]) -> str:
-    condition = (raw.get("wandb") or {}).get("condition")
-    if condition:
-        return names.condition_name(
-            condition.get("setting", "unknown"),
-            condition.get("collusion_strategy", "unknown"),
-            condition.get("transform", "unknown"),
-            condition.get("monitor_arm", "unknown"),
+def load_condition(
+    inputs: Mapping[str, Path], min_samples: int = 0
+) -> dict[str, pd.DataFrame]:
+    """The three monitor outputs as dataframes, refusing too-small samples."""
+    frames = {
+        label: build_jsonl_dataframe_from_eval_log(inputs[label]) for label in LABELS
+    }
+    small = {label: len(df) for label, df in frames.items() if len(df) < min_samples}
+    if small:
+        raise ValueError(
+            f"too few usable samples to analyse {small} (minimum {min_samples}, "
+            "measurement.min_samples_per_label); raise the generation limits"
         )
-    return names.fit(names.clean(normalized.experiment_name))
+    return frames
 
 
 def analyse_condition(
-    normalized: ExperimentConfig,
-    cfg_path: Path,
     *,
-    replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
-    ci: float = 0.80,
-    n_jobs: int = -1,
-    allow_unlinked: bool = False,
-) -> tuple[OptimizationResult, list[dict[str, Any]]]:
-    """Solve, bootstrap and log one condition.
+    name: str,
+    inputs: Mapping[str, Path],
+    variants: Sequence[str],
+    solve: SolveSettings,
+    bootstrap: BootstrapSettings,
+    seed: int,
+    out_dir: Path,
+    tracker: StageRun,
+    record: Optional[Mapping[str, Any]] = None,
+    min_samples: int = 0,
+) -> OptimizationResult:
+    """Solve, bootstrap, save and log one condition; returns the primary result.
 
-    Returns the primary variant's result and its bootstrap replicates.
+    ``record`` is stored in every payload under "pipeline" (with the inputs,
+    settings and seeds), so a saved condition says what produced it.
     """
-    raw = load_raw_config(cfg_path)
-    runs = {run.label: run for run in normalized.runs}
-    labels = (RunLabel.ATTACKS, RunLabel.HONEYPOTS, RunLabel.HONEST)
-    inputs = {label: resolve_input(runs[label].save_path) for label in labels}
-    attacks_df, honeypots_df, benign_df = (
-        build_jsonl_dataframe_from_eval_log(inputs[label].local_path)
-        for label in labels
-    )
-    variants = analysis_variants(normalized.defaults)
-    name = analysis_name(normalized, raw)
-    results_folder = (
-        Path(normalized.results_folder) if normalized.results_folder else None
-    )
-
-    tracker = StageRun(
-        "analyse",
-        name,
-        config={
-            "config_file": str(cfg_path),
-            "yaml": raw,
-            "game_parameters": PAPER_GAME_PARAMETERS,
-            "variants": [v[0] for v in variants],
-            "bootstrap_replicates": replicates,
-            "bootstrap_ci": ci,
-        },
-        tags=["analyse", *config_tags(raw)],
-        inputs=list(inputs.values()),
-        allow_unlinked=allow_unlinked,
-    )
-    primary: OptimizationResult | None = None
+    frames = load_condition(inputs, min_samples)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    primary: Optional[OptimizationResult] = None
     primary_reps: list[dict[str, Any]] = []
-    with tracker, tempfile.TemporaryDirectory() as tmp:
+    with tracker:
         files: list[Path] = []
-        out_dir = results_folder or Path(tmp)
-        for index, (variant, disable_tm, disable_um) in enumerate(variants):
+        for index, variant in enumerate(variants):
+            disable_tm, disable_um = VARIANT_FLAGS[variant]
+            solver_seed, bootstrap_seed = variant_seeds(seed, index)
             result = solve_condition(
-                attacks_df,
-                honeypots_df,
-                benign_df,
+                frames["attacks"],
+                frames["honeypots"],
+                frames["honest"],
+                settings=solve,
+                seed=solver_seed,
                 disable_trusted_monitor=disable_tm,
                 disable_untrusted_monitor=disable_um,
             )
@@ -226,51 +206,64 @@ def analyse_condition(
             # point, empirical ROC curves, joint surface samples) next to the
             # plots, so figures can be regenerated without re-optimizing.
             payload = build_analysis_payload(result, include_history=index == 0)
-            stem = "analysis_data" if index == 0 else f"analysis_data_{variant}"
-            files.append(save_analysis_payload(payload, out_dir / f"{stem}.json.gz"))
+            payload["pipeline"] = {
+                **(record or {}),
+                "name": name,
+                "variant": variant,
+                "inputs": {label: str(path) for label, path in inputs.items()},
+                "solve": asdict(solve),
+                "solver_seed": solver_seed,
+                "bootstrap_seed": bootstrap_seed,
+            }
+            files.append(
+                save_analysis_payload(payload, payload_path(out_dir, index, variant))
+            )
             logger.info("Analysis data saved to %s", files[-1])
 
             reps: list[dict[str, Any]] = []
-            if replicates > 0:
+            if bootstrap.replicates > 0:
                 logger.info(
-                    "[%s/%s] bootstrapping %d replicates", name, variant, replicates
+                    "[%s/%s] bootstrapping %d replicates",
+                    name,
+                    variant,
+                    bootstrap.replicates,
                 )
-                reps = run_replicates(
-                    range(replicates),
-                    n_jobs=n_jobs,
-                    condition_seed=zlib.crc32(f"{name}/{variant}".encode("utf-8")),
-                    attacks_df=attacks_df,
-                    honeypots_df=honeypots_df,
-                    benign_df=benign_df,
+                reps = bootstrap_variant(
+                    bootstrap_path(out_dir, variant),
+                    bootstrap,
+                    condition_seed=bootstrap_seed,
+                    attacks_df=frames["attacks"],
+                    honeypots_df=frames["honeypots"],
+                    benign_df=frames["honest"],
                     disable_trusted_monitor=disable_tm,
                     disable_untrusted_monitor=disable_um,
+                    game=dict(solve.game),
+                    regeneration_cutoffs=solve.regeneration_cutoffs,
+                    optimizer=OPTIMIZERS[solve.solver],
+                    max_iterations=solve.max_iterations,
                 )
-                path = out_dir / f"bootstrap_{variant}.jsonl.gz"
-                with gzip.open(path, "wt", encoding="utf-8") as f:
-                    f.writelines(json.dumps(r) + "\n" for r in reps)
-                files.append(path)
-            log_variant(tracker, variant, payload, reps, ci)
+                files.append(bootstrap_path(out_dir, variant))
+            log_variant(tracker, variant, payload, reps, bootstrap.ci)
             log_strategies(tracker, variant, payload)
             if index == 0:
                 primary, primary_reps = result, reps
                 log_payload_overview(tracker, payload)
 
         assert primary is not None
-        figures = Path(tmp) / "figures"
+        figures = out_dir / "figures"
         plot_data(
-            {normalized.experiment_name: primary},
+            {name: primary},
             figures,
             file_format="png",
-            bootstrap={normalized.experiment_name: primary_reps},
+            bootstrap={name: primary_reps},
         )
         for image in sorted(figures.glob("*.png")):
             tracker.log_image(f"figures/{image.stem}", image)
         tracker.log_artifact(
-            files,
-            type="analysis",
-            metadata={"variants": [v[0] for v in variants]},
+            files, type="analysis", metadata={"variants": list(variants)}
         )
-    return primary, primary_reps
+        tracker.finish(complete=True)
+    return primary
 
 
 def log_variant(
@@ -392,26 +385,22 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
     final_samples = []
     for sample in log.samples:
         metadata = {**sample.metadata, **sample.store}
-        final_samples.append(
-            {
-                "sample_id": sample.id,
-                "problem": metadata["main_task_description"],
-                "solution": metadata["base_solution"],
-                "untrusted_collusion_score": metadata["untrusted_collusion_score"],
-                "trusted_suspiciousness_score": metadata[
-                    "trusted_suspiciousness_score"
-                ],
-                "untrusted_suspiciousness_score": metadata[
-                    "untrusted_suspiciousness_score"
-                ],
-                "collusion_monitor_system_prompt": metadata[
-                    "untrusted_collusion_score_metadata"
-                ]["model_info"]["system_prompt"],
-                "collusion_monitor_user_prompt": metadata[
-                    "untrusted_collusion_score_metadata"
-                ]["model_info"]["base_prompt"],
-            }
-        )
+        row = {
+            "sample_id": sample.id,
+            "problem": metadata["main_task_description"],
+            "solution": metadata["base_solution"],
+        }
+        # A monitor left out of measurement.monitors leaves its column out.
+        row.update({c: metadata[c] for c in _SCORE_COLUMNS if c in metadata})
+        collusion = metadata.get("untrusted_collusion_score_metadata")
+        if collusion:
+            row["collusion_monitor_system_prompt"] = collusion["model_info"][
+                "system_prompt"
+            ]
+            row["collusion_monitor_user_prompt"] = collusion["model_info"][
+                "base_prompt"
+            ]
+        final_samples.append(row)
         if "trajectory_id" in metadata:
             final_samples[-1]["trajectory_id"] = metadata["trajectory_id"]
             final_samples[-1]["n_actions"] = metadata["n_actions"]
@@ -419,13 +408,6 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
     if "trajectory_id" in df:
         df = _max_over_actions(df, eval_log_path)
     return df
-
-
-_SCORE_COLUMNS = (
-    "untrusted_collusion_score",
-    "trusted_suspiciousness_score",
-    "untrusted_suspiciousness_score",
-)
 
 
 def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
@@ -444,7 +426,8 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
         )
     grouped = df.groupby("trajectory_id", sort=False)
     out = grouped.first().reset_index()
-    for column in _SCORE_COLUMNS:
+    columns = [c for c in _SCORE_COLUMNS if c in df]
+    for column in columns:
         out[column] = grouped[column].max().to_numpy()
         missing = out[column].isna()
         if missing.any():
@@ -456,7 +439,7 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
             )
     out["sample_id"] = out["trajectory_id"]
     out["n_actions_scored"] = counts.loc[out["trajectory_id"]].to_numpy()
-    unscored = out[list(_SCORE_COLUMNS)].isna().all(axis=1)
+    unscored = out[columns].isna().all(axis=1)
     if unscored.any():
         logger.warning(
             "%s: dropping trajectories with no available monitor scores: %s",
@@ -466,80 +449,43 @@ def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
     return out.loc[~unscored].reset_index(drop=True)
 
 
-def plot_ensemble_monitoring(
-    *,
-    attacks_result_eval: Path,
-    honeypots_result_eval: Path,
-    benign_result_eval: Path,
-    num_tasks: int,
-    blue_team_budget_fraction: float,
-    slack_honeypots: float,
-    blue_team_replace_fnr: float,
-    disable_trusted_monitor: bool = False,
-    disable_untrusted_monitor: bool = False,
-) -> OptimizationResult:
-    """Build optimization inputs from both monitors using DataFrames.
-
-    Constructs ROC functions from attack/honeypot/benign data and runs optimization
-    to find the Nash equilibrium defense strategy.
-
-    We treat:
-      - attacks: positive examples for both monitors
-      - honeypots: negative examples for the untrusted (collusion) monitor
-      - benign (formerly 'honest'): negative examples for the trusted monitor
-    Args:
-        attacks_json: Path to attacks JSONL file
-        honeypots_json: Path to honeypots JSONL file
-        benign_json: Path to benign JSONL file
-        num_tasks: Number of tasks in simulation
-        blue_team_budget_fraction: Budget fraction for honeypots + audits
-        slack_honeypots: Number of honeypot failures red team can tolerate
-        blue_team_replace_fnr: Trusted monitor FNR for replacement decisions
-
-    Returns a dict suitable for visualization.plot_data.
-    """
-    logger.info("Loading attacks / honeypots / benign eval logs for monitoring plots")
-    return solve_condition(
-        build_jsonl_dataframe_from_eval_log(attacks_result_eval),
-        build_jsonl_dataframe_from_eval_log(honeypots_result_eval),
-        build_jsonl_dataframe_from_eval_log(benign_result_eval),
-        num_tasks=num_tasks,
-        blue_team_budget_fraction=blue_team_budget_fraction,
-        slack_honeypots=slack_honeypots,
-        blue_team_replace_fnr=blue_team_replace_fnr,
-        disable_trusted_monitor=disable_trusted_monitor,
-        disable_untrusted_monitor=disable_untrusted_monitor,
-    )
-
-
 def solve_condition(
     attacks_df: pd.DataFrame,
     honeypots_df: pd.DataFrame,
     benign_df: pd.DataFrame,
     *,
-    num_tasks: int = int(PAPER_GAME_PARAMETERS["num_tasks"]),
-    blue_team_budget_fraction: float = PAPER_GAME_PARAMETERS[
-        "blue_team_budget_fraction"
-    ],
-    slack_honeypots: float = PAPER_GAME_PARAMETERS["slack_honeypots"],
-    blue_team_replace_fnr: float = 0.0,
+    settings: Optional[SolveSettings] = None,
+    seed: Optional[int] = None,
     disable_trusted_monitor: bool = False,
     disable_untrusted_monitor: bool = False,
 ) -> OptimizationResult:
     """Build the ROC model from monitor scores and solve for the Nash equilibrium."""
+    settings = settings or SolveSettings()
+    game = {**PAPER_GAME_PARAMETERS, **settings.game}
     config = build_optimization_config(
-        num_tasks=num_tasks,
-        blue_team_budget_fraction=blue_team_budget_fraction,
-        blue_team_replace_fnr=blue_team_replace_fnr,
+        num_tasks=game["num_tasks"],
+        blue_team_budget_fraction=game["blue_team_budget_fraction"],
+        slack_honeypots=game["slack_honeypots"],
+        human_audit_success_rate=game.get("human_audit_success_rate", 1.0),
+        blue_team_replace_fnr=0.0,
         attacks_df=attacks_df,
         honeypots_df=honeypots_df,
-        slack_honeypots=slack_honeypots,
         benign_df=benign_df,
         disable_trusted_monitor=disable_trusted_monitor,
         disable_untrusted_monitor=disable_untrusted_monitor,
     )
 
-    result = optimize_parameters(base_config=config, max_iterations=100)
+    result = optimize_parameters(
+        base_config=config,
+        max_iterations=settings.max_iterations,
+        replace_fnr_values=(
+            list(settings.regeneration_cutoffs)
+            if settings.regeneration_cutoffs is not None
+            else None
+        ),
+        optimizer=OPTIMIZERS[settings.solver],
+        seed=seed,
+    )
 
     # Attach extra metadata (diagnostic) for visualization
     meta = result.config.monitor_roc_fn_metadata or {}
@@ -563,38 +509,73 @@ def solve_condition(
     return result
 
 
-def run_single_config(normalized: ExperimentConfig) -> OptimizationResult:
-    """Execute optimization for a single normalized config dict.
+def load_saved_condition(folder: Path, variant: Optional[str] = None) -> dict[str, Any]:
+    """The payload a pipeline analyse step saved in ``folder`` (primary variant
+    by default), with its ``pipeline`` record of inputs, settings and seeds."""
+    if variant is None:
+        return load_analysis_payload(folder / "analysis_data.json.gz")
+    for path in sorted(folder.glob("analysis_data*.json.gz")):
+        payload = load_analysis_payload(path)
+        if (payload.get("pipeline") or {}).get("variant") == variant:
+            return payload
+    raise FileNotFoundError(f"{folder}: no saved analysis for variant {variant!r}")
 
-    Args:
-        normalized: The normalized config dict from load_and_normalize_config.
-        It contains the runs and the defaults.
 
-    Returns:
-        The OptimizationResult (ensemble monitoring currently assumed).
-    """
-    runs = {run.label: run for run in normalized.runs}
+def saved_conditions(root: Path, setting: Optional[str] = None) -> list[Path]:
+    """Every analyse folder under ``root`` (an experiments dir), optionally one setting's."""
+    pattern = (
+        f"{setting}/analyse/*/analysis_data.json.gz"
+        if setting
+        else "*/analyse/*/analysis_data.json.gz"
+    )
+    return sorted(path.parent for path in root.glob(pattern))
 
-    attacks_result_eval = runs[RunLabel.ATTACKS].save_path
-    honeypots_result_eval = runs[RunLabel.HONEYPOTS].save_path
-    benign_result_eval = runs[RunLabel.HONEST].save_path
 
-    disable_trusted_monitor = normalized.defaults.get("disable_trusted_monitor", False)
-    disable_untrusted_monitor = normalized.defaults.get(
-        "disable_untrusted_monitor", False
+def condition_of(record: Mapping[str, Any]) -> dict[str, str]:
+    """setting / collusion_strategy / transform / monitor_arm of a saved record."""
+    return dict(record["key"]["params"]["condition"])
+
+
+def resolve_saved_condition(
+    folder: Path, variant: Optional[str] = None
+) -> OptimizationResult:
+    """Re-solve a saved condition exactly as recorded (inputs, settings, seed)."""
+    record = load_saved_condition(folder, variant)["pipeline"]
+    frames = load_condition({k: Path(v) for k, v in record["inputs"].items()})
+    disable_tm, disable_um = VARIANT_FLAGS[record["variant"]]
+    return solve_condition(
+        frames["attacks"],
+        frames["honeypots"],
+        frames["honest"],
+        settings=SolveSettings(**record["solve"]),
+        seed=record["solver_seed"],
+        disable_trusted_monitor=disable_tm,
+        disable_untrusted_monitor=disable_um,
     )
 
-    return plot_ensemble_monitoring(
-        attacks_result_eval=attacks_result_eval,
-        honeypots_result_eval=honeypots_result_eval,
-        benign_result_eval=benign_result_eval,
-        num_tasks=int(PAPER_GAME_PARAMETERS["num_tasks"]),
-        slack_honeypots=PAPER_GAME_PARAMETERS["slack_honeypots"],
-        blue_team_budget_fraction=PAPER_GAME_PARAMETERS["blue_team_budget_fraction"],
-        blue_team_replace_fnr=0.0,
-        disable_trusted_monitor=disable_trusted_monitor,
-        disable_untrusted_monitor=disable_untrusted_monitor,
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    parser = argparse.ArgumentParser(
+        prog="plot_data",
+        description="Compare saved conditions on shared axes (re-solves each "
+        "from its recorded monitor outputs, settings and seed).",
     )
+    parser.add_argument("folders", nargs="+", type=Path, help="analyse output folders")
+    parser.add_argument("--out", type=Path, required=True, help="figure folder")
+    parser.add_argument(
+        "--variant",
+        default=None,
+        choices=sorted(VARIANT_FLAGS),
+        help="analysis variant to compare (default: each folder's primary one)",
+    )
+    args = parser.parse_args()
+    aggregated: dict[str, OptimizationResult] = {}
+    for folder in args.folders:
+        record = load_saved_condition(folder, args.variant)["pipeline"]
+        aggregated[record["name"]] = resolve_saved_condition(folder, args.variant)
+    plot_data(aggregated, destination_folder=args.out)
+    logger.info("Figures saved to %s", args.out)
 
 
 if __name__ == "__main__":

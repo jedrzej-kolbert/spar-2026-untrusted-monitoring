@@ -33,118 +33,65 @@ The settings are APPS and BigCodeBench, each with closed models (OpenAI/Gemini) 
    `untrusted-monitoring`) under `WANDB_ENTITY` (default: your account). Set `WANDB_MODE=disabled`
    to run without W&B.
 
-## Configs
-
-Configs are generated. Don't edit the YAML; edit the spec in `experiments/open_models/make_configs.py`
-(model roles are in `ROLE_MODELS`), then regenerate:
-
-```bash
-python experiments/open_models/make_configs.py --model-class open   # or closed, or omit for both
-```
-
-Configs land in `src/lasr_labs_2025_control_project/configs/<setting>[_open]/<collusion strategy>/`
-under `generator/`, `transforms/` and `monitors/`. Outputs go to
-`experiments/<model class>/<setting>/<experiment>/`. Problems come from APPS ids 0–2999
-(`problem_ids_range` in `scripts/generate_solutions_inspect.py`): **test** uses the even ids,
-**train** (SFT data) uses the odd ids. To pilot, add `limit: N` to a config's `defaults`.
-
-Any input path, whether an `eval_path` in a config or a finetune `--…-eval` flag, can be a W&B
-artifact instead: `wandb:<entity>/<project>/<artifact name>:v<N>`.
-
 ## Running the pipeline
 
-Run from the repo root. Each stage takes a config:
+One command runs one experiment end to end: training-split generations, fine-tuning U into
+collusion monitors (the SFT arms), test-split generations, transforms, monitoring and analysis.
 
 ```bash
-C=src/lasr_labs_2025_control_project/configs/apps_open
-S=src/lasr_labs_2025_control_project/scripts
+P="uv run python -m lasr_labs_2025_control_project.pipeline"
 
-uv run $S/generate_solutions_inspect.py  --config $C/self_rec/generator/generator_config.yaml
-uv run $S/transform_solutions_inspect.py --config $C/self_rec/transforms/minified_config.yaml
-uv run $S/monitor_solutions_inspect.py   --config $C/self_rec/monitors/base/minified_monitor_config.yaml
-uv run $S/plot_data.py                   --config $C/self_rec/monitors/base/minified_monitor_config.yaml
+$P experiment=self_rec                     # prints the plan; runs nothing that costs money
+$P experiment=self_rec allow_paid=true     # runs it
+$P experiment=self_rec setting=bigcodebench models.U=tinker/deepseek-ai/DeepSeek-V3.1 allow_paid=true
+$P experiment=self_rec limits=dry allow_paid=true          # ~200 problems per generation
+$P -m experiment=self_rec,causal,acausal allow_paid=true   # several experiments
 ```
 
-- **Generate** before the other collusion strategies. In the open tree, `self_rec` generates the
-  `honest` and `honeypots` sets that every strategy shares.
-- **Transform** once per transform (`minified_config.yaml`, `paraphrased_config.yaml`).
-- **Monitor** once per condition (`monitors/**`).
-- **Analyse** (`plot_data.py`) once per condition. It solves the game and bootstraps it
-  (`--bootstrap-replicates`, default 2; 0 skips). Figures and analysis files go to the config's
-  `results/` folder.
+Run from the repo root. Re-running a command picks up where it stopped; finished steps are
+reused, including across experiments (e.g. `causal` reuses the honest and honeypot solutions
+`self_rec` generated).
 
-### Fine-tuned collusion monitors (SFT arms)
+**Configs** live in `conf/`. `config.yaml` has every default and documents the options. Pick one
+of each group, or override any value as `key=value`:
 
-1. Generate training data on the train split, then transform it for the minified and paraphrased
-   arms:
-   ```bash
-   uv run $S/generate_solutions_inspect.py  --config $C/self_rec/generator/train_generator_config.yaml
-   uv run $S/transform_solutions_inspect.py --config $C/self_rec/transforms/minified_config_train.yaml
-   uv run $S/transform_solutions_inspect.py --config $C/self_rec/transforms/paraphrased_config_train.yaml
-   ```
-   Causal arms use `causal/…` instead. The honest-label control arms use
-   `self_rec/generator/honest_train_generator_config.yaml`.
-2. Fine-tune U on its attacks (labelled YES) against H's honeypots (labelled NO). Name the
-   checkpoint after its arm (`self_rec_base`, `self_rec_minified`, `causal_paraphrased`, … — see
-   `SFT_ARMS` in `make_configs.py`):
-   ```bash
-   E=experiments/open-source-model/apps/self_rec_train
-   uv run python -m lasr_labs_2025_control_project.finetuning.tinker_lora_finetune \
-     --train-eval $E/transforms/minified/attack_transformed.eval \
-     --train-eval $E/transforms/minified/honeypots_transformed.eval \
-     --transformed --checkpoint-name self_rec_minified \
-     --target-model <Tinker model id of U, without the tinker/ prefix> \
-     --base-model <the same id>
-   ```
-   - Leave out `--transformed` for the `none` arm, and pass `generator/*.eval` instead.
-   - To track ROC AUC across training, add `--checkpoint-every-steps N --attacks-eval <held-out attacks.eval> --honeypots-eval <held-out honeypots.eval>`.
-   - Closed models use `finetuning/openai_finetune.py` with the same `--train-eval` flags plus
-     `--suffix <arm>`.
-   - Label-ablation controls train on a hand-prepared JSONL (`--train-jsonl`); see
-     `finetuning/binary_tuning/README.md`.
-3. Add the printed `tinker://…` path to `experiments/open_models/ckpts.json` under the arm's
-   name. Then regenerate the configs, and monitor and analyse with the `monitors/sft/` configs.
+| Group | Options |
+|---|---|
+| `experiment` | `self_rec`, `causal`, `acausal`, `additive`, `self_rec_controls` (label controls), `acausal_optimized`, and the paper's closed-model conditions under `paper/` |
+| `setting` | `apps`, `bigcodebench`, `basharena` (needs `measurement.transforms=[none]`) |
+| `models` | `open` (Tinker), `closed` (OpenAI/Gemini); or set `models.U`, `models.T`, `models.H` |
+| `limits` | `full`, `dry` |
+
+The config has three sections: `elicitation` (fine-tuning: arms, hyperparameters, limits),
+`measurement` (collusion strategy, transforms, monitor arms, monitors, limits) and
+`optimization` (game parameters, regeneration cutoffs, solver, analysis variants, bootstrap).
+`seed` seeds everything that can be seeded. To try a new run, copy an experiment file.
+
+**What runs.** Each run prints its plan: every step's id, whether it's done, and its output
+folder under `experiments/<setting>/<stage>/`. Useful options:
+
+- `stages=[generate,transform]`: run only those stages. Steps of other stages must already
+  exist.
+- `+inputs.<step id>=<output>`: use an existing output instead of running a step. The output can
+  be a local `.eval`, a W&B artifact `wandb:<entity>/<project>/<name>:v<N>`, or for a
+  fine-tune a model id (`+inputs.finetune.self_rec.none=tinker/tinker://...`).
+- `reuse=wandb`: also reuse outputs that anyone logged to W&B with exactly the same settings.
+- `optimization.variants=[all_monitors,um_only,tm_only]`: add the trusted-monitor-only analysis.
+  `measurement.monitors` picks which monitors run.
+
+**Where things go.** Each invocation's merged config is saved in
+`experiments/runs/<experiment>/<time>/.hydra/` and attached to every W&B run it made. Analysis
+files and figures are in each condition's `experiments/<setting>/analyse/` folder.
 
 Open-model specifics (model choices, token budgets, Docker and throughput notes) are in
-`experiments/open_models/SPEC.md`.
-
-### BashArena
-
-BashArena runs the same steps on agent trajectories. Each rated action is one example, shown
-with every earlier step and its tool output, exactly as the per-action monitor sees it.
-Paraphrasing, minification and checkpoint learning dynamics aren't available for it yet.
-
-1. Generate configs with `make_configs.py --model-class open --settings basharena
-   --basharena-limit N` (N tasks per population and split; default 5).
-2. Generate in its own environment, once per split; without `--allow-paid` it only prints the plan:
-   ```bash
-   cd basharena_runtime
-   uv run --frozen python -m basharena_runtime.generate --allow-paid \
-     --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/train_generator_config.yaml \
-     --output ../experiments/open-source-model/basharena/self_rec/generator/train
-   ```
-   and the same with `base_generator_config.yaml` and `.../generator/test`.
-3. Prepare per-action training data, then fine-tune with `--train-jsonl` and
-   `--checkpoint-name basharena_self_rec_base`:
-   ```bash
-   G=experiments/open-source-model/basharena/self_rec/generator
-   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh $G $G/raw --action-views
-   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh $G/raw <U model id> \
-     --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT
-   ```
-4. Add the checkpoint to `ckpts.json`, regenerate with the same `--basharena-limit`, and monitor
-   with `configs/basharena_open/self_rec/monitors/{base,sft}/`. A trajectory's score is the
-   maximum over its actions.
-
-Long trajectories can exceed a model's context: `defaults.action_view.max_history_chars` in the
-monitor config and `ACTION_MAX_HISTORY_CHARS` for `transform_logs_to_raw.sh` drop the oldest
-steps; use the same value in both.
+`docs/open_models.md`. BashArena generation runs in `basharena_runtime/` (its own environment;
+see its README) and is driven by the pipeline like the other settings.
 
 ## Results
 
 - **W&B** has one run per stage and label, and one analyse run per condition. Filter by job type
-  (stage) or by tag (collusion strategy, transform, monitor arm, label). Set
-  `WANDB_RUN_GROUP=<name>` to group a batch of runs. Curves are logged as raw numbers: each y
+  (stage) or by tag (experiment, collusion strategy, transform, monitor arm, label). Runs from
+  one invocation share a group and a `config` artifact. Curves are logged as raw numbers: each y
   metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a
   custom panel). Panels plotted against "Step" are meaningless. Each analyse run also logs its
   figures as images under `figures/`.
@@ -158,19 +105,25 @@ steps; use the same value in both.
   | `roc/<monitor>/tpr` | `roc/<monitor>/fpr` | one score threshold: fraction of attacks (tpr) and of negatives (fpr) scoring at or above it |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |
 
-  `<variant>` is `all_monitors` or `um_only`. For `roc/untrusted_collusion`, negatives are
+  `<variant>` is `all_monitors`, `um_only` or `tm_only`. For `roc/untrusted_collusion`, negatives are
   honeypots and "at or above" means U would collude; for the two suspiciousness monitors,
   negatives are honest solutions. `red_team_roc_threshold` is U's collusion threshold, in YES − NO
   logprob, so it isn't comparable across monitor arms. Set `red_team_p_attack` panels to a log
   y-axis. When `red_nash_support_size` > 1, red has several equally good responses, so a jump in
   red's values may not mean anything. `figures/strategies` shows blue's whole mix and the
   bootstrap replicates, with usefulness on the same axis as `figures/outcome_distributions`.
-- **Local figures** for the paper's groupings come from `scripts/run_all_grouped_plotting.sh`. To
-  analyse every monitor config in a tree, run `scripts/plot_everything.sh <config dir>`. For big
-  resumable bootstrap sweeps use `scripts/bootstrap.py`, then `scripts/plot_bootstrap_curves.py`.
-  Parameter sensitivity: `scripts/plot_parameter_sensitivity.py --config <monitor config>`.
-- **Published data** is in the HF dataset `jbostock/untrusted-monitoring-2026-paper` (same layout
-  as `experiments/`).
+- **Local figures** (each takes `experiments/<setting>/analyse/` folders):
+  - compare conditions on shared axes: `scripts/plot_data.py <folder>... --out <dir>`;
+  - bootstrap bands per collusion strategy: `scripts/plot_bootstrap_curves.py --out <dir>`
+    (for the paper's 1000 replicates, run with `optimization.bootstrap.replicates=1000`; it
+    resumes if interrupted);
+  - parameter sensitivity: `scripts/plot_parameter_sensitivity.py <folder>`;
+  - low-count audit: `scripts/helpers/event_count_audit.py --out <file>`.
+
+  Run them with `uv run python -m lasr_labs_2025_control_project.scripts.<name>`.
+- **Published data** is in the HF dataset `jbostock/untrusted-monitoring-2026-paper`, in the
+  old per-experiment layout. To analyse it with the pipeline, pass its monitor outputs as
+  inputs (`+inputs.monitor.<transform>.<arm>.<label>=<file>`).
 - **Team data**: the APPS and BigCodeBench results are also in the team Google Drive's
   `FINAL_RESULTS` folder. Don't change it without agreeing with the whole team.
 

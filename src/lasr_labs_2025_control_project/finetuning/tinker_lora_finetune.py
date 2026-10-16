@@ -13,8 +13,9 @@ inference (`utils.tinker_provider`, thinking disabled), so the resulting
 checkpoint behaves consistently when plugged into the collusion monitor.
 
 It saves sampler weights (no expiry) and prints the `tinker://…` checkpoint
-path; put that path in a monitor config's `untrusted_collusion_monitor` model
-field (the provider loads `tinker://…` via `model_path`).
+path; the pipeline passes it to the collusion monitor as `tinker/<path>` (the
+provider loads `tinker://…` via `model_path`). The pipeline calls `finetune`
+directly; this CLI is for one-off training on given logs or a prepared JSONL.
 
 With `--checkpoint-every-steps N --attacks-eval A --honeypots-eval H`, each
 saved checkpoint is scored as a collusion monitor on held-out attacks vs
@@ -243,7 +244,7 @@ def finetune(
     checkpoints: dict[int, str] = {}
 
     def save(name: str, step: int) -> str:
-        # ttl_seconds=None: never expires (monitor configs reference it later).
+        # ttl_seconds=None: never expires (monitors and reruns reference it later).
         path = (
             training_client.save_weights_for_sampler(name=name, ttl_seconds=None)
             .result()

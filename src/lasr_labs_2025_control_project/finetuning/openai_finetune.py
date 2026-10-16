@@ -1,11 +1,11 @@
 """Submit and poll an OpenAI supervised fine-tune for a collusion monitor.
 
-The closed-model SFT arms (`SFT_ARMS` in experiments/open_models/make_configs.py)
-are OpenAI finetunes of U. This is the closed-model counterpart to
-`tinker_lora_finetune.py`: it prepares training data from `.eval` logs
-(`--train-eval`, repeatable; see `sft_data.py`) or takes a prepared JSONL
-(`--train-jsonl`), creates the job, polls to completion, and prints the
-resulting model id to paste into `SFT_ARMS` (or into a checkpoints JSON).
+The closed-model SFT arms are OpenAI finetunes of U; the pipeline trains them
+through ``submit`` (the published ones are in conf/experiment/paper/). This
+CLI is the closed-model counterpart to `tinker_lora_finetune.py`'s: it
+prepares training data from `.eval` logs (`--train-eval`, repeatable; see
+`sft_data.py`) or takes a prepared JSONL (`--train-jsonl`), creates the job,
+polls to completion, and prints the resulting model id.
 
     python -m lasr_labs_2025_control_project.finetuning.openai_finetune \\
         --train-eval .../generator/attacks.eval \\
@@ -117,20 +117,17 @@ def _log_training_metrics(client: Any, job: Any, tracker: StageRun) -> None:
                 points.append((float(row["step"]), float(row[key])))
             except (KeyError, TypeError, ValueError):
                 pass
-    tracker.log_line(
-        "train/loss",
-        curves["train_loss"],
-        x="Training step",
-        y="Training loss",
-        title="Training loss",
-    )
-    tracker.log_line(
-        "train/accuracy",
-        curves["train_accuracy"],
-        x="Training step",
-        y="Training token accuracy",
-        title="Training accuracy",
-    )
+    tracker.define_curve("train/loss", "train/step")
+    tracker.define_curve("train/accuracy", "train/step")
+    steps = sorted({step for points in curves.values() for step, _ in points})
+    by_metric = {key: dict(points) for key, points in curves.items()}
+    for step in steps:
+        point = {"train/step": step}
+        if step in by_metric["train_loss"]:
+            point["train/loss"] = by_metric["train_loss"][step]
+        if step in by_metric["train_accuracy"]:
+            point["train/accuracy"] = by_metric["train_accuracy"][step]
+        tracker.log(point)
 
 
 @click.command()
@@ -163,7 +160,7 @@ def _log_training_metrics(client: Any, job: Any, tracker: StageRun) -> None:
 @click.option(
     "--suffix",
     required=True,
-    help="Finetune suffix, i.e. the SFT_ARMS arm name (e.g. causal-base)",
+    help="Finetune suffix, e.g. the checkpoint name (causal-base)",
 )
 @click.option("--base-model", default=DEFAULT_BASE_MODEL, show_default=True)
 @click.option("--n-epochs", type=int, default=None, help="Default: OpenAI's auto")
@@ -259,7 +256,7 @@ def main(
             allow_unlinked=allow_unlinked,
         )
         with tracker:
-            _submit(
+            model = submit(
                 train_path,
                 suffix=suffix,
                 base_model=base_model,
@@ -268,9 +265,11 @@ def main(
                 wait=wait,
                 tracker=tracker,
             )
+        if model:
+            print(json.dumps({suffix.replace("-", "_"): model}, indent=1))
 
 
-def _submit(
+def submit(
     train_path: Path,
     *,
     suffix: str,
@@ -279,7 +278,8 @@ def _submit(
     validation_jsonl: Optional[Path],
     wait: bool,
     tracker: StageRun,
-) -> None:
+) -> Optional[str]:
+    """Run the fine-tuning job; returns ``openai/<model id>`` (None with wait=False)."""
     client = _client()
     logger.info("Uploading %s", train_path)
     train_file = client.files.create(file=train_path.open("rb"), purpose="fine-tune")
@@ -310,7 +310,7 @@ def _submit(
             "Not waiting; poll with: openai api fine_tuning.jobs.get -i %s", job.id
         )
         tracker.finish(complete=False, reason="--no-wait: model id not recorded")
-        return
+        return None
 
     while job.status not in DONE_STATES:
         time.sleep(POLL_SECONDS)
@@ -338,11 +338,7 @@ def _submit(
             {**record, "step": ckpt.step_number},
         )
     tracker.summary({"trained_tokens": job.trained_tokens})
-    print(
-        json.dumps(
-            {suffix.replace("-", "_"): f"openai/{job.fine_tuned_model}"}, indent=1
-        )
-    )
+    return f"openai/{job.fine_tuned_model}"
 
 
 if __name__ == "__main__":

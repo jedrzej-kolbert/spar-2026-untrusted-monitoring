@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-import yaml
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score
 
@@ -28,10 +27,6 @@ from lasr_labs_2025_control_project.utils.basharena_views import (
     ACTION_VIEW,
     ActionViewOptions,
     trajectory_view,
-)
-from lasr_labs_2025_control_project.utils.config_loader import (
-    MonitorRunConfig,
-    load_and_normalize_config,
 )
 from lasr_labs_2025_control_project.utils.utils import format_solution
 from tests.test_basharena_views import _trajectory
@@ -203,53 +198,3 @@ def test_plot_frame_takes_max_over_actions_and_rejects_partial(
     )
     with pytest.raises(ValueError, match="missing scored actions"):
         plot_data.build_jsonl_dataframe_from_eval_log(Path("x.eval"))
-
-
-def test_monitor_config_view_validation(tmp_path: Path):
-    (tmp_path / "a.eval").touch()
-
-    def write(defaults_extra: dict[str, Any], transformed: bool = False) -> Path:
-        cfg = {
-            "experiment_folder": str(tmp_path),
-            "experiment_name": "x",
-            "results_folder": "r/",
-            "defaults": {
-                **defaults_extra,
-                "monitors": [
-                    {
-                        "untrusted_collusion_monitor": {
-                            "model_info": {
-                                "model": "tinker/x",
-                                "system_prompt": "BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT",
-                                "base_prompt": "BASHARENA_ACTION_USER_PROMPT",
-                            },
-                            "remove_comments": False,
-                            "transformed": transformed,
-                        }
-                    }
-                ],
-            },
-            "runs": {
-                "attacks": {
-                    "eval_path": "a.eval",
-                    "save_path": "o.eval",
-                    "monitors": ["untrusted_collusion_monitor"],
-                }
-            },
-        }
-        path = tmp_path / "c.yaml"
-        path.write_text(yaml.safe_dump(cfg))
-        return path
-
-    run = load_and_normalize_config(
-        write({"view": "action", "action_view": {"max_history_chars": 5}})
-    ).runs[0]
-    assert isinstance(run, MonitorRunConfig)
-    assert run.view == "action"
-    assert run.action_options == ActionViewOptions(max_history_chars=5)
-    default = load_and_normalize_config(write({})).runs[0]
-    assert isinstance(default, MonitorRunConfig) and default.view == "trajectory"
-    with pytest.raises(ValueError, match="transformed"):
-        load_and_normalize_config(write({"view": "action"}, transformed=True))
-    with pytest.raises(ValueError, match="view"):
-        load_and_normalize_config(write({"view": "per_step"}))

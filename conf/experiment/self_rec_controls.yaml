@@ -1,0 +1,18 @@
+# @package _global_
+# Label controls for passive self-recognition SFT. Both checkpoints are trained
+# on honest (backdoor-free) generations: one with authorship labels, one with
+# the labels shuffled. Each is measured on the standard test data and with U's
+# honest solutions in the attacks slot (no backdoors).
+name: self_rec_controls
+measurement:
+  collusion_strategy: self_rec
+  transforms: [none]
+  arms:
+    honest: {model: "sft:self_rec_honest"}
+    honest_no_backdoors: {model: "sft:self_rec_honest", attacks_label: honest}
+    randomised: {model: "sft:self_rec_permuted"}
+    randomised_no_backdoors: {model: "sft:self_rec_permuted", attacks_label: honest}
+elicitation:
+  arms:
+    self_rec_honest: {eval_mode: honest}
+    self_rec_permuted: {eval_mode: honest, labels: permuted}

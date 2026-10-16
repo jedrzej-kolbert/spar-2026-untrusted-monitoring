@@ -10,10 +10,10 @@ import matplotlib
 matplotlib.use("Agg")
 
 from lasr_labs_2025_control_project.scripts.plot_data import (  # noqa: E402
-    analysis_name,
-    analysis_variants,
+    VARIANT_FLAGS,
     log_strategies,
 )
+from lasr_labs_2025_control_project.tracking import names  # noqa: E402
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (  # noqa: E402
     OptimizationResult,
     bootstrap_band,
@@ -27,29 +27,20 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.visualization impor
 )
 
 
-def test_variants_follow_config_and_flags():
-    assert [v[0] for v in analysis_variants({})] == ["all_monitors", "um_only"]
-    assert analysis_variants({"disable_trusted_monitor": True}) == [
-        ("um_only", True, False)
-    ]
-    assert analysis_variants({"disable_untrusted_monitor": True}) == [
-        ("tm_only", False, True)
-    ]
-
-
-def test_analysis_name_prefers_condition():
-    normalized = SimpleNamespace(experiment_name="Causal Minified")
-    condition = {
-        "setting": "apps",
-        "collusion_strategy": "causal",
-        "transform": "minified",
-        "monitor_arm": "base",
+def test_variants_disable_the_other_monitor():
+    # (disable_trusted_monitor, disable_untrusted_monitor)
+    assert VARIANT_FLAGS == {
+        "all_monitors": (False, False),
+        "um_only": (True, False),
+        "tm_only": (False, True),
     }
+
+
+def test_condition_name():
     assert (
-        analysis_name(normalized, {"wandb": {"condition": condition}})
+        names.condition_name("apps", "causal", "minified", "base")
         == "apps.causal.minified.base"
     )
-    assert analysis_name(normalized, {}) == "causal_minified"
 
 
 def test_bootstrap_band_skips_failed_replicates():

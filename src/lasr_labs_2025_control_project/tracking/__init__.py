@@ -41,21 +41,26 @@ Failure modes
 * An input whose header names a producer that can't be matched (failed or
   unsynced run, edited file) also needs ``--allow-unlinked``.
 
-Naming conventions live in :mod:`.names`. Tags come from the config's
-optional top-level ``wandb:`` block (``tags``, ``condition``), plus the stage,
+Naming conventions live in :mod:`.names`. Runs started by the pipeline
+(``lasr_labs_2025_control_project.pipeline``) carry its merged config, the
+node's key (``pipeline_node``) and a ``config`` artifact; tags are the
+experiment name and the condition (collusion strategy, transform, monitor arm),
 label, setting and split.
 """
 
 from lasr_labs_2025_control_project.tracking import names
 from lasr_labs_2025_control_project.tracking.core import (
     ALLOW_UNLINKED_HELP,
+    PIPELINE_KEY,
+    PipelineContext,
     ResolvedInput,
+    StageFailed,
     StageRun,
     UnlinkedInputError,
-    config_tags,
+    find_pipeline_run,
+    header_complete,
     input_counts,
     is_ref,
-    load_raw_config,
     mode,
     prompt_digest,
     read_header,
@@ -64,14 +69,17 @@ from lasr_labs_2025_control_project.tracking.core import (
 
 __all__ = [
     "ALLOW_UNLINKED_HELP",
+    "PIPELINE_KEY",
+    "PipelineContext",
     "ResolvedInput",
+    "StageFailed",
     "StageRun",
     "UnlinkedInputError",
-    "config_tags",
+    "find_pipeline_run",
+    "header_complete",
     "input_counts",
     "input_name",
     "is_ref",
-    "load_raw_config",
     "mode",
     "names",
     "prompt_digest",

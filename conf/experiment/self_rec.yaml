@@ -1,0 +1,11 @@
+# @package _global_
+# Passive self-recognition: U recognises its own code, with and without SFT.
+name: self_rec
+measurement:
+  collusion_strategy: self_rec
+  arms:
+    base: {model: U}
+    sft: {model: "sft:self_rec"}
+elicitation:
+  arms:
+    self_rec: {}

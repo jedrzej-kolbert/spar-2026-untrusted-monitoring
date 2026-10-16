@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - /experiment/self_rec
+  - override /setting: apps
+  - override /models: closed
+  - _self_
+name: paper_apps_self_rec
+measurement:
+  share_generations: false
+optimization:
+  variants: [all_monitors, um_only, tm_only]
+inputs:
+  finetune:
+    self_rec:
+      none: openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash:CJvxwvyn
+      minified: openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash-minified:CKNzgVEI
+      paraphrased: openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash-paraphrased:CK1qHy0v

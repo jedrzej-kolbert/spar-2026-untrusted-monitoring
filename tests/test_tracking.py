@@ -217,14 +217,3 @@ def test_offline_fallback_refuses_to_drop_links(monkeypatch):
     with pytest.raises(core.UnlinkedInputError, match="offline"):
         with core.StageRun("monitor", "x", config={}, inputs=[linked]):
             pass
-
-
-def test_config_tags():
-    raw = {
-        "wandb": {
-            "tags": ["open", "causal"],
-            "condition": {"setting": "apps", "transform": "minified"},
-        }
-    }
-    assert core.config_tags(raw) == ["open", "causal", "apps", "minified"]
-    assert core.config_tags({}) == []

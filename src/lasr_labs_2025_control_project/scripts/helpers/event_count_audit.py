@@ -37,35 +37,27 @@ Other channels (honest errors, honeypot boundary, TM-benign support) are
 reported as ``low_count_caveats`` when under 10 events, without driving the
 verdict.
 
-Usage (from repo root, experiments/ symlinks in place):
-  PYTHONPATH=src python .../event_count_audit.py --trees apps apps_open bigcodebench \
-      --out docs/dependent_monitors_stats/results_real_paper_data/event_count_audit.json
+Usage, over every saved condition (analyse folders) under an experiments dir:
+  python -m lasr_labs_2025_control_project.scripts.helpers.event_count_audit \
+      --root experiments [--setting apps] --out event_count_audit.json
 """
 
 import argparse
-import gzip
 import json
 from pathlib import Path
 from typing import Any, Dict
 
 
-from lasr_labs_2025_control_project.scripts.helpers.list_runnable_monitor_configs import (
-    runnable_configs,
-)
 from lasr_labs_2025_control_project.scripts.plot_data import (
-    build_jsonl_dataframe_from_eval_log,
-)
-from lasr_labs_2025_control_project.utils.config_loader import (
-    RunLabel,
-    load_and_normalize_config,
+    VARIANT_FLAGS,
+    load_condition,
+    load_saved_condition,
+    saved_conditions,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline.roc_function_builders import (
     build_roc_function,
 )
 
-# Paper game parameters (plot_data.run_single_config).
-NUM_TASKS = 5000
-BUDGET_FRACTION = 0.02
 MIN_SUPPORT_WEIGHT = 0.05  # audit equilibrium support points above this prob
 
 
@@ -77,6 +69,8 @@ def audit_cell(
     n_hp: int,
     n_ben: int,
     entry: Dict[str, Any],
+    *,
+    budget_fraction: float = 0.02,
 ) -> Dict[str, Any]:
     """Effective event counts for one sweep entry, over the Nash supports."""
     replace_fnr = float(entry["blue_team_replace_fnr"])
@@ -99,7 +93,7 @@ def audit_cell(
     pass_counts = []
     pass_weights = []
     for hp_frac, w_b in blue_support:
-        audit_fraction = BUDGET_FRACTION * (1.0 - float(hp_frac))
+        audit_fraction = budget_fraction * (1.0 - float(hp_frac))
         tm_fnr = max(audit_fraction - honest_fpr, 0.0)
         for t, w_r in red_support:
             not_flagged, _ = roc_fn(float(t), tm_fnr)
@@ -149,68 +143,63 @@ def audit_cell(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--trees", nargs="+", required=True)
+    parser.add_argument("--root", type=Path, default=Path("experiments"))
+    parser.add_argument("--setting", default=None)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
     report: Dict[str, Any] = {}
-    for tree in args.trees:
-        for key, cfg_path in runnable_configs(tree):
-            out_key = key + ("__tm_only" if "tm_only" in cfg_path.stem else "")
-            normalized = load_and_normalize_config(cfg_path, config_type="monitor")
-            runs = {run.label: run for run in normalized.runs}
-            attacks = build_jsonl_dataframe_from_eval_log(
-                runs[RunLabel.ATTACKS].save_path
+    for folder in saved_conditions(args.root, args.setting):
+        payload = load_saved_condition(folder)
+        record = payload["pipeline"]
+        frames = load_condition({k: Path(v) for k, v in record["inputs"].items()})
+        attacks, honeypots, benign = (
+            frames["attacks"],
+            frames["honeypots"],
+            frames["honest"],
+        )
+        disable_tm, disable_um = VARIANT_FLAGS[record["variant"]]
+        roc_fn, meta = build_roc_function(
+            attacks_df=attacks,
+            honeypots_df=honeypots,
+            benign_df=benign,
+            disable_trusted_monitor=disable_tm,
+            disable_untrusted_monitor=disable_um,
+        )
+        game = record["solve"]["game"]
+        cells = [
+            audit_cell(
+                roc_fn,
+                float(meta.get("untrusted_honest_fpr", 0.0)),
+                float(meta.get("untrusted_honest_fnr", 0.0)),
+                len(attacks),
+                len(honeypots),
+                len(benign),
+                entry,
+                budget_fraction=float(game["blue_team_budget_fraction"]),
             )
-            honeypots = build_jsonl_dataframe_from_eval_log(
-                runs[RunLabel.HONEYPOTS].save_path
-            )
-            benign = build_jsonl_dataframe_from_eval_log(
-                runs[RunLabel.HONEST].save_path
-            )
-            roc_fn, meta = build_roc_function(
-                attacks_df=attacks,
-                honeypots_df=honeypots,
-                benign_df=benign,
-                disable_untrusted_monitor=normalized.defaults.get(
-                    "disable_untrusted_monitor", False
-                ),
-            )
-            payload_path = Path(normalized.results_folder) / "analysis_data.json.gz"
-            payload = json.load(gzip.open(payload_path, "rt"))
-            cells = [
-                audit_cell(
-                    roc_fn,
-                    float(meta.get("untrusted_honest_fpr", 0.0)),
-                    float(meta.get("untrusted_honest_fnr", 0.0)),
-                    len(attacks),
-                    len(honeypots),
-                    len(benign),
-                    entry,
-                )
-                for entry in payload["sweep"]
-            ]
-            class_name = Path(runs[RunLabel.ATTACKS].save_path).parts[1]
-            report[f"{class_name}/{out_key}"] = {
-                "model_type": meta.get("model_type"),
-                "sample_counts": {
-                    "attacks": len(attacks),
-                    "honeypots": len(honeypots),
-                    "benign": len(benign),
-                },
-                "cells": cells,
-            }
-            worst = min(
-                cells,
-                key=lambda c: ["SATURATED", "CRITICAL", "LOW", "OK"].index(
-                    c["verdict"]
-                ),
-            )
-            n_bad = sum(1 for c in cells if c["verdict"] != "OK")
-            print(
-                f"{class_name}/{out_key:58s} worst={worst['verdict']:9s} "
-                f"non-OK cells={n_bad}/10"
-            )
+            for entry in payload["sweep"]
+        ]
+        key = f"{record['name']}/{record['variant']}"
+        report[key] = {
+            "folder": str(folder),
+            "models": record.get("models"),
+            "model_type": meta.get("model_type"),
+            "sample_counts": {
+                "attacks": len(attacks),
+                "honeypots": len(honeypots),
+                "benign": len(benign),
+            },
+            "cells": cells,
+        }
+        worst = min(
+            cells,
+            key=lambda c: ["SATURATED", "CRITICAL", "LOW", "OK"].index(c["verdict"]),
+        )
+        n_bad = sum(1 for c in cells if c["verdict"] != "OK")
+        print(
+            f"{key:58s} worst={worst['verdict']:9s} non-OK cells={n_bad}/{len(cells)}"
+        )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=1))

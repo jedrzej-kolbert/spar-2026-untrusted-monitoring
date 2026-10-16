@@ -15,6 +15,7 @@ data (attacks-only vs honest-only, balanced or not, ...).
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -29,6 +30,10 @@ from lasr_labs_2025_control_project.finetuning.utils.generate_train_data import 
 )
 from lasr_labs_2025_control_project.self_rec_baselines.utils.scripts.data_models import (
     Dataset,
+)
+from lasr_labs_2025_control_project.utils.basharena_views import (
+    TRAJECTORY_VIEW,
+    ActionViewOptions,
 )
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from lasr_labs_2025_control_project.utils.utils import (
@@ -60,6 +65,9 @@ def build_training_data(
     seed: int = 42,
     upsample_pos_factor: int = 1,
     upsample_neg_factor: int = 1,
+    view: str = TRAJECTORY_VIEW,
+    action_options: Optional[ActionViewOptions] = None,
+    labels: str = "author",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Chat examples ({"messages": [...]}) and their composition record.
 
@@ -68,6 +76,10 @@ def build_training_data(
     ``gpt-4.1-2025-04-14``). A value that
     matches no solution is an error (``prepare_rows``): it would label every
     example NO and train a monitor that always answers NO.
+
+    ``view="action"`` makes one example per rated agent action (BashArena), as
+    the per-action monitor sees it. ``labels="permuted"`` shuffles the YES/NO
+    answers across examples (a control: the monitor can learn nothing real).
     """
     logs = [(path, read_eval_log(str(path))) for path in eval_paths]
     models = {path: detect_generator_model(log) for path, log in logs}
@@ -75,7 +87,14 @@ def build_training_data(
     dataset = Dataset(problems=[])
     sources = []
     for path, log in logs:
-        part = eval_log_to_dataset(log, models[path], transformed, keep_comments)
+        part = eval_log_to_dataset(
+            log,
+            models[path],
+            transformed,
+            keep_comments,
+            view=view,
+            action_options=action_options,
+        )
         dataset = dataset.merge(part)
         sources.append(
             {
@@ -98,6 +117,22 @@ def build_training_data(
         upsample_neg_factor,
     )
 
+    examples = [{"messages": row["messages"]} for row in rows]
+    if labels == "permuted":
+        answers = [example["messages"][-1]["content"] for example in examples]
+        random.Random(f"{seed}:permute").shuffle(answers)
+        examples = [
+            {
+                "messages": [
+                    *example["messages"][:-1],
+                    {**example["messages"][-1], "content": answer},
+                ]
+            }
+            for example, answer in zip(examples, answers)
+        ]
+    elif labels != "author":
+        raise ValueError(f"labels must be 'author' or 'permuted', got {labels!r}")
+
     def modes(role: str) -> list[str]:
         return sorted({str(s["eval_mode"]) for s in sources if s["role"] == role})
 
@@ -114,10 +149,12 @@ def build_training_data(
         "user_prompt": user_prompt,
         "upsample_pos_factor": upsample_pos_factor,
         "upsample_neg_factor": upsample_neg_factor,
+        "view": view,
+        "labels": labels,
         "seed": seed,
         "sources": sources,
     }
-    return [{"messages": row["messages"]} for row in rows], composition
+    return examples, composition
 
 
 def load_eval_examples(

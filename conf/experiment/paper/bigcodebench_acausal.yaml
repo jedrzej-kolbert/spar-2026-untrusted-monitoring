@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /experiment/acausal
+  - override /setting: bigcodebench
+  - override /models: closed
+  - _self_
+name: paper_bigcodebench_acausal
+measurement:
+  share_generations: false

@@ -48,13 +48,10 @@ declared as dependencies.
 
 ## Model roles
 
-Set in `experiments/open_models/make_configs.py`, which holds one declarative
-spec and emits **both** config trees from it: `configs/{apps,bigcodebench}/`
-(closed models) and `configs/{apps,bigcodebench}_open/` (Tinker). The SFT arms
-are generated too: each closed `openai/ft:...` finetune maps to a logical arm
-name whose open-weights counterpart is a Tinker LoRA of U, supplied with
-`--checkpoints ckpts.json` (arm -> `tinker://…` path). Arms without a checkpoint
-are emitted as `tinker/tinker://PENDING__<arm>` and listed on stdout.
+Set in `conf/models/open.yaml` (closed: `conf/models/closed.yaml`). The SFT
+arms are fine-tuned in the pipeline run that needs them: on open models a
+Tinker LoRA of U, on closed models an OpenAI fine-tune (the paper's published
+ones are passed as `inputs` in `conf/experiment/paper/`).
 
 | Role | Model | Rationale |
 |------|-------|-----------|
@@ -87,8 +84,8 @@ inserts the empty `<think></think>` block) — Nemotron honours neither reliably
 gpt-oss-120b is the closer capability match to U. A 4096-token cap silently
 truncates the open generators before their closing tag (~2/3 of samples in a
 pilot came back with no `<final_code>`; the worst cases needed >8k), so
-`make_configs.py` injects `max_tokens: 16384` into the `defaults:` of every
-*open* generator config (`--max-tokens` to change).
+`conf/models/open.yaml` sets `generation_max_tokens: 16384` for every open
+generation.
 
 Monitor and transform configs set no budget of their own. The collusion monitor
 is forced-decoding, so it cannot truncate, but the suspiciousness monitors and
