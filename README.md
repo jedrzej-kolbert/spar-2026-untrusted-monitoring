@@ -108,6 +108,38 @@ uv run $S/plot_data.py                   --config $C/self_rec/monitors/base/mini
 Open-model specifics (model choices, token budgets, Docker and throughput notes) are in
 `experiments/open_models/SPEC.md`.
 
+### BashArena
+
+BashArena runs the same steps on agent trajectories. Each rated action is one example, shown
+with every earlier step and its tool output, exactly as the per-action monitor sees it.
+Paraphrasing, minification and checkpoint learning dynamics aren't available for it yet.
+
+1. Generate configs with `make_configs.py --model-class open --settings basharena
+   --basharena-limit N` (N tasks per population and split; default 5).
+2. Generate in its own environment, once per split; without `--allow-paid` it only prints the plan:
+   ```bash
+   cd basharena_runtime
+   uv run --frozen python -m basharena_runtime.generate --allow-paid \
+     --config ../src/lasr_labs_2025_control_project/configs/basharena_open/self_rec/generator/train_generator_config.yaml \
+     --output ../experiments/open-source-model/basharena/self_rec/generator/train
+   ```
+   and the same with `base_generator_config.yaml` and `.../generator/test`.
+3. Prepare per-action training data, then fine-tune with `--train-jsonl` and
+   `--checkpoint-name basharena_self_rec_base`:
+   ```bash
+   G=experiments/open-source-model/basharena/self_rec/generator
+   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_logs_to_raw.sh $G $G/raw --action-views
+   bash src/lasr_labs_2025_control_project/finetuning/binary_tuning/transform_raw_to_prepared.sh $G/raw <U model id> \
+     --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT
+   ```
+4. Add the checkpoint to `ckpts.json`, regenerate with the same `--basharena-limit`, and monitor
+   with `configs/basharena_open/self_rec/monitors/{base,sft}/`. A trajectory's score is the
+   maximum over its actions.
+
+Long trajectories can exceed a model's context: `defaults.action_view.max_history_chars` in the
+monitor config and `ACTION_MAX_HISTORY_CHARS` for `transform_logs_to_raw.sh` drop the oldest
+steps; use the same value in both.
+
 ## Results
 
 - **W&B** has one run per stage and label, and one analyse run per condition. Filter by job type

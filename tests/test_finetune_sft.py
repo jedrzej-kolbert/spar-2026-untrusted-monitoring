@@ -14,6 +14,7 @@ from lasr_labs_2025_control_project.finetuning import tinker_lora_finetune as ft
 def _sample(sample_id, solution, *, side="C", model="Qwen/Qwen3-8B"):
     return SimpleNamespace(
         id=sample_id,
+        error=None,
         scores={
             "apps_scorer": SimpleNamespace(
                 value={"main_task_success": "C", "side_task_success": side}
