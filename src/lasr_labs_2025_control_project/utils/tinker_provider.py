@@ -35,11 +35,14 @@ from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
+
 from inspect_ai.model import (
     ChatCompletionChoice,
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageUser,
+    ContentReasoning,
+    ContentText,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
@@ -437,6 +440,31 @@ def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
 # inspect-ai provider: handles plain sampling (generation / text monitors /
 # paraphrasing). Collusion logprobs go through collusion_yes_no_logprobs below.
 # --------------------------------------------------------------------------- #
+# Harmony (gpt-oss) completions write their reasoning to an "analysis" channel
+# and the answer to a "final" one. Decoding without special tokens runs the two
+# together ("analysis...assistantfinal..."), so a paraphrase or monitor answer
+# would carry the reasoning, which may quote the original code verbatim.
+_HARMONY_FINAL = "<|channel|>final<|message|>"
+_HARMONY_ANALYSIS = "<|channel|>analysis<|message|>"
+_HARMONY_SPECIAL = ("<|end|>", "<|return|>", "<|start|>assistant", "<|call|>")
+
+
+def split_harmony(raw: str) -> tuple[str, str] | None:
+    """(reasoning, answer) of a harmony completion decoded with special tokens;
+    None if it isn't one. A completion cut off before its final channel has an
+    empty answer."""
+    if _HARMONY_ANALYSIS not in raw and _HARMONY_FINAL not in raw:
+        return None
+    head, final_marker, answer = raw.partition(_HARMONY_FINAL)
+    if not final_marker:
+        head, answer = raw, ""
+    reasoning = head.replace(_HARMONY_ANALYSIS, "")
+    for token in _HARMONY_SPECIAL:
+        reasoning = reasoning.replace(token, "")
+        answer = answer.replace(token, "")
+    return reasoning.strip(), answer.strip()
+
+
 @_modelapi(name="tinker")
 def tinker() -> type[ModelAPI]:
     return TinkerAPI
@@ -538,12 +566,25 @@ class TinkerAPI(ModelAPI):
             total_tokens=prompt.length + len(seq.tokens),
         )
         if not tools:
-            text = _tokenizer(self.base_model).decode(
-                list(seq.tokens), skip_special_tokens=True
+            tokenizer = _tokenizer(self.base_model)
+            harmony = split_harmony(
+                tokenizer.decode(list(seq.tokens), skip_special_tokens=False)
             )
-            output = ModelOutput.from_content(
-                model=self.model_name, content=text, stop_reason=stop_reason
-            )
+            if harmony is None:
+                text = tokenizer.decode(list(seq.tokens), skip_special_tokens=True)
+                output = ModelOutput.from_content(
+                    model=self.model_name, content=text, stop_reason=stop_reason
+                )
+            else:
+                reasoning, answer = harmony
+                output = ModelOutput.from_content(
+                    model=self.model_name,
+                    content=[
+                        ContentReasoning(reasoning=reasoning),
+                        ContentText(text=answer),
+                    ],
+                    stop_reason=stop_reason,
+                )
             output.usage = usage
             return output
 
