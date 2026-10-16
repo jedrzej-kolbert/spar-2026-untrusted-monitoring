@@ -12,7 +12,7 @@ iteration, the restricted game (using only strategies discovered so far) is solv
 exactly via linear programming to obtain equilibrium mixed strategies. The algorithm
 terminates when the gap between upper and lower bounds converges.
 
-Key differences from grid_search:
+Key differences from a pure-strategy grid search:
   - Supports mixed strategies (probability distributions over pure strategies)
   - Provides Nash equilibrium guarantees
   - More computationally expensive but theoretically sound for adversarial settings
