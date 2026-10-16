@@ -120,12 +120,14 @@ class Store:
         )
         return stored, complete, Output(path=str(folder))
 
-    def write_model(self, node: Node, model: str) -> Output:
+    def write_model(
+        self, node: Node, model: str, usage: Optional[dict[str, int]] = None
+    ) -> Output:
+        """Record a fine-tune's model id (and its billed token counts)."""
         path = self.output_path(node)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"model": model, PIPELINE_KEY: node.record()}, indent=2) + "\n"
-        )
+        record = {"model": model, "usage": usage or {}, PIPELINE_KEY: node.record()}
+        path.write_text(json.dumps(record, indent=2) + "\n")
         return Output(model=model)
 
     # -- W&B -----------------------------------------------------------------

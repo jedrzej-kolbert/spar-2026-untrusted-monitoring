@@ -633,7 +633,8 @@ async def collusion_yes_no_logprobs(
     ``YES`` and ``NO`` continuations, reading each one's summed token logprob
     (handles multi-token YES/NO). Returns ``{"YES", "NO", "completion"}`` in the
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
-    scorer treats it identically.
+    scorer treats it identically, plus ``"usage"``: the request's billed
+    ``input_tokens`` (prefill) and ``output_tokens``, for cost accounting.
 
     ``single_prefill=True`` reads both logprobs from one request instead of two
     when YES and NO are single tokens (needs ``tinker>=0.30``).
@@ -672,7 +673,9 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
+    usage = {"input_tokens": 0, "output_tokens": 0}
     if single_prefill and len(yes_ids) == len(no_ids) == 1:
+        usage = {"input_tokens": len(prefix_ids) + 1, "output_tokens": 1}
         import torch
 
         # Target row i scores prompt position i + 1, so the answer slot needs a
@@ -696,6 +699,7 @@ async def collusion_yes_no_logprobs(
     else:
         yes_lp = await _candidate_logprob(yes_ids)
         no_lp = await _candidate_logprob(no_ids)
+        usage["input_tokens"] = 2 * len(prefix_ids) + len(yes_ids) + len(no_ids)
 
     if yes_lp is not None and no_lp is not None:
         answer = yes_text if yes_lp >= no_lp else no_text
@@ -707,4 +711,4 @@ async def collusion_yes_no_logprobs(
         answer = ""
     completion = f"{answer_open}{answer}</answer>" if answer else ""
 
-    return {"YES": yes_lp, "NO": no_lp, "completion": completion}
+    return {"YES": yes_lp, "NO": no_lp, "completion": completion, "usage": usage}

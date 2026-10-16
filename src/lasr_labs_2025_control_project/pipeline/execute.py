@@ -330,11 +330,12 @@ def run_finetune(node: Node, ctx: RunContext) -> Output:
         ],
         inputs=train + evals,
     )
+    usage: dict[str, int] = {}
     if p["backend"] == "tinker":
-        model = _finetune_tinker(node, examples, evals, tracker)
+        model = _finetune_tinker(node, examples, evals, tracker, usage)
     else:
-        model = _finetune_openai(node, examples, tracker)
-    return ctx.store.write_model(node, model)
+        model = _finetune_openai(node, examples, tracker, usage)
+    return ctx.store.write_model(node, model, usage)
 
 
 def _finetune_tinker(
@@ -342,6 +343,7 @@ def _finetune_tinker(
     examples: list[dict[str, Any]],
     evals: list[ResolvedInput],
     tracker: StageRun,
+    usage: dict[str, int],
 ) -> str:
     from lasr_labs_2025_control_project.finetuning.sft_data import load_eval_examples
     from lasr_labs_2025_control_project.finetuning.tinker_lora_finetune import finetune
@@ -371,6 +373,7 @@ def _finetune_tinker(
             checkpoint_every_steps=hyper["checkpoint_every_steps"],
             eval_examples=eval_examples,
             tracker=tracker,
+            usage=usage,
         )
         model = f"tinker/{path}"
         tracker.log_model_ref(
@@ -380,7 +383,10 @@ def _finetune_tinker(
 
 
 def _finetune_openai(
-    node: Node, examples: list[dict[str, Any]], tracker: StageRun
+    node: Node,
+    examples: list[dict[str, Any]],
+    tracker: StageRun,
+    usage: dict[str, int],
 ) -> str:
     from lasr_labs_2025_control_project.finetuning.openai_finetune import (
         submit,
@@ -405,6 +411,7 @@ def _finetune_openai(
                 validation_jsonl=None,
                 wait=True,
                 tracker=tracker,
+                usage=usage,
             )
     assert model is not None
     return model

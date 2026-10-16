@@ -423,7 +423,11 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         assert all(dep.hash in ctx.outputs for dep in node.deps.values())
         calls.append(node.id)
         if node.stage == "finetune":
-            return ctx.store.write_model(node, f"tinker/tinker://fake/{node.hash}")
+            return ctx.store.write_model(
+                node,
+                f"tinker/tinker://fake/{node.hash}",
+                {"train_tokens": 1_000_000, "forward_tokens": 2_000_000},
+            )
         if node.stage == "analyse":
             folder = ctx.store.folder(node)
             for i, variant in enumerate(node.params["variants"]):
@@ -596,3 +600,26 @@ def test_bootstrap_resumes_from_saved_chunks(
         range(5)
     )
     assert len(plot_data.read_replicates(path)) == 5
+
+
+def test_cost_report_prices_recorded_tokens(tmp_path: Path, ran: list[str]) -> None:
+    from lasr_labs_2025_control_project.scripts import cost_report
+
+    overrides = ("models.U=tinker/Qwen/Qwen3-8B", "allow_paid=true")
+    run(tmp_path, *overrides)
+    run_dir = tmp_path / "run"
+    (run_dir / ".hydra").mkdir(parents=True)
+    cfg = config(
+        "experiment=self_rec",
+        "measurement.transforms=[none]",
+        "optimization.bootstrap.replicates=0",
+        f"experiments_dir={tmp_path}",
+        *overrides,
+    )
+    OmegaConf.save(OmegaConf.structured(cfg), run_dir / ".hydra" / "config.yaml")
+    tokens, missing = cost_report.collect(run_dir)
+    assert missing == []
+    assert tokens[("finetune", "Qwen/Qwen3-8B", "train")] == 1_000_000
+    assert tokens[("finetune", "Qwen/Qwen3-8B", "prefill")] == 2_000_000
+    assert cost_report.usd("Qwen/Qwen3-8B", "train", 1_000_000) == 0.44
+    assert cost_report.usd("mockllm/model", "sample", 10) is None

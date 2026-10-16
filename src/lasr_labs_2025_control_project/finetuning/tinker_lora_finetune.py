@@ -148,9 +148,15 @@ def _mean_loss(fb_output: Any, batch: list[Any]) -> Optional[float]:
 
 
 def checkpoint_auc(
-    checkpoint: str, examples: list[tuple[int, str, str]], concurrency: int = 8
+    checkpoint: str,
+    examples: list[tuple[int, str, str]],
+    concurrency: int = 8,
+    usage: Optional[dict[str, int]] = None,
 ) -> float:
-    """Attack-vs-honeypot ROC AUC of a checkpoint used as the collusion monitor."""
+    """Attack-vs-honeypot ROC AUC of a checkpoint used as the collusion monitor.
+
+    Adds the requests' prefill tokens to ``usage["forward_tokens"]`` if given.
+    """
     import asyncio
 
     from sklearn.metrics import roc_auc_score
@@ -165,6 +171,8 @@ def checkpoint_auc(
                     system_prompt=system,
                     user_prompt=user,
                 )
+            if usage is not None:
+                usage["forward_tokens"] += result["usage"]["input_tokens"]
             if result.get("YES") is None or result.get("NO") is None:
                 raise ValueError("Tinker returned no YES/NO logprobs")
             return float(result["YES"]) - float(result["NO"])
@@ -189,12 +197,15 @@ def finetune(
     checkpoint_every_steps: int = 0,
     eval_examples: Optional[list[tuple[int, str, str]]] = None,
     tracker: Optional[StageRun] = None,
+    usage: Optional[dict[str, int]] = None,
 ) -> str:
     """Run LoRA SFT and return the `tinker://…` sampler-weights path.
 
     `train` is a prepared chat JSONL path or the examples themselves. With
     `eval_examples`, every saved checkpoint (and the final one) is scored with
-    `checkpoint_auc`.
+    `checkpoint_auc`. `usage`, if given, is filled with the billed token counts:
+    `train_tokens` (forward/backward passes, billed at the train rate) and
+    `forward_tokens` (held-out and checkpoint scoring, billed as prefill).
     """
     import tinker
     from tinker import types
@@ -206,6 +217,8 @@ def finetune(
     track.define_curve("train/loss", "train/step")
     track.define_curve("checkpoint/roc_auc", "train/step")
 
+    usage = usage if usage is not None else {}
+    usage.update(train_tokens=0, forward_tokens=0)
     examples = load_examples(train) if isinstance(train, Path) else list(train)
     if max_examples is not None:
         examples = examples[:max_examples]
@@ -253,7 +266,7 @@ def finetune(
         checkpoints[step] = path
         logger.info("Saved update %d checkpoint: %s", step, path)
         if eval_examples is not None:
-            auc = checkpoint_auc(path, eval_examples)
+            auc = checkpoint_auc(path, eval_examples, usage=usage)
             logger.info(
                 "update %d: ROC AUC %.4f on %d attacks/honeypots",
                 step,
@@ -269,6 +282,7 @@ def finetune(
     for epoch in range(epochs):
         rng.shuffle(data)
         for batch in _batches(data, batch_size):
+            usage["train_tokens"] += sum(d.model_input.length for d in batch)
             fb_future = training_client.forward_backward(batch, "cross_entropy")
             opt_future = training_client.optim_step(types.AdamParams(learning_rate=lr))
             fb_output = fb_future.result()
@@ -297,13 +311,16 @@ def finetune(
     ):
         final_path = save(checkpoint_name, step)
     if val_examples:
-        stats = evaluate_checkpoint(final_path, val_examples)
+        stats = evaluate_checkpoint(final_path, val_examples, usage)
         track.summary({f"heldout/{k}": v for k, v in stats.items()})
+    track.summary({f"usage/{k}": v for k, v in usage.items()})
     return final_path
 
 
 def evaluate_checkpoint(
-    checkpoint_path: str, val_examples: list[dict[str, Any]]
+    checkpoint_path: str,
+    val_examples: list[dict[str, Any]],
+    usage: Optional[dict[str, int]] = None,
 ) -> dict[str, float]:
     """Score held-out examples through the same forced-decoding path as the monitor.
 
@@ -328,6 +345,8 @@ def evaluate_checkpoint(
                 system_prompt=msgs.get("system", ""),
                 user_prompt=msgs.get("user", ""),
             )
+            if usage is not None:
+                usage["forward_tokens"] += d["usage"]["input_tokens"]
             yes, no = d.get("YES"), d.get("NO")
             if yes is None or no is None:
                 continue

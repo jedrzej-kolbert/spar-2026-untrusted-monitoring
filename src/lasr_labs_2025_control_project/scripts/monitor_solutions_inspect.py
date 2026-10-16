@@ -51,6 +51,22 @@ from lasr_labs_2025_control_project.utils.utils import (
 _SCORE_ATTEMPTS = 3
 
 
+def record_tinker_usage(model_name: str, usage: dict[str, int]) -> None:
+    """Count a direct Tinker request in the eval's model usage, as Inspect does
+    for its own model calls, so the log's token totals include it."""
+    from inspect_ai.model import ModelUsage
+    from inspect_ai.model._model import record_and_check_model_usage
+
+    record_and_check_model_usage(
+        model_name,
+        ModelUsage(
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            total_tokens=usage["input_tokens"] + usage["output_tokens"],
+        ),
+    )
+
+
 def collusion_score(yes_logprob: float, no_logprob: float) -> float:
     """YES minus NO logprob; NaN if either logprob is missing (NaN)."""
     if math.isnan(yes_logprob) or math.isnan(no_logprob):
@@ -237,6 +253,8 @@ def create_collusion_monitor_scorer(
                         system_prompt=monitor_config.model_info.system_prompt,
                         user_prompt=user_prompt,
                     )
+                    if logprob_dict.get("usage"):
+                        record_tinker_usage(model_name, logprob_dict["usage"])
                 else:
                     response = await model.generate(
                         [

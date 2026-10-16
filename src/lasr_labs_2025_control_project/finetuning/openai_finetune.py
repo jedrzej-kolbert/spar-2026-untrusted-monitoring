@@ -278,8 +278,12 @@ def submit(
     validation_jsonl: Optional[Path],
     wait: bool,
     tracker: StageRun,
+    usage: Optional[dict[str, int]] = None,
 ) -> Optional[str]:
-    """Run the fine-tuning job; returns ``openai/<model id>`` (None with wait=False)."""
+    """Run the fine-tuning job; returns ``openai/<model id>`` (None with wait=False).
+
+    ``usage``, if given, gets ``train_tokens``: the job's billed training tokens.
+    """
     client = _client()
     logger.info("Uploading %s", train_path)
     train_file = client.files.create(file=train_path.open("rb"), purpose="fine-tune")
@@ -338,6 +342,8 @@ def submit(
             {**record, "step": ckpt.step_number},
         )
     tracker.summary({"trained_tokens": job.trained_tokens})
+    if usage is not None:
+        usage["train_tokens"] = job.trained_tokens or 0
     return f"openai/{job.fine_tuned_model}"
 
 
