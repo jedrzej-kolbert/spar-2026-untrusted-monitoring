@@ -31,7 +31,7 @@ def main() -> None:
         "--config",
         "-cfg",
         required=True,
-        help="Path to YAML config produced for eval_analysis",
+        help="Path to monitor YAML config used by monitor_solutions_inspect",
     )
     parser.add_argument(
         "--disable-trusted-monitor",

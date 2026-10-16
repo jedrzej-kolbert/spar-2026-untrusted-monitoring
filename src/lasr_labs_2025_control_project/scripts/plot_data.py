@@ -26,7 +26,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="plot_data",
         description=(
-            "Load processed EVAL logs outputs (from eval_analysis) via YAML and generate "
+            "Load scored .eval logs (from monitor_solutions_inspect) via YAML and generate "
             "plots/optimization results. Can pass multiple configs with -cfg"
         ),
     )
@@ -35,7 +35,7 @@ def main() -> None:
         "-cfg",
         nargs="+",
         required=True,
-        help="Path(s) to YAML config file(s) produced for eval_analysis",
+        help="Path(s) to monitor YAML config file(s) used by monitor_solutions_inspect",
     )
     parser.add_argument(
         "--disable-trusted-monitor",
