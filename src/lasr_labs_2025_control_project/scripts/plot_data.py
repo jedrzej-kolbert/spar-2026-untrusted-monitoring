@@ -412,7 +412,58 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
                 ]["model_info"]["base_prompt"],
             }
         )
-    return pd.DataFrame(final_samples)
+        if "trajectory_id" in metadata:
+            final_samples[-1]["trajectory_id"] = metadata["trajectory_id"]
+            final_samples[-1]["n_actions"] = metadata["n_actions"]
+    df = pd.DataFrame(final_samples)
+    if "trajectory_id" in df:
+        df = _max_over_actions(df, eval_log_path)
+    return df
+
+
+_SCORE_COLUMNS = (
+    "untrusted_collusion_score",
+    "trusted_suspiciousness_score",
+    "untrusted_suspiciousness_score",
+)
+
+
+def _max_over_actions(df: pd.DataFrame, eval_log_path: Path) -> pd.DataFrame:
+    """Per-action monitor logs (view: action): one row per trajectory, each score
+    the max over its available action scores. No scores for a monitor means the
+    trajectory is omitted from ROCs requiring it; missing action rows are an error.
+    """
+    counts = df.groupby("trajectory_id").size()
+    expected = df.groupby("trajectory_id")["n_actions"].first()
+    incomplete = counts[counts != expected]
+    if len(incomplete):
+        raise ValueError(
+            f"{eval_log_path}: {len(incomplete)} trajectories are missing scored "
+            f"actions (e.g. {incomplete.index[0]!r}); was the monitor run limited "
+            "or sampled with actions_per_trajectory?"
+        )
+    grouped = df.groupby("trajectory_id", sort=False)
+    out = grouped.first().reset_index()
+    for column in _SCORE_COLUMNS:
+        out[column] = grouped[column].max().to_numpy()
+        missing = out[column].isna()
+        if missing.any():
+            logger.info(
+                "%s: no %s scores for trajectories %s; excluded from ROCs requiring this score",
+                eval_log_path,
+                column,
+                out.loc[missing, "trajectory_id"].tolist(),
+            )
+    out["sample_id"] = out["trajectory_id"]
+    out["n_actions_scored"] = counts.loc[out["trajectory_id"]].to_numpy()
+    unscored = out[list(_SCORE_COLUMNS)].isna().all(axis=1)
+    if unscored.any():
+        logger.warning(
+            "%s: dropping trajectories with no available monitor scores: %s",
+            eval_log_path,
+            out.loc[unscored, "trajectory_id"].tolist(),
+        )
+    return out.loc[~unscored].reset_index(drop=True)
 
 
 def plot_ensemble_monitoring(
