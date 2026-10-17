@@ -367,6 +367,10 @@ def _resolve_prompts(config: dict[str, Any]) -> None:
 def _resolve_eval_path(
     experiment_folder: Path, eval_path_str: str, check_exists: bool = False
 ) -> Path:
+    # W&B artifact refs (wandb:<entity>/<project>/<name>:vN) are resolved by
+    # the stage itself (tracking.resolve_input), so pass them through as-is.
+    if eval_path_str.startswith("wandb:"):
+        return Path(eval_path_str)
     eval_path = Path(eval_path_str)
     if not eval_path.is_absolute():
         eval_path = experiment_folder / eval_path

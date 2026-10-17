@@ -212,6 +212,7 @@ def _create_subplot_grid(
 def plot_data(
     data_dict: dict[str, OptimizationResult],
     destination_folder: str | Path,
+    file_format: str = PLOT_FILE_FORMAT,
 ) -> None:
     """
     Generate and save all plots to the specified destination folder.
@@ -219,6 +220,7 @@ def plot_data(
     Args:
         data_dict: dict of OptimizationResult for each experiment.
         destination_folder: Directory where figures will be written.
+        file_format: Image format/extension for the figures.
     """
     dest = Path(destination_folder)
     dest.mkdir(parents=True, exist_ok=True)
@@ -226,38 +228,38 @@ def plot_data(
     # Generate both types of ROC curves
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_monitor_roc_curve.{file_format}"),
         plot_mode="untrusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"trusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"trusted_monitor_roc_curve.{file_format}"),
         plot_mode="trusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{file_format}"),
         plot_mode="untrusted_suspiciousness",
     )
 
     plot_safety_usefulness_curves(
-        data_dict, save_path=str(dest / f"safety_usefulness_curves.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"safety_usefulness_curves.{file_format}")
     )
     # Save the underlying safety/usefulness points to JSONL for downstream analysis
     save_safety_usefulness_jsonl(
         data_dict, save_path=str(dest / "safety_usefulness.jsonl")
     )
-    plot_histograms(data_dict, save_path=str(dest / f"histograms.{PLOT_FILE_FORMAT}"))
+    plot_histograms(data_dict, save_path=str(dest / f"histograms.{file_format}"))
     plot_attack_score_scatter(
-        data_dict, save_path=str(dest / f"attack_scores_scatter.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"attack_scores_scatter.{file_format}")
     )
     """
     plot_roc_heatmaps(
-        data_dict, save_path=str(dest / f"roc_heatmaps.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"roc_heatmaps.{file_format}")
     )
     """
     plot_outcome_distributions(
-        data_dict, save_path=str(dest / f"outcome_distributions.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"outcome_distributions.{file_format}")
     )
     return
 
@@ -270,6 +272,7 @@ def plot_histograms(
 
     dest_path = Path(save_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    ext = dest_path.suffix.lstrip(".") or PLOT_FILE_FORMAT
 
     histogram_specs = [
         {
@@ -278,7 +281,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_trusted.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_trusted.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
         {
@@ -287,7 +290,7 @@ def plot_histograms(
             "xlabel": "Collusion Score",
             "class_map": {"positive": "Attack", "negative": "Honeypot"},
             "palette": {"Attack": OI_VERMILION, "Honeypot": OI_YELLOW},
-            "filename": f"histograms_untrusted_collusion.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_collusion.{ext}",
             "bins": {"min": None, "max": None, "width": 2},
         },
         {
@@ -296,7 +299,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_untrusted_suspiciousness.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_suspiciousness.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
     ]
