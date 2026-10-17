@@ -204,22 +204,22 @@ def test_unsupported_or_unbounded_bash_selection_fails_before_writes(
         (
             "closed",
             "apps",
-            "a6e2fd286a7714016745444472b1bc4bba5ed22f9c29c79c9c05f14777c2d97b",
+            "e4e411404220bdef19d3aa48d488947f7ac9afb47f7c539cbd409b50138c99d0",
         ),
         (
             "closed",
             "bigcodebench",
-            "8178d3f82bbca167718926a0ce7c55a90300b3b185b18fa5d061db2495ef5e37",
+            "f9449d26a52e453d917f07e096bb281a3b31d230518c3976f90ba97d6dfd9dd9",
         ),
         (
             "open",
             "apps",
-            "a0695d9f7c5ba27be5016af8196c15dd0feff05da6e431efb3e156c12c465e14",
+            "32b0103d8576d5f74580f2de965ca9370365583d89d6b4909a929e58feaf7cd2",
         ),
         (
             "open",
             "bigcodebench",
-            "555624dcd9688134220ed9e85ae58232a00b972ed170b21433f9571ce25e5206",
+            "a9342ac3ed089a3eea19183ec1b534f83514dd9f9ee67044b875e1561b449049",
         ),
     ],
 )

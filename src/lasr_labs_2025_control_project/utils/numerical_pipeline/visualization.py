@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -84,7 +84,11 @@ def _add_unit_square_outline(
     ax.add_patch(outline)
 
 
-_SENSITIVITY_PARAM_META: dict[str, dict[str, Any]] = {
+#: Display metadata per game parameter, shared by the sensitivity and strategy
+#: plots. A new blue/red strategy variable gets its own strategy panel without
+#: an entry here (labelled by its name, scaled per its parameter space); add
+#: one for a readable label.
+PARAM_META: dict[str, dict[str, Any]] = {
     "blue_team_honeypot_fraction": {
         "team": "blue",
         "label": "Blue Team Honeypot Fraction",
@@ -94,8 +98,11 @@ _SENSITIVITY_PARAM_META: dict[str, dict[str, Any]] = {
     },
     "red_team_roc_threshold": {
         "team": "red",
-        "label": "Red Team ROC Threshold",
-        "xlabel": "Red Team ROC Threshold",
+        "label": "Red Team Collusion Threshold",
+        # U's collusion score is YES minus NO logprob; its scale depends on
+        # the monitor (base vs fine-tuned), so thresholds don't compare
+        # across monitor arms.
+        "xlabel": "Red Team Collusion Threshold\n(U's YES - NO logprob; scale varies by monitor arm)",
         "xlim": None,
         "xscale": "linear",
     },
@@ -212,6 +219,8 @@ def _create_subplot_grid(
 def plot_data(
     data_dict: dict[str, OptimizationResult],
     destination_folder: str | Path,
+    file_format: str = PLOT_FILE_FORMAT,
+    bootstrap: Optional[Mapping[str, Sequence[Dict[str, Any]]]] = None,
 ) -> None:
     """
     Generate and save all plots to the specified destination folder.
@@ -219,6 +228,9 @@ def plot_data(
     Args:
         data_dict: dict of OptimizationResult for each experiment.
         destination_folder: Directory where figures will be written.
+        file_format: Image format/extension for the figures.
+        bootstrap: Optional bootstrap replicate payloads per experiment, drawn
+            as faint points in the strategy figure.
     """
     dest = Path(destination_folder)
     dest.mkdir(parents=True, exist_ok=True)
@@ -226,38 +238,43 @@ def plot_data(
     # Generate both types of ROC curves
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_monitor_roc_curve.{file_format}"),
         plot_mode="untrusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"trusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"trusted_monitor_roc_curve.{file_format}"),
         plot_mode="trusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{file_format}"),
         plot_mode="untrusted_suspiciousness",
     )
 
     plot_safety_usefulness_curves(
-        data_dict, save_path=str(dest / f"safety_usefulness_curves.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"safety_usefulness_curves.{file_format}")
     )
     # Save the underlying safety/usefulness points to JSONL for downstream analysis
     save_safety_usefulness_jsonl(
         data_dict, save_path=str(dest / "safety_usefulness.jsonl")
     )
-    plot_histograms(data_dict, save_path=str(dest / f"histograms.{PLOT_FILE_FORMAT}"))
+    plot_histograms(data_dict, save_path=str(dest / f"histograms.{file_format}"))
     plot_attack_score_scatter(
-        data_dict, save_path=str(dest / f"attack_scores_scatter.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"attack_scores_scatter.{file_format}")
     )
     """
     plot_roc_heatmaps(
-        data_dict, save_path=str(dest / f"roc_heatmaps.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"roc_heatmaps.{file_format}")
     )
     """
     plot_outcome_distributions(
-        data_dict, save_path=str(dest / f"outcome_distributions.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"outcome_distributions.{file_format}")
+    )
+    plot_strategies(
+        data_dict,
+        save_path=str(dest / f"strategies.{file_format}"),
+        bootstrap=bootstrap,
     )
     return
 
@@ -270,6 +287,7 @@ def plot_histograms(
 
     dest_path = Path(save_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    ext = dest_path.suffix.lstrip(".") or PLOT_FILE_FORMAT
 
     histogram_specs = [
         {
@@ -278,7 +296,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_trusted.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_trusted.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
         {
@@ -287,7 +305,7 @@ def plot_histograms(
             "xlabel": "Collusion Score",
             "class_map": {"positive": "Attack", "negative": "Honeypot"},
             "palette": {"Attack": OI_VERMILION, "Honeypot": OI_YELLOW},
-            "filename": f"histograms_untrusted_collusion.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_collusion.{ext}",
             "bins": {"min": None, "max": None, "width": 2},
         },
         {
@@ -296,7 +314,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_untrusted_suspiciousness.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_suspiciousness.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
     ]
@@ -1420,7 +1438,7 @@ def plot_parameter_sensitivity(
     red_blue_params = []
     green_params = []
 
-    for name, meta in _SENSITIVITY_PARAM_META.items():
+    for name, meta in PARAM_META.items():
         # Check if data exists for this parameter
         has_fixed = f"{name}_sensitivity_fixed" in sensitivity_results
         has_reopt = f"{name}_sensitivity_reoptimized" in sensitivity_results
@@ -1861,3 +1879,222 @@ def plot_outcome_distributions(
     plt.close(fig)
 
     return
+
+
+#: Line/marker colour for each team's strategy variables (by name prefix).
+TEAM_COLORS = {"blue": OI_BLUE, "red": OI_VERMILION}
+#: Marker area (points^2) of a pure strategy played with probability 1.
+MIX_MARKER_AREA = 220.0
+
+
+def strategy_parameters(result: OptimizationResult) -> list[str]:
+    """Blue, then red, strategy variables of a solved condition.
+
+    Read from the condition's parameter spaces (falling back to the solved
+    parameters), so a new strategy variable shows up without code changes.
+    """
+    spaces = getattr(result.config, "parameter_spaces", None) or {}
+    names = list(spaces) or list(
+        dict.fromkeys(
+            name
+            for entry in result.results
+            for name in (entry.get("best_parameters") or {})
+        )
+    )
+    return [n for team in ("blue_", "red_") for n in names if n.startswith(team)]
+
+
+def _strategy_axis(
+    name: str, result: OptimizationResult
+) -> tuple[str, str, Optional[tuple[float, float]]]:
+    """(label, scale, limits) for a strategy variable within one condition.
+
+    Limits come from the condition's own parameter space, so the collusion
+    threshold spans that monitor's score range.
+    """
+    meta = PARAM_META.get(name, {})
+    space = (getattr(result.config, "parameter_spaces", None) or {}).get(name, {})
+    label = meta.get("xlabel") or name.replace("_", " ").capitalize()
+    scale = space.get("scale") or meta.get("xscale", "linear")
+    lo, hi = space.get("min"), space.get("max")
+    if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and lo < hi:
+        return label, scale, (float(lo), float(hi))
+    return label, scale, meta.get("xlim")
+
+
+def plot_strategies(
+    data_dict: dict[str, OptimizationResult],
+    save_path: str = f"src/lasr_labs_2025_control_project/results/strategies.{PLOT_FILE_FORMAT}",
+    bootstrap: Optional[Mapping[str, Sequence[Dict[str, Any]]]] = None,
+) -> None:
+    """Plot the equilibrium blue and red strategies across the usefulness sweep.
+
+    One row per experiment, one panel per strategy variable. Usefulness is on
+    the y-axis with the same range as plot_outcome_distributions, so the two
+    figures line up. Each y value is one regeneration cutoff:
+
+    * blue: every pure strategy in blue's Nash mix, marker area proportional
+      to its probability; the line follows the most likely one.
+    * red: red's best response to blue's mix, which is what safety is
+      computed against. Red's Nash mix isn't drawn. When red has several
+      equally good responses the solver picks one arbitrarily, so a jump in a
+      red line doesn't always mean the game changed.
+    * faint points: the most likely blue strategy and red's best response in
+      each bootstrap replicate.
+
+    Rows don't share x-axes: the collusion threshold is on the condition's
+    own monitor score scale, which differs between monitor arms.
+    """
+    dest_path = Path(save_path)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = [(label, res) for label, res in data_dict.items() if res.results]
+    params = list(dict.fromkeys(p for _, res in rows for p in strategy_parameters(res)))
+    if not params:
+        print("No strategies found; skipping strategy plot.")
+        return
+
+    fig, axes = plt.subplots(
+        len(rows),
+        len(params),
+        figsize=(4.5 * len(params), 3.5 * len(rows)),
+        squeeze=False,
+    )
+    fig.suptitle("Equilibrium Strategies (by usefulness)", y=1.02)
+    any_unconverged = False
+    any_bootstrap = False
+    for (label, res), row_axes in zip(rows, axes):
+        sweep = sorted(
+            (e for e in res.results if isinstance(e.get("usefulness"), (int, float))),
+            key=lambda e: e["usefulness"],
+        )
+        replicates = [
+            p["sweep"] for p in (bootstrap or {}).get(label, []) if "sweep" in p
+        ]
+        for name, ax in zip(params, row_axes):
+            color = TEAM_COLORS.get(name.split("_")[0], "#444444")
+
+            boot = [
+                (e["best_parameters"][name], e["usefulness"])
+                for rep in replicates
+                for e in rep
+                if (e.get("best_parameters") or {}).get(name) is not None
+            ]
+            if boot:
+                any_bootstrap = True
+                bx, by = zip(*boot)
+                ax.scatter(
+                    bx, by, s=12, color=color, alpha=0.25, linewidths=0, zorder=1
+                )
+
+            if name.startswith("blue_"):
+                mix = [
+                    (strategy[name], e["usefulness"], prob)
+                    for e in sweep
+                    for strategy, prob in e.get("blue_mixed_strategy") or []
+                    if name in strategy
+                ]
+                if mix:
+                    mx, my, mp = zip(*mix)
+                    ax.scatter(
+                        mx,
+                        my,
+                        s=[MIX_MARKER_AREA * p for p in mp],
+                        facecolor="none",
+                        edgecolor=color,
+                        linewidths=1.0,
+                        zorder=2,
+                    )
+
+            points = [
+                (e["best_parameters"][name], e["usefulness"], e.get("converged", True))
+                for e in sweep
+                if (e.get("best_parameters") or {}).get(name) is not None
+            ]
+            if points:
+                x, y, converged = zip(*points)
+                ax.plot(x, y, color=color, linewidth=1.2, zorder=3)
+                for flag in (True, False):
+                    sel = [i for i, c in enumerate(converged) if bool(c) is flag]
+                    if not sel:
+                        continue
+                    any_unconverged |= not flag
+                    ax.scatter(
+                        [x[i] for i in sel],
+                        [y[i] for i in sel],
+                        marker=CONVERGENCE_MARKERS[flag],
+                        color=color,
+                        s=40,
+                        edgecolor="white",
+                        linewidth=0.6,
+                        zorder=4,
+                    )
+
+            xlabel, scale, xlim = _strategy_axis(name, res)
+            ax.set_xscale(scale)
+            if xlim is not None:
+                ax.set_xlim(xlim)
+            ax.set_ylim(0.0, 1.0)
+            ax.set_xlabel(xlabel)
+            for artist in ax.collections + ax.lines:
+                artist.set_clip_on(False)  # usefulness = 1 sits on the frame
+            _apply_standard_axes_style(ax)
+        row_axes[0].set_ylabel("Usefulness")
+        row_axes[0].set_title(label, loc="left", pad=14)
+
+    teams = {name.split("_")[0] for name in params}
+    handles: list[Any] = []
+    if "blue" in teams:
+        handles += [
+            Line2D([], [], color=OI_BLUE, marker="o", label="Blue: most likely"),
+            Line2D(
+                [],
+                [],
+                linestyle="None",
+                marker="o",
+                markersize=10,
+                markerfacecolor="none",
+                markeredgecolor=OI_BLUE,
+                label="Blue: Nash mix (area = probability)",
+            ),
+        ]
+    if "red" in teams:
+        handles.append(
+            Line2D([], [], color=OI_VERMILION, marker="o", label="Red: best response")
+        )
+    if any_bootstrap:
+        handles.append(
+            Line2D(
+                [],
+                [],
+                linestyle="None",
+                marker="o",
+                markersize=4,
+                color="#444444",
+                alpha=0.35,
+                label="Bootstrap replicate",
+            )
+        )
+    if any_unconverged:
+        handles.append(
+            Line2D(
+                [],
+                [],
+                linestyle="None",
+                marker=CONVERGENCE_MARKERS[False],
+                markersize=8,
+                color="#444444",
+                label="Did Not Converge",
+            )
+        )
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        frameon=False,
+        ncol=min(len(handles), 5),
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    print(f"Plot saved to: {dest_path}")
+    plt.close(fig)

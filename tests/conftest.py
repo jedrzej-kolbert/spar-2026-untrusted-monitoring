@@ -26,6 +26,15 @@ from scipy import stats
 load_dotenv()
 
 
+@pytest.fixture(autouse=True)
+def _no_wandb(monkeypatch):
+    """Tests never log to W&B; tests that need another mode set it themselves."""
+    from lasr_labs_2025_control_project.tracking import core
+
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+    monkeypatch.setattr(core, "_api_cache", {})
+
+
 def _discretize(u: np.ndarray, loc: float, scale: float) -> np.ndarray:
     return np.clip(np.round(stats.norm.ppf(u, loc=loc, scale=scale)), 0, 10)
 

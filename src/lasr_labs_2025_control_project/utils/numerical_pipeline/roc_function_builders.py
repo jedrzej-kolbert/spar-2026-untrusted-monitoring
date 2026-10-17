@@ -531,47 +531,6 @@ def build_joint_roc_function(
     return joint_roc_function, metadata
 
 
-def auc_roc_from_confusion_matrix(
-    confusion_matrix: dict[str, int],
-) -> tuple[float, dict[str, list[float]]]:
-    """Calculate AUC-ROC from label counts.
-
-    Args:
-        confusion_matrix: Dictionary with label counts (TP, FP, TN, FN)
-
-    Returns:
-        AUC-ROC score
-    """
-    assert confusion_matrix.keys() == {
-        "tp",
-        "fp",
-        "tn",
-        "fn",
-    }, "Label count dict must have keys for tp, fp, tn, fn"
-    tp = confusion_matrix.get("tp", 0)
-    fp = confusion_matrix.get("fp", 0)
-    tn = confusion_matrix.get("tn", 0)
-    fn = confusion_matrix.get("fn", 0)
-
-    # Calculate separation of gaussians with this distribution
-    tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-    assert tnr + tpr > 1.0, "Your classifier is worse than useless!"
-    # Inverse gaussian CDF on both probabilities
-    # Inverse gaussian CDF on both probabilities
-    threshold_negative = stats.norm.ppf(tnr)
-    threshold_positive = stats.norm.ppf(tpr)
-
-    # Calculate separation between the distributions
-    separation = threshold_positive + threshold_negative
-
-    # Calculate AUC-ROC from separation (using the inverse of the formula in generate_tpr_and_fpr_values)
-    auc_roc = float(stats.norm.cdf(separation / np.sqrt(2)))
-
-    return auc_roc, {"tpr": [tpr], "fpr": [1 - tnr]}
-
-
 def calculate_tpr_fpr_from_scores(
     positive_scores: List[float],
     negative_scores: List[float],

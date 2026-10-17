@@ -41,6 +41,13 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     ModelInfo,
 )
 from lasr_labs_2025_control_project.settings.setting import AppsSetting
+from lasr_labs_2025_control_project.tracking import (
+    StageRun,
+    config_tags,
+    load_raw_config,
+    names,
+    prompt_digest,
+)
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
 from lasr_labs_2025_control_project.utils.config_loader import (
     DatasetType,
@@ -331,6 +338,7 @@ def main(
     config_path = Path(config)
 
     normalized = load_and_normalize_config(config_path, config_type="generator")
+    raw = load_raw_config(config_path)
     Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
     shutil.copy(
         config_path, normalized.experiment_folder / "configs" / "generator_config.yaml"
@@ -356,20 +364,51 @@ def main(
         else:
             raise ValueError(f"Unsupported dataset_type: {run.generator.dataset_type}")
 
-        result = eval(
-            tasks=task,
-            model=run.generator.model_info.model,
-            epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
-            reasoning_tokens=0,
-            reasoning_effort="minimal",  # openai models
-            max_tokens=run.generator.max_tokens,  # None -> provider default
-            limit=run.limit,
+        setting = run.generator.dataset_type.value
+        split = run.generator.data_split.value
+        prompt_name = raw["runs"][run.label].get(
+            "system_prompt", raw.get("defaults", {}).get("system_prompt")
         )
-        run.save_path.parent.mkdir(parents=True, exist_ok=True)
-        run.save_path.touch()
-        shutil.copy(result[0].location, run.save_path)
+        tracker = StageRun(
+            "generate",
+            names.generation_name(
+                setting, run.generator.model_info.model, split, run.label, prompt_name
+            ),
+            config={
+                "config_file": str(config_path),
+                "yaml": raw,
+                "label": run.label,
+                "setting": setting,
+                "split": split,
+                "model": run.generator.model_info.model,
+                "prompt": prompt_name,
+                "prompt_digest": prompt_digest(run.generator.model_info.system_prompt),
+                "run": run,
+            },
+            tags=["generate", run.label, setting, split, *config_tags(raw)],
+        )
+        with tracker:
+            result = eval(
+                tasks=task,
+                model=run.generator.model_info.model,
+                epochs=Epochs(1, ["pass_at_1"]),
+                max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
+                max_sandboxes=8,
+                reasoning_tokens=0,
+                reasoning_effort="minimal",  # openai models
+                max_tokens=run.generator.max_tokens,  # None -> provider default
+                limit=run.limit,
+                metadata=tracker.eval_metadata(),
+            )
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            run.save_path.touch()
+            shutil.copy(result[0].location, run.save_path)
+            tracker.finish_eval(
+                result[0],
+                run.save_path,
+                limit=run.limit,
+                metadata={"label": run.label, "setting": setting, "split": split},
+            )
         if result[0].status != "success":
             raise SystemExit(
                 f"{run.label}: eval ended with status {result[0].status!r}, "
