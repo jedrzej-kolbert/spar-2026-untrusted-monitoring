@@ -273,6 +273,18 @@ def resolve_input(path_or_ref: str | Path) -> ResolvedInput:
     return resolved
 
 
+def artifact_input(artifact: Any) -> ResolvedInput:
+    """A logged (committed) artifact as an input to declare on another run."""
+    return ResolvedInput(
+        source=f"{REF_PREFIX}{artifact.qualified_name}",
+        local_path=Path(artifact.name),
+        name=artifact.name.split(":")[0],
+        md5="",
+        tracked=True,
+        artifact=artifact,
+    )
+
+
 def is_finetuned_model(model: str) -> bool:
     return "tinker://" in model or "ft:" in model
 
@@ -528,9 +540,15 @@ class StageRun:
         type: str,
         name: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None,
-    ) -> None:
+        wait: bool = False,
+    ) -> Any:
+        """Log files as an artifact; returns it (None when not logging).
+
+        With ``wait``, block until it is committed, so another run can then
+        declare it as an input (``artifact_input``).
+        """
         if self.run is None:
-            return
+            return None
         import wandb
 
         artifact_name = names.fit(name or self.name)
@@ -541,7 +559,45 @@ class StageRun:
         )
         for file in [path] if isinstance(path, (str, Path)) else path:
             artifact.add_file(str(file))
-        self.run.log_artifact(artifact)
+        logged = self.run.log_artifact(artifact)
+        if wait and not self.offline:
+            logged.wait()
+        return logged
+
+    def log_roc(
+        self, key: str, curves: Mapping[str, Sequence[tuple[float, float]]], title: str
+    ) -> None:
+        """ROC curves as one W&B ROC chart, drawn from (fpr, tpr) points.
+
+        A table chart keeps every point; a metric plotted against another
+        metric keeps one point per x value, which turns an empirical ROC's
+        vertical steps into diagonals.
+        """
+        if self.run is None:
+            return
+        import wandb
+        from wandb.plot import plot_table
+
+        rows: list[Any] = [
+            [label, float(fpr), float(tpr)]
+            for label, points in curves.items()
+            for fpr, tpr in sorted(points)
+        ]
+        table = wandb.Table(columns=["class", "fpr", "tpr"], data=rows)
+        self.run.log(
+            {
+                key: plot_table(
+                    vega_spec_name="wandb/area-under-curve/v0",
+                    data_table=table,
+                    fields={"x": "fpr", "y": "tpr", "class": "class"},
+                    string_fields={
+                        "title": title,
+                        "x-axis-title": "False positive rate",
+                        "y-axis-title": "True positive rate",
+                    },
+                )
+            }
+        )
 
     def log_model_ref(
         self, model_id: str, metadata: Optional[Mapping[str, Any]] = None
