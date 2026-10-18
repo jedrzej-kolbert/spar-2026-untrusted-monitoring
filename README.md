@@ -142,23 +142,27 @@ steps; use the same value in both.
 
 ## Results
 
-- **W&B** has one run per stage and label, and one analyse run per condition. Filter by job type
-  (stage) or by tag (collusion strategy, transform, monitor arm, label). Set
+- **W&B** has one run per stage and label, one `game` run per condition (the solved game and its
+  bootstrap, saved as a `game` artifact), and one `analysis` run per `plot_data.py` invocation,
+  which draws the figures for all its conditions and lists their `game` artifacts as inputs.
+  Filter by job type (stage) or by tag (collusion strategy, transform, monitor arm, label). Set
   `WANDB_RUN_GROUP=<name>` to group a batch of runs. Curves are logged as raw numbers: each y
   metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a
-  custom panel). Panels plotted against "Step" are meaningless. Each analyse run also logs its
-  figures as images under `figures/`.
+  custom panel). Panels plotted against "Step" are meaningless. The analysis run logs the
+  figures as images under `figures/`; each figure names U, H and T under its legend.
 
   | Panel (y) | x-axis | One point is |
   |---|---|---|
   | `<variant>/safety` | `<variant>/usefulness` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
   | `<variant>/band/safety_{lo,median,hi}` | `<variant>/band/usefulness` | the same, as bootstrap percentiles |
-  | `roc/<monitor>/tpr` | `roc/<monitor>/fpr` | one score threshold: fraction of attacks (tpr) and of negatives (fpr) scoring at or above it |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |
 
-  `<variant>` is `all_monitors` or `um_only`. For `roc/untrusted_collusion`, negatives are
-  honeypots and "at or above" means U would collude; for the two suspiciousness monitors,
-  negatives are honest solutions.
+  `<variant>` is `all_monitors` or `um_only`. ROC curves are W&B ROC charts (`roc/<monitor>`; in an
+  analysis run, one curve per condition): each point is a score threshold, with the fraction of
+  attacks (tpr) and of negatives (fpr) scoring at or above it. For `roc/untrusted_collusion`,
+  negatives are honeypots and "at or above" means U would collude; for the two suspiciousness
+  monitors, negatives are honest solutions. These are the empirical curves; the figures' trusted
+  and collusion ROCs show the fitted model the game uses, which interpolates between thresholds.
 - **Local figures** for the paper's groupings come from `scripts/run_all_grouped_plotting.sh`. To
   analyse every monitor config in a tree, run `scripts/plot_everything.sh <config dir>`. For big
   resumable bootstrap sweeps use `scripts/bootstrap.py`, then `scripts/plot_bootstrap_curves.py`.

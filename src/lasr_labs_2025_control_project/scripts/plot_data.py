@@ -20,8 +20,9 @@ import json
 import logging
 import tempfile
 import zlib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Optional
 
 import pandas as pd
 from inspect_ai.log import read_eval_log
@@ -29,6 +30,7 @@ from inspect_ai.log import read_eval_log
 from lasr_labs_2025_control_project.tracking import (
     ALLOW_UNLINKED_HELP,
     StageRun,
+    artifact_input,
     config_tags,
     load_raw_config,
     names,
@@ -104,15 +106,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Aggregate results keyed by experiment_name
-    aggregated: dict[str, OptimizationResult] = {}
+    # One game run per condition, keyed by experiment_name
+    games: dict[str, Game] = {}
 
     for cfg in args.config:
         cfg_path = Path(cfg)
         normalized = load_and_normalize_config(cfg_path, config_type="monitor")
         if args.disable_trusted_monitor:
             normalized.defaults["disable_trusted_monitor"] = True
-        aggregated[normalized.experiment_name] = analyse_condition(
+        games[normalized.experiment_name] = analyse_condition(
             normalized,
             cfg_path,
             replicates=args.bootstrap_replicates,
@@ -120,6 +122,7 @@ def main() -> None:
             n_jobs=args.n_jobs,
             allow_unlinked=args.allow_unlinked,
         )
+    aggregated = {label: game.result for label, game in games.items()}
 
     dest_folder = (
         normalized.results_folder or "src/lasr_labs_2025_control_project/results"
@@ -138,6 +141,81 @@ def main() -> None:
     logger.info("Generating visualizations across %d experiments", len(aggregated))
     plot_data(aggregated, destination_folder=dest_folder)
     logger.info("Visualizations saved to %s", dest_folder)
+    log_analysis(games, args.grouped_path, allow_unlinked=args.allow_unlinked)
+
+
+@dataclass
+class Game:
+    """One condition's solved game: its primary result and payload, and the
+    ``game`` artifact its run logged (None when W&B is off)."""
+
+    name: str
+    result: OptimizationResult
+    payload: dict[str, Any]
+    artifact: Any = None
+
+
+def analysis_run_name(games: Mapping[str, Game], grouped_path: Optional[str]) -> str:
+    """``analysis.<grouping>``, or the conditions' common prefix (``apps.self_rec``)."""
+    if grouped_path:
+        return names.fit(f"analysis.{names.clean(grouped_path)}")
+    parts = [game.name.split(".") for game in games.values()]
+    common = []
+    for segment in zip(*parts):
+        if len(set(segment)) > 1:
+            break
+        common.append(segment[0])
+    return names.fit("analysis." + (".".join(common) or "conditions"))
+
+
+def log_analysis(
+    games: Mapping[str, Game],
+    grouped_path: Optional[str] = None,
+    *,
+    allow_unlinked: bool = False,
+) -> None:
+    """The analysis run: the figures for every condition analysed together.
+
+    It declares each condition's ``game`` artifact as an input, so W&B's
+    lineage shows which games a set of figures came from.
+    """
+    tags: list[str] = ["analysis"]
+    for game in games.values():
+        tags += game.payload.get("tags", [])
+    tracker = StageRun(
+        "analysis",
+        analysis_run_name(games, grouped_path),
+        config={
+            "conditions": [game.name for game in games.values()],
+            "grouped_path": grouped_path,
+        },
+        tags=tags,
+        inputs=[artifact_input(g.artifact) for g in games.values() if g.artifact],
+        allow_unlinked=allow_unlinked,
+    )
+    with tracker, tempfile.TemporaryDirectory() as tmp:
+        monitors = {m for g in games.values() for m in g.payload.get("roc_curves", {})}
+        for monitor in sorted(monitors):
+            tracker.log_roc(
+                f"roc/{monitor}",
+                {
+                    game.name: list(zip(roc["fpr"], roc["tpr"]))
+                    for game in games.values()
+                    if (roc := game.payload.get("roc_curves", {}).get(monitor))
+                },
+                title=f"{monitor} ROC",
+            )
+        figures = Path(tmp) / "figures"
+        plot_data(
+            {label: game.result for label, game in games.items()},
+            figures,
+            file_format="png",
+        )
+        images = sorted(figures.glob("*.png"))
+        for image in images:
+            tracker.log_image(f"figures/{image.stem}", image)
+        if images:
+            tracker.log_artifact(images, type="figures")
 
 
 def analysis_variants(defaults: dict[str, Any]) -> list[tuple[str, bool, bool]]:
@@ -169,8 +247,9 @@ def analyse_condition(
     ci: float = 0.80,
     n_jobs: int = -1,
     allow_unlinked: bool = False,
-) -> OptimizationResult:
-    """Solve, bootstrap and log one condition; returns the primary variant's result."""
+) -> Game:
+    """Solve, bootstrap and log one condition as a ``game`` run (no figures:
+    those come from the analysis run)."""
     raw = load_raw_config(cfg_path)
     runs = {run.label: run for run in normalized.runs}
     labels = (RunLabel.ATTACKS, RunLabel.HONEYPOTS, RunLabel.HONEST)
@@ -185,8 +264,9 @@ def analyse_condition(
         Path(normalized.results_folder) if normalized.results_folder else None
     )
 
+    models = condition_models(attacks_df, honeypots_df)
     tracker = StageRun(
-        "analyse",
+        "game",
         name,
         config={
             "config_file": str(cfg_path),
@@ -195,12 +275,14 @@ def analyse_condition(
             "variants": [v[0] for v in variants],
             "bootstrap_replicates": replicates,
             "bootstrap_ci": ci,
+            "models": models,
         },
-        tags=["analyse", *config_tags(raw)],
+        tags=["game", *config_tags(raw)],
         inputs=list(inputs.values()),
         allow_unlinked=allow_unlinked,
     )
     primary: OptimizationResult | None = None
+    primary_payload: dict[str, Any] = {}
     with tracker, tempfile.TemporaryDirectory() as tmp:
         files: list[Path] = []
         out_dir = results_folder or Path(tmp)
@@ -241,20 +323,30 @@ def analyse_condition(
                 files.append(path)
             log_variant(tracker, variant, payload, reps, ci)
             if index == 0:
-                primary = result
+                primary, primary_payload = result, payload
                 log_payload_overview(tracker, payload)
 
         assert primary is not None
-        figures = Path(tmp) / "figures"
-        plot_data({normalized.experiment_name: primary}, figures, file_format="png")
-        for image in sorted(figures.glob("*.png")):
-            tracker.log_image(f"figures/{image.stem}", image)
-        tracker.log_artifact(
+        artifact = tracker.log_artifact(
             files,
-            type="analysis",
-            metadata={"variants": [v[0] for v in variants]},
+            type="game",
+            metadata={"variants": [v[0] for v in variants], "models": models},
+            wait=True,
         )
-    return primary
+    primary_payload["tags"] = config_tags(raw)
+    return Game(name, primary, primary_payload, artifact)
+
+
+def condition_models(
+    attacks_df: pd.DataFrame, honeypots_df: pd.DataFrame
+) -> dict[str, Any]:
+    """U and H (who wrote the attacks and the honeypots) and T (the trusted
+    monitor), as the monitor logs record them."""
+    return {
+        "U": attacks_df.attrs.get("generator"),
+        "H": honeypots_df.attrs.get("generator"),
+        "T": attacks_df.attrs.get("trusted_monitor"),
+    }
 
 
 def log_variant(
@@ -306,9 +398,11 @@ def log_variant(
 def log_payload_overview(tracker: StageRun, payload: dict[str, Any]) -> None:
     """Monitor ROC curves and the honest-UM operating point (variant-independent)."""
     for monitor, roc in payload.get("roc_curves", {}).items():
-        tracker.define_curve(f"roc/{monitor}/tpr", f"roc/{monitor}/fpr")
-        for fpr, tpr in sorted(zip(roc["fpr"], roc["tpr"])):
-            tracker.log({f"roc/{monitor}/fpr": fpr, f"roc/{monitor}/tpr": tpr})
+        tracker.log_roc(
+            f"roc/{monitor}",
+            {monitor: list(zip(roc["fpr"], roc["tpr"]))},
+            title=f"{monitor} ROC",
+        )
     tracker.summary(
         {
             "sample_counts": payload.get("sample_counts"),
@@ -367,6 +461,14 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
     df = pd.DataFrame(final_samples)
     if "trajectory_id" in df:
         df = _max_over_actions(df, eval_log_path)
+    # Who wrote these solutions, and the trusted monitor that scored them.
+    first = {**log.samples[0].metadata, **log.samples[0].store}
+    generator = (first.get("generator_info") or {}).get("model_info") or {}
+    trusted = (first.get("trusted_suspiciousness_score_metadata") or {}).get(
+        "model_info"
+    ) or {}
+    df.attrs["generator"] = generator.get("model")
+    df.attrs["trusted_monitor"] = trusted.get("model")
     return df
 
 
@@ -508,6 +610,7 @@ def solve_condition(
                 .tolist(),
             },
         )
+    meta["models"] = condition_models(attacks_df, honeypots_df)  # for figure captions
     result.config.monitor_roc_fn_metadata = meta
     return result
 
