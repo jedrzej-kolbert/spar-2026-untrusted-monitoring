@@ -64,6 +64,8 @@ class RunContext:
     pipeline: PipelineContext
     #: node hash -> output, for every node that is available
     outputs: dict[str, Output] = field(default_factory=dict)
+    #: node hash -> where an imported output came from (pipeline.ingest)
+    sources: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def tracker(
         self,
@@ -74,6 +76,10 @@ class RunContext:
         inputs: list[ResolvedInput] = (),  # type: ignore[assignment]
         models: list[str] = (),  # type: ignore[assignment]
     ) -> StageRun:
+        source = self.sources.get(node.hash)
+        if source is not None:
+            config = {**config, "source": source}
+            tags = [*tags, "imported"]
         return StageRun(
             node.stage,
             node.name,
@@ -111,10 +117,13 @@ def model_info(model: str, system_prompt: str, base_prompt: str) -> ModelInfo:
 # -- generate ----------------------------------------------------------------
 
 
-def run_generate(node: Node, ctx: RunContext) -> Output:
+def generate_tracker(node: Node, ctx: RunContext) -> StageRun:
     p = node.params
-    out = ctx.store.output_path(node)
-    tracker = ctx.tracker(
+    try:
+        digest = prompt_digest(get_prompt_by_name(p["system_prompt"]))
+    except ValueError:  # BashArena's policy prompts live in its runtime
+        digest = None
+    return ctx.tracker(
         node,
         config={
             "label": p["label"],
@@ -122,9 +131,16 @@ def run_generate(node: Node, ctx: RunContext) -> Output:
             "split": p["split"],
             "model": p["model"],
             "prompt": p["system_prompt"],
+            "prompt_digest": digest,
         },
         tags=[p["label"], p["setting"], p["split"]],
     )
+
+
+def run_generate(node: Node, ctx: RunContext) -> Output:
+    p = node.params
+    out = ctx.store.output_path(node)
+    tracker = generate_tracker(node, ctx)
     if p["setting"] == "basharena":
         _generate_basharena(node, out, tracker, ctx)
         return Output(path=str(out))
@@ -134,7 +150,6 @@ def run_generate(node: Node, ctx: RunContext) -> Output:
     )
 
     system_prompt = get_prompt_by_name(p["system_prompt"])
-    tracker.config["prompt_digest"] = prompt_digest(system_prompt)
     run = GeneratorRunConfig(
         label=p["label"],
         save_path=out,
@@ -232,6 +247,25 @@ def _generate_basharena(
 # -- transform ---------------------------------------------------------------
 
 
+def transform_tracker(node: Node, ctx: RunContext, source: ResolvedInput) -> StageRun:
+    spec = node.params["transform"]
+    digest = (
+        prompt_digest(get_prompt_by_name(spec["system_prompt"]))
+        if spec["type"] == "llm"
+        else None
+    )
+    return ctx.tracker(
+        node,
+        config={
+            "label": node.info["label"],
+            "transform": spec["type"],
+            "prompt_digest": digest,
+        },
+        tags=[node.info["label"], spec["type"]],
+        inputs=[source],
+    )
+
+
 def run_transform(node: Node, ctx: RunContext) -> Output:
     from lasr_labs_2025_control_project.scripts.transform_solutions_inspect import (
         run_transform as transform,
@@ -256,16 +290,7 @@ def run_transform(node: Node, ctx: RunContext) -> Output:
             remove_comments=spec["remove_comments"],
         ),
     )
-    tracker = ctx.tracker(
-        node,
-        config={
-            "label": node.info["label"],
-            "transform": spec["type"],
-            "prompt_digest": prompt_digest(info.system_prompt) if info else None,
-        },
-        tags=[node.info["label"], spec["type"]],
-        inputs=[source],
-    )
+    tracker = transform_tracker(node, ctx, source)
     transform(
         run,
         tracker,
@@ -279,13 +304,15 @@ def run_transform(node: Node, ctx: RunContext) -> Output:
 # -- finetune ----------------------------------------------------------------
 
 
-def run_finetune(node: Node, ctx: RunContext) -> Output:
+def training_data(
+    node: Node, train: list[ResolvedInput]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A fine-tune's examples and their composition record (deterministic)."""
     from lasr_labs_2025_control_project.finetuning.sft_data import build_training_data
 
     p, hyper = node.params, node.params["training"]
-    train = [ctx.input(node, "positives"), ctx.input(node, "negatives")]
     action = p["view"] == "action"
-    examples, composition = build_training_data(
+    return build_training_data(
         [i.local_path for i in train],
         target_model=p["target_model"],
         transformed=p["transformed"],
@@ -301,6 +328,40 @@ def run_finetune(node: Node, ctx: RunContext) -> Output:
         ),
         labels=p["labels"],
     )
+
+
+def finetune_tracker(
+    node: Node,
+    ctx: RunContext,
+    inputs: list[ResolvedInput],
+    composition: dict[str, Any],
+) -> StageRun:
+    p = node.params
+    return ctx.tracker(
+        node,
+        config={
+            "backend": p["backend"],
+            "base_model": p["base_model"],
+            "checkpoint_name": p["checkpoint_name"],
+            "max_examples": p["max_examples"],
+            "seed": node.seed,
+            **p["training"],
+            "training_data": composition,
+        },
+        tags=[
+            p["backend"],
+            *(f"pos-{m}" for m in composition.get("positive_eval_modes", [])),
+            *(f"neg-{m}" for m in composition.get("negative_eval_modes", [])),
+            *(["permuted-labels"] if p["labels"] == "permuted" else []),
+        ],
+        inputs=inputs,
+    )
+
+
+def run_finetune(node: Node, ctx: RunContext) -> Output:
+    p = node.params
+    train = [ctx.input(node, "positives"), ctx.input(node, "negatives")]
+    examples, composition = training_data(node, train)
     minimum = ctx.cfg.elicitation.min_examples_per_label
     if min(composition["n_positive"], composition["n_negative"]) < minimum:
         raise ConfigError(
@@ -311,25 +372,7 @@ def run_finetune(node: Node, ctx: RunContext) -> Output:
     evals = [
         ctx.input(node, r) for r in ("eval_attacks", "eval_honeypots") if r in node.deps
     ]
-    tracker = ctx.tracker(
-        node,
-        config={
-            "backend": p["backend"],
-            "base_model": p["base_model"],
-            "checkpoint_name": p["checkpoint_name"],
-            "max_examples": p["max_examples"],
-            "seed": node.seed,
-            **hyper,
-            "training_data": composition,
-        },
-        tags=[
-            p["backend"],
-            *(f"pos-{m}" for m in composition.get("positive_eval_modes", [])),
-            *(f"neg-{m}" for m in composition.get("negative_eval_modes", [])),
-            *(["permuted-labels"] if p["labels"] == "permuted" else []),
-        ],
-        inputs=train + evals,
-    )
+    tracker = finetune_tracker(node, ctx, train + evals, composition)
     usage: dict[str, int] = {}
     if p["backend"] == "tinker":
         model = _finetune_tinker(node, examples, evals, tracker, usage)
@@ -420,6 +463,40 @@ def _finetune_openai(
 # -- monitor -----------------------------------------------------------------
 
 
+def monitor_models(node: Node, ctx: RunContext) -> dict[str, str]:
+    """Each monitor's model, with a fine-tuned collusion monitor resolved."""
+    models = {}
+    for name, entry in node.params["monitors"].items():
+        model = entry["model"]
+        if name == "untrusted_collusion" and "collusion_model" in node.deps:
+            model = ctx.outputs[node.deps["collusion_model"].hash].model
+        assert model is not None
+        models[name] = model
+    return models
+
+
+def monitor_tracker(node: Node, ctx: RunContext, source: ResolvedInput) -> StageRun:
+    p = node.params
+    models = monitor_models(node, ctx)
+    return ctx.tracker(
+        node,
+        config={
+            "label": p["label"],
+            "monitors": {
+                name: {**entry, "model": models[name]}
+                for name, entry in p["monitors"].items()
+            },
+            "prompt_digests": {
+                name: prompt_digest(get_prompt_by_name(entry["system_prompt"]))
+                for name, entry in p["monitors"].items()
+            },
+        },
+        tags=[p["label"], *ctx.condition_tags(node)],
+        inputs=[source],
+        models=list(models.values()),
+    )
+
+
 def run_monitor(node: Node, ctx: RunContext) -> Output:
     from lasr_labs_2025_control_project.scripts.monitor_solutions_inspect import (
         run_monitor as monitor,
@@ -430,13 +507,8 @@ def run_monitor(node: Node, ctx: RunContext) -> Output:
     configs: dict[str, Optional[MonitorConfig]] = dict.fromkeys(
         (*MONITOR_SLOTS.values(), "trusted_collusion_monitor")
     )
-    models = []
-    for name, entry in p["monitors"].items():
-        model = entry["model"]
-        if name == "untrusted_collusion" and "collusion_model" in node.deps:
-            model = ctx.outputs[node.deps["collusion_model"].hash].model
-        assert model is not None
-        models.append(model)
+    for name, model in monitor_models(node, ctx).items():
+        entry = p["monitors"][name]
         configs[MONITOR_SLOTS[name]] = MonitorConfig(
             model_info=model_info(model, entry["system_prompt"], entry["base_prompt"]),
             transformed=entry["transformed"],
@@ -453,23 +525,7 @@ def run_monitor(node: Node, ctx: RunContext) -> Output:
         view=p["view"],
         action_options=ActionViewOptions(**action) if action else None,
     )
-    tracker = ctx.tracker(
-        node,
-        config={
-            "label": p["label"],
-            "monitors": {
-                name: {**entry, "model": model}
-                for (name, entry), model in zip(p["monitors"].items(), models)
-            },
-            "prompt_digests": {
-                name: prompt_digest(get_prompt_by_name(entry["system_prompt"]))
-                for name, entry in p["monitors"].items()
-            },
-        },
-        tags=[p["label"], *ctx.condition_tags(node)],
-        inputs=[source],
-        models=models,
-    )
+    tracker = monitor_tracker(node, ctx, source)
     monitor(
         run,
         tracker,
@@ -483,17 +539,11 @@ def run_monitor(node: Node, ctx: RunContext) -> Output:
 # -- analyse -----------------------------------------------------------------
 
 
-def run_analyse(node: Node, ctx: RunContext) -> Output:
-    from lasr_labs_2025_control_project.scripts.plot_data import (
-        BootstrapSettings,
-        SolveSettings,
-        analyse_condition,
-    )
-
+def analyse_tracker(
+    node: Node, ctx: RunContext, inputs: dict[str, ResolvedInput]
+) -> StageRun:
     p = node.params
-    inputs = {label: ctx.input(node, label) for label in node.deps}
-    bootstrap = ctx.cfg.optimization.bootstrap
-    tracker = ctx.tracker(
+    return ctx.tracker(
         node,
         config={
             "condition": p["condition"],
@@ -508,6 +558,29 @@ def run_analyse(node: Node, ctx: RunContext) -> Output:
         tags=list(p["condition"].values()),
         inputs=list(inputs.values()),
     )
+
+
+def analysis_record(node: Node, ctx: RunContext) -> dict[str, Any]:
+    """What an analysis payload stores about the step that produced it."""
+    models = ctx.cfg.models
+    return {
+        **node.record(),
+        "experiment": ctx.cfg.name,
+        "models": {"U": models.U, "T": models.T, "H": models.H},
+    }
+
+
+def run_analyse(node: Node, ctx: RunContext) -> Output:
+    from lasr_labs_2025_control_project.scripts.plot_data import (
+        BootstrapSettings,
+        SolveSettings,
+        analyse_condition,
+    )
+
+    p = node.params
+    inputs = {label: ctx.input(node, label) for label in node.deps}
+    bootstrap = ctx.cfg.optimization.bootstrap
+    tracker = analyse_tracker(node, ctx, inputs)
     folder = ctx.store.folder(node)
     analyse_condition(
         name=node.name,
@@ -528,15 +601,7 @@ def run_analyse(node: Node, ctx: RunContext) -> Output:
         seed=node.seed,
         out_dir=folder,
         tracker=tracker,
-        record={
-            **node.record(),
-            "experiment": ctx.cfg.name,
-            "models": {
-                "U": ctx.cfg.models.U,
-                "T": ctx.cfg.models.T,
-                "H": ctx.cfg.models.H,
-            },
-        },
+        record=analysis_record(node, ctx),
         min_samples=p["min_samples_per_label"],
     )
     return Output(path=str(folder))

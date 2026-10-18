@@ -5,6 +5,7 @@ See the package docstring (``tracking/__init__.py``) for the design overview.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import enum
 import hashlib
@@ -12,6 +13,8 @@ import logging
 import math
 import os
 import re
+import secrets
+import string
 from collections import defaultdict
 from pathlib import Path
 from types import TracebackType
@@ -84,9 +87,30 @@ def prompt_digest(text: str) -> str:
 
 
 def _md5_b64(path: Path) -> str:
-    from wandb.sdk.lib.hashutil import md5_file_b64
+    """Base64 MD5 of a file: how W&B identifies an artifact's files."""
+    digest = hashlib.md5()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return base64.b64encode(digest.digest()).decode("ascii")
 
-    return str(md5_file_b64(str(path)))
+
+def _has_api_key() -> bool:
+    """Whether W&B credentials are configured (``wandb.Api`` refuses without)."""
+    import wandb
+    from wandb.errors import UsageError
+
+    try:
+        wandb.Api(timeout=_INIT_TIMEOUT_SECONDS)
+    except UsageError:
+        return False
+    return True
+
+
+def _run_id() -> str:
+    return "".join(
+        secrets.choice(string.ascii_lowercase + string.digits) for _ in range(8)
+    )
 
 
 def _project() -> str:
@@ -107,9 +131,8 @@ def _api() -> Any:
     if mode() == "online":
         try:
             import wandb
-            from wandb.sdk.lib.apikey import api_key
 
-            if api_key():
+            if _has_api_key():
                 api = wandb.Api(timeout=_INIT_TIMEOUT_SECONDS)
                 api.viewer  # forces a round-trip, so "unreachable" shows up here
         except Exception as exc:  # network, auth, server errors
@@ -474,13 +497,11 @@ class StageRun:
 
     def _init(self, init_mode: Literal["online", "offline"]) -> Any:
         import wandb
-        from wandb.sdk.lib.apikey import api_key
-        from wandb.util import generate_id
 
-        if init_mode == "online" and not api_key():
+        if init_mode == "online" and not _has_api_key():
             logger.warning("No W&B API key found (run `wandb login`).")
             return None
-        run_id = generate_id()
+        run_id = _run_id()
         try:
             return wandb.init(
                 project=_project(),

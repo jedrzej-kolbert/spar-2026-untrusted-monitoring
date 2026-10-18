@@ -46,6 +46,13 @@ would call paid models only prints itself unless ``allow_paid=true``.
 ``execute.py`` runs a node by calling the stage functions in ``scripts/`` and
 ``finetuning/`` under a ``tracking.StageRun``.
 
+Importing (``ingest.py``) turns existing outputs into steps: loose .eval files
+are matched to the steps of a declared experiment by their contents, then
+copied in with the step's key and logged through the same per-stage tracker
+builders as ``execute.py`` (so imported and executed runs look alike).
+Pipeline run folders are re-logged from the store, with fine-tune curves read
+back from the local W&B run files (``tracking/local_runs.py``).
+
 Adding a setting: a ``conf/setting/<name>.yaml`` (prompts, view, ids), a
 ``DatasetType`` and task in ``scripts/generate_solutions_inspect.py`` (or, for
 a separate runtime like BashArena, a branch in ``execute.run_generate``).

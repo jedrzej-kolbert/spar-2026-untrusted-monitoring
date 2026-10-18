@@ -83,6 +83,24 @@ folder under `experiments/<setting>/<stage>/`. Useful options:
 `experiments/runs/<experiment>/<time>/.hydra/` and attached to every W&B run it made. Analysis
 files and figures are in each condition's `experiments/<setting>/analyse/` folder.
 
+**Importing existing results.** `.eval` files made outside the pipeline (e.g. one experiment's
+folder from the team Drive) can become steps of a pipeline experiment:
+
+```bash
+I="uv run python -m lasr_labs_2025_control_project.pipeline.ingest"
+$I <folder of .eval files> experiment=paper/apps_causal   # shows which file is which step
+$I <folder of .eval files> experiment=paper/apps_causal --apply
+$P experiment=paper/apps_causal                             # then: analyses (free)
+```
+
+Each file is matched to its step from its contents (models, prompts, split, transform, monitors,
+limits); give the overrides that describe how the files were made (e.g. `models=closed`,
+`measurement.limits.generate=200`). Imported steps are logged to W&B like pipeline steps, tagged
+`imported` with their original path and date, and are reused like any other output. Files that
+match no step, or come from unfinished runs, are listed and skipped. A pipeline run folder
+(`experiments/runs/<experiment>/<time>`) can be imported the same way, to log it to another W&B
+project.
+
 Open-model specifics (model choices, token budgets, Docker and throughput notes) are in
 `docs/open_models.md`. BashArena generation runs in `basharena_runtime/` (its own environment;
 see its README) and is driven by the pipeline like the other settings.
