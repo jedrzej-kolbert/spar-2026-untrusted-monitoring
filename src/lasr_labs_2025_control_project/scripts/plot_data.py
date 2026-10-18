@@ -1,30 +1,31 @@
-"""Analyse stage: solve the game for one condition, bootstrap it, log and plot it.
+"""Game and analysis stages: solve the game per condition, then draw the figures.
 
-The pipeline (``lasr_labs_2025_control_project.pipeline``) calls
-``analyse_condition`` once per condition (collusion strategy x transform x
-monitor arm). It reads the attacks / honeypots / honest monitor outputs,
-solves the game for each analysis variant (all monitors, untrusted-monitor
-only, trusted-monitor only), bootstraps each variant, and writes into the
-condition's folder:
+The pipeline (``lasr_labs_2025_control_project.pipeline``) calls ``solve_game``
+once per condition (collusion strategy x transform x monitor arm). It reads the
+attacks / honeypots / honest monitor outputs, solves the game for each
+analysis variant (all monitors, untrusted-monitor only, trusted-monitor only),
+bootstraps each variant, and writes into the condition's folder:
 
     analysis_data[_<variant>].json.gz   the payload (Nash strategies at every
                                         sweep point, ROC curves, joint surface)
                                         plus what produced it, under "pipeline"
     bootstrap_<variant>.jsonl.gz        one replicate payload per line; an
                                         interrupted bootstrap resumes here
-    figures/                            the primary variant's figures
+    scores.json.gz                      the monitor scores the game was solved on
 
-Each condition is one W&B run. Curves are logged as raw numbers for W&B's own
-panels: each point is logged with its x-axis as a second metric
-(`StageRun.define_curve`; metric meanings are in the README's Results
-section). The figures are also logged as images, for plots W&B doesn't draw by
-default, and the folder's files as an artifact.
+That folder is the condition's ``game`` W&B run's artifact. Curves are logged
+as raw numbers for W&B's own panels (each point with its x-axis as a second
+metric, `StageRun.define_curve`), ROC curves as W&B ROC charts; metric meanings
+are in the README's Results section.
 
-As a script, this compares saved conditions on shared axes (re-solving each
-from the monitor outputs it recorded, with its recorded settings and seed):
+Then ``draw_analysis``, once per experiment, draws the figures for all its
+conditions from their saved games (``load_game``; nothing is re-solved) and
+logs them in the ``analysis`` run, with the games as inputs.
+
+As a script, this compares saved conditions on shared axes:
 
     python -m lasr_labs_2025_control_project.scripts.plot_data \
-        experiments/apps/analyse/<condition>-<hash> ... --out figures/ [--variant um_only]
+        experiments/apps/game/<condition>-<hash> ... --out figures/ [--variant um_only]
 """
 
 import argparse
@@ -166,7 +167,44 @@ def load_condition(
     return frames
 
 
-def analyse_condition(
+SCORES_FILE = "scores.json.gz"
+
+
+@dataclass
+class Game:
+    """One condition's solved game: its primary result and payload, its
+    bootstrap replicates, and the ``game`` artifact its run logged (or None)."""
+
+    name: str
+    result: OptimizationResult
+    payload: dict[str, Any]
+    replicates: list[dict[str, Any]] = field(default_factory=list)
+    artifact: Any = None
+
+
+def save_scores(frames: Mapping[str, pd.DataFrame], path: Path) -> Path:
+    """The monitor scores a game is solved on, with the models that made them."""
+    record = {
+        label: {"rows": df.to_dict(orient="records"), "attrs": dict(df.attrs)}
+        for label, df in frames.items()
+    }
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(record, f, default=str)
+    return path
+
+
+def load_scores(path: Path) -> dict[str, pd.DataFrame]:
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        record = json.load(f)
+    frames = {}
+    for label, saved in record.items():
+        df = pd.DataFrame(saved["rows"])
+        df.attrs.update(saved["attrs"])
+        frames[label] = df
+    return frames
+
+
+def solve_game(
     *,
     name: str,
     inputs: Mapping[str, Path],
@@ -178,8 +216,8 @@ def analyse_condition(
     tracker: StageRun,
     record: Optional[Mapping[str, Any]] = None,
     min_samples: int = 0,
-) -> OptimizationResult:
-    """Solve, bootstrap, save and log one condition; returns the primary result.
+) -> Game:
+    """Solve, bootstrap, save and log one condition (the ``game`` run).
 
     ``record`` is stored in every payload under "pipeline" (with the inputs,
     settings and seeds), so a saved condition says what produced it.
@@ -187,9 +225,10 @@ def analyse_condition(
     frames = load_condition(inputs, min_samples)
     out_dir.mkdir(parents=True, exist_ok=True)
     primary: Optional[OptimizationResult] = None
+    primary_payload: dict[str, Any] = {}
     primary_reps: list[dict[str, Any]] = []
     with tracker:
-        files: list[Path] = []
+        files: list[Path] = [save_scores(frames, out_dir / SCORES_FILE)]
         for index, variant in enumerate(variants):
             disable_tm, disable_um = VARIANT_FLAGS[variant]
             solver_seed, bootstrap_seed = variant_seeds(seed, index)
@@ -203,8 +242,8 @@ def analyse_condition(
                 disable_untrusted_monitor=disable_um,
             )
             # Persist the full analysis data (Nash strategies at every sweep
-            # point, empirical ROC curves, joint surface samples) next to the
-            # plots, so figures can be regenerated without re-optimizing.
+            # point, empirical ROC curves, joint surface samples), so figures
+            # can be drawn without re-optimizing.
             payload = build_analysis_payload(result, include_history=index == 0)
             payload["pipeline"] = {
                 **(record or {}),
@@ -246,24 +285,92 @@ def analyse_condition(
             log_variant(tracker, variant, payload, reps, bootstrap.ci)
             log_strategies(tracker, variant, payload)
             if index == 0:
-                primary, primary_reps = result, reps
+                primary, primary_payload, primary_reps = result, payload, reps
                 log_payload_overview(tracker, payload)
 
         assert primary is not None
-        figures = out_dir / "figures"
-        plot_data(
-            {name: primary},
-            figures,
-            file_format="png",
-            bootstrap={name: primary_reps},
-        )
-        for image in sorted(figures.glob("*.png")):
-            tracker.log_image(f"figures/{image.stem}", image)
-        tracker.log_artifact(
-            files, type="analysis", metadata={"variants": list(variants)}
+        artifact = tracker.log_artifact(
+            files,
+            type="game",
+            metadata={
+                "variants": list(variants),
+                "models": primary_payload.get("models"),
+            },
+            wait=True,
         )
         tracker.finish(complete=True)
-    return primary
+    return Game(name, primary, primary_payload, primary_reps, artifact)
+
+
+def load_game(folder: Path, variant: Optional[str] = None) -> Game:
+    """A saved game, ready to plot: its result is rebuilt from the saved sweep
+    and scores (the ROC model is refitted, which is cheap; nothing is re-solved)."""
+    payload = load_saved_condition(folder, variant)
+    record = payload["pipeline"]
+    if (folder / SCORES_FILE).exists():
+        frames = load_scores(folder / SCORES_FILE)
+    else:  # saved before scores were kept with the game
+        frames = load_condition({k: Path(v) for k, v in record["inputs"].items()})
+    disable_tm, disable_um = VARIANT_FLAGS[record["variant"]]
+    game = {**PAPER_GAME_PARAMETERS, **record["solve"]["game"]}
+    config = build_optimization_config(
+        num_tasks=game["num_tasks"],
+        blue_team_budget_fraction=game["blue_team_budget_fraction"],
+        slack_honeypots=game["slack_honeypots"],
+        human_audit_success_rate=game.get("human_audit_success_rate", 1.0),
+        blue_team_replace_fnr=0.0,
+        attacks_df=frames["attacks"],
+        honeypots_df=frames["honeypots"],
+        benign_df=frames["honest"],
+        disable_trusted_monitor=disable_tm,
+        disable_untrusted_monitor=disable_um,
+    )
+    result = OptimizationResult(
+        results=[dict(entry) for entry in payload["sweep"]],
+        config=config,
+        converged=bool(payload.get("converged", True)),
+    )
+    _attach_diagnostics(
+        result, frames["attacks"], frames["honeypots"], frames["honest"]
+    )
+    replicates = read_replicates(bootstrap_path(folder, record["variant"]))
+    return Game(record["name"], result, payload, replicates)
+
+
+def draw_analysis(
+    games: Mapping[str, Game], out_dir: Path, tracker: StageRun
+) -> list[Path]:
+    """The figures for several conditions together (the ``analysis`` run).
+
+    Logs each monitor's ROC curves overlaid as one W&B ROC chart, the figures
+    as images, and the figure files as an artifact; returns the files.
+    """
+    figures = out_dir / "figures"
+    with tracker:
+        monitors = {m for g in games.values() for m in g.payload.get("roc_curves", {})}
+        for monitor in sorted(monitors):
+            tracker.log_roc(
+                f"roc/{monitor}",
+                {
+                    game.name: list(zip(roc["fpr"], roc["tpr"]))
+                    for game in games.values()
+                    if (roc := game.payload.get("roc_curves", {}).get(monitor))
+                },
+                title=f"{monitor} ROC",
+            )
+        plot_data(
+            {label: game.result for label, game in games.items()},
+            figures,
+            file_format="png",
+            bootstrap={label: game.replicates for label, game in games.items()},
+        )
+        images = sorted(figures.glob("*.png"))
+        for image in images:
+            tracker.log_image(f"figures/{image.stem}", image)
+        files = [*images, *sorted(figures.glob("*.jsonl"))]
+        tracker.log_artifact(files, type="figures")
+        tracker.finish(complete=True)
+    return files
 
 
 def log_variant(
@@ -350,9 +457,11 @@ def log_strategies(tracker: StageRun, variant: str, payload: dict[str, Any]) -> 
 def log_payload_overview(tracker: StageRun, payload: dict[str, Any]) -> None:
     """Monitor ROC curves and the honest-UM operating point (variant-independent)."""
     for monitor, roc in payload.get("roc_curves", {}).items():
-        tracker.define_curve(f"roc/{monitor}/tpr", f"roc/{monitor}/fpr")
-        for fpr, tpr in sorted(zip(roc["fpr"], roc["tpr"])):
-            tracker.log({f"roc/{monitor}/fpr": fpr, f"roc/{monitor}/tpr": tpr})
+        tracker.log_roc(
+            f"roc/{monitor}",
+            {monitor: list(zip(roc["fpr"], roc["tpr"]))},
+            title=f"{monitor} ROC",
+        )
     tracker.summary(
         {
             "sample_counts": payload.get("sample_counts"),
@@ -407,6 +516,14 @@ def build_jsonl_dataframe_from_eval_log(eval_log_path: Path) -> pd.DataFrame:
     df = pd.DataFrame(final_samples)
     if "trajectory_id" in df:
         df = _max_over_actions(df, eval_log_path)
+    # Who wrote these solutions, and the trusted monitor that scored them.
+    first = {**log.samples[0].metadata, **log.samples[0].store}
+    generator = (first.get("generator_info") or {}).get("model_info") or {}
+    trusted = (first.get("trusted_suspiciousness_score_metadata") or {}).get(
+        "model_info"
+    ) or {}
+    df.attrs["generator"] = generator.get("model")
+    df.attrs["trusted_monitor"] = trusted.get("model")
     return df
 
 
@@ -487,7 +604,17 @@ def solve_condition(
         seed=seed,
     )
 
-    # Attach extra metadata (diagnostic) for visualization
+    _attach_diagnostics(result, attacks_df, honeypots_df, benign_df)
+    return result
+
+
+def _attach_diagnostics(
+    result: OptimizationResult,
+    attacks_df: pd.DataFrame,
+    honeypots_df: pd.DataFrame,
+    benign_df: pd.DataFrame,
+) -> None:
+    """Extra metadata the figures read: suspiciousness scores and the models."""
     meta = result.config.monitor_roc_fn_metadata or {}
     # Expose untrusted suspiciousness distributions if available
     if (
@@ -505,12 +632,24 @@ def solve_condition(
                 .tolist(),
             },
         )
+    meta["models"] = condition_models(attacks_df, honeypots_df)  # figure captions
     result.config.monitor_roc_fn_metadata = meta
-    return result
+
+
+def condition_models(
+    attacks_df: pd.DataFrame, honeypots_df: pd.DataFrame
+) -> dict[str, Any]:
+    """U and H (who wrote the attacks and the honeypots) and T (the trusted
+    monitor), as the monitor logs record them."""
+    return {
+        "U": attacks_df.attrs.get("generator"),
+        "H": honeypots_df.attrs.get("generator"),
+        "T": attacks_df.attrs.get("trusted_monitor"),
+    }
 
 
 def load_saved_condition(folder: Path, variant: Optional[str] = None) -> dict[str, Any]:
-    """The payload a pipeline analyse step saved in ``folder`` (primary variant
+    """The payload a pipeline game step saved in ``folder`` (primary variant
     by default), with its ``pipeline`` record of inputs, settings and seeds."""
     if variant is None:
         return load_analysis_payload(folder / "analysis_data.json.gz")
@@ -522,11 +661,11 @@ def load_saved_condition(folder: Path, variant: Optional[str] = None) -> dict[st
 
 
 def saved_conditions(root: Path, setting: Optional[str] = None) -> list[Path]:
-    """Every analyse folder under ``root`` (an experiments dir), optionally one setting's."""
+    """Every game folder under ``root`` (an experiments dir), optionally one setting's."""
     pattern = (
-        f"{setting}/analyse/*/analysis_data.json.gz"
+        f"{setting}/game/*/analysis_data.json.gz"
         if setting
-        else "*/analyse/*/analysis_data.json.gz"
+        else "*/game/*/analysis_data.json.gz"
     )
     return sorted(path.parent for path in root.glob(pattern))
 
@@ -558,10 +697,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(
         prog="plot_data",
-        description="Compare saved conditions on shared axes (re-solves each "
-        "from its recorded monitor outputs, settings and seed).",
+        description="Compare saved conditions on shared axes (from their saved games).",
     )
-    parser.add_argument("folders", nargs="+", type=Path, help="analyse output folders")
+    parser.add_argument("folders", nargs="+", type=Path, help="game output folders")
     parser.add_argument("--out", type=Path, required=True, help="figure folder")
     parser.add_argument(
         "--variant",
@@ -570,11 +708,12 @@ def main() -> None:
         help="analysis variant to compare (default: each folder's primary one)",
     )
     args = parser.parse_args()
-    aggregated: dict[str, OptimizationResult] = {}
-    for folder in args.folders:
-        record = load_saved_condition(folder, args.variant)["pipeline"]
-        aggregated[record["name"]] = resolve_saved_condition(folder, args.variant)
-    plot_data(aggregated, destination_folder=args.out)
+    games = [load_game(folder, args.variant) for folder in args.folders]
+    plot_data(
+        {game.name: game.result for game in games},
+        destination_folder=args.out,
+        bootstrap={game.name: game.replicates for game in games},
+    )
     logger.info("Figures saved to %s", args.out)
 
 

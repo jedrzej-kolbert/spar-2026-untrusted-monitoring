@@ -4,7 +4,7 @@ Re-solves the condition from the monitor outputs, game parameters and variant
 its analyse step recorded, then sweeps each game parameter:
 
     python -m lasr_labs_2025_control_project.scripts.plot_parameter_sensitivity \
-        experiments/apps/analyse/<condition>-<hash> [--variant um_only]
+        experiments/apps/game/<condition>-<hash> [--variant um_only]
 """
 
 import argparse

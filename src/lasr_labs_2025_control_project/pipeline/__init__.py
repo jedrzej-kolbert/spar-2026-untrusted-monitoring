@@ -19,7 +19,9 @@ monitors) and ``optimization`` (solving the game).
 Graph
 -----
 ``graph.py`` turns a config into nodes: generate -> transform -> finetune ->
-monitor -> analyse, one node per output. A node's key is its parameters plus
+monitor -> game (one per condition: the solved game and its bootstrap) ->
+analysis (one per experiment: the figures, drawn from all its games), one node
+per output. A node's key is its parameters plus
 its inputs' hashes; its hash names its folder (``store.py``), so outputs that
 two experiments share (honest and honeypot generations, H's transforms, an
 additive run's causal checkpoint) are computed once and reused, and a changed
@@ -38,7 +40,7 @@ Tinker LoRA initialisation, the APPS/BigCodeBench sandbox under load
 
 Running
 -------
-``run.py`` walks back from the analyses: anything done locally, given in
+``run.py`` walks back from the analysis: anything done locally, given in
 ``inputs`` (a path, ``wandb:<entity>/<project>/<name>:vN``, or a model id),
 or (``reuse=wandb``) found on W&B as a complete run with the same key stops
 the walk. Nodes of stages not in ``stages`` must already exist. A plan that

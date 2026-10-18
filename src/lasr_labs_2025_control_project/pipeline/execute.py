@@ -66,6 +66,8 @@ class RunContext:
     outputs: dict[str, Output] = field(default_factory=dict)
     #: node hash -> where an imported output came from (pipeline.ingest)
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: node hash -> the W&B artifact a step logged in this invocation
+    artifacts: dict[str, Any] = field(default_factory=dict)
 
     def tracker(
         self,
@@ -536,10 +538,10 @@ def run_monitor(node: Node, ctx: RunContext) -> Output:
     return Output(path=str(out))
 
 
-# -- analyse -----------------------------------------------------------------
+# -- game ----------------------------------------------------------------------
 
 
-def analyse_tracker(
+def game_tracker(
     node: Node, ctx: RunContext, inputs: dict[str, ResolvedInput]
 ) -> StageRun:
     p = node.params
@@ -570,19 +572,19 @@ def analysis_record(node: Node, ctx: RunContext) -> dict[str, Any]:
     }
 
 
-def run_analyse(node: Node, ctx: RunContext) -> Output:
+def run_game(node: Node, ctx: RunContext) -> Output:
     from lasr_labs_2025_control_project.scripts.plot_data import (
         BootstrapSettings,
         SolveSettings,
-        analyse_condition,
+        solve_game,
     )
 
     p = node.params
     inputs = {label: ctx.input(node, label) for label in node.deps}
     bootstrap = ctx.cfg.optimization.bootstrap
-    tracker = analyse_tracker(node, ctx, inputs)
+    tracker = game_tracker(node, ctx, inputs)
     folder = ctx.store.folder(node)
-    analyse_condition(
+    game = solve_game(
         name=node.name,
         inputs={label: i.local_path for label, i in inputs.items()},
         variants=p["variants"],
@@ -604,7 +606,62 @@ def run_analyse(node: Node, ctx: RunContext) -> Output:
         record=analysis_record(node, ctx),
         min_samples=p["min_samples_per_label"],
     )
+    if game.artifact is not None:
+        ctx.artifacts[node.hash] = game.artifact
     return Output(path=str(folder))
+
+
+# -- analysis ----------------------------------------------------------------
+
+
+def step_artifact(node: Node, ctx: RunContext) -> Optional[ResolvedInput]:
+    """The W&B artifact holding a step's output, as an input (None if unknown):
+    logged in this invocation, or found on W&B by the step's key."""
+    from lasr_labs_2025_control_project.pipeline.store import ARTIFACT_TYPES
+    from lasr_labs_2025_control_project.tracking import (
+        artifact_input,
+        find_pipeline_run,
+        mode,
+    )
+
+    artifact = ctx.artifacts.get(node.hash)
+    if artifact is None and mode() == "online":
+        run = find_pipeline_run(node.hash, node.key)
+        wanted = ARTIFACT_TYPES.get(node.stage)
+        if run is not None:
+            artifact = next(
+                (a for a in run.logged_artifacts() if a.type == wanted), None
+            )
+    return artifact_input(artifact) if artifact is not None else None
+
+
+def analysis_tracker(node: Node, ctx: RunContext) -> StageRun:
+    inputs = [i for dep in node.deps.values() if (i := step_artifact(dep, ctx))]
+    return ctx.tracker(
+        node,
+        config={
+            "experiment": node.params["experiment"],
+            "conditions": sorted(dep.name for dep in node.deps.values()),
+        },
+        tags=[ctx.cfg.setting.name, ctx.cfg.measurement.collusion_strategy],
+        inputs=inputs,
+    )
+
+
+def run_analysis(node: Node, ctx: RunContext) -> Output:
+    from lasr_labs_2025_control_project.scripts.plot_data import (
+        draw_analysis,
+        load_game,
+    )
+
+    games = {}
+    for dep in node.deps.values():
+        game = load_game(ctx.store.folder(dep))
+        games[game.name] = game
+    folder = ctx.store.folder(node)
+    folder.mkdir(parents=True, exist_ok=True)
+    figures = draw_analysis(games, folder, analysis_tracker(node, ctx))
+    return ctx.store.write_analysis(node, figures)
 
 
 EXECUTORS = {
@@ -612,5 +669,6 @@ EXECUTORS = {
     "transform": run_transform,
     "finetune": run_finetune,
     "monitor": run_monitor,
-    "analyse": run_analyse,
+    "game": run_game,
+    "analysis": run_analysis,
 }

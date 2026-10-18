@@ -290,7 +290,7 @@ def test_additive_reuses_the_causal_checkpoint() -> None:
     assert (
         additive["finetune.causal.paraphrased"] == causal["finetune.causal.paraphrased"]
     )
-    assert additive["analyse.paraphrased.sft"] != causal["analyse.paraphrased.sft"]
+    assert additive["game.paraphrased.sft"] != causal["game.paraphrased.sft"]
 
 
 def test_label_controls() -> None:
@@ -310,14 +310,14 @@ def test_changes_only_rerun_what_they_reach() -> None:
     lr = hashes("experiment=self_rec", "elicitation.training.lr=0.001")
     changed = {k for k in base if base[k] != lr[k]}
     assert changed and all(
-        k.split(".")[0] in ("finetune", "monitor", "analyse") for k in changed
+        k.split(".")[0] in ("finetune", "monitor", "game", "analysis") for k in changed
     )
     assert all(
         lr[k] == base[k] for k in base if ".base." in k
     )  # the base arm is untouched
     game = hashes("experiment=self_rec", "optimization.game.num_tasks=100")
     assert {k for k in base if base[k] != game[k]} == {
-        k for k in base if k.startswith("analyse")
+        k for k in base if k.startswith(("game.", "analysis"))
     }
     seed = hashes("experiment=self_rec", "seed=1")
     assert (
@@ -428,7 +428,7 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> list[str]:
                 f"tinker/tinker://fake/{node.hash}",
                 {"train_tokens": 1_000_000, "forward_tokens": 2_000_000},
             )
-        if node.stage == "analyse":
+        if node.stage == "game":
             folder = ctx.store.folder(node)
             for i, variant in enumerate(node.params["variants"]):
                 save_analysis_payload(
@@ -436,6 +436,11 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> list[str]:
                     payload_path(folder, i, variant),
                 )
             return Output(path=str(folder))
+        if node.stage == "analysis":
+            figure = ctx.store.folder(node) / "figures" / "f.png"
+            figure.parent.mkdir(parents=True)
+            figure.write_bytes(b"png")
+            return ctx.store.write_analysis(node, [figure])
         path = ctx.store.output_path(node)
         _write_eval(path, {"pipeline": node.record()})
         return Output(path=str(path))
@@ -477,28 +482,33 @@ def test_done_outputs_stop_the_walk(tmp_path: Path, ran: list[str]) -> None:
     store = pipeline_run.Store(tmp_path, "apps")
     # an upstream output deleted under finished downstream outputs is not redone
     shutil.rmtree(store.folder(by_id["generate.test.honest"]))
-    # a deleted analysis is redone from the monitor outputs alone
-    shutil.rmtree(store.folder(by_id["analyse.none.base"]))
+    # ... nor is a deleted game while the analysis drawn from it is done
+    shutil.rmtree(store.folder(by_id["game.none.base"]))
     ran.clear()
     run(tmp_path)
-    assert ran == ["analyse.none.base"]
+    assert ran == []
+    # a deleted analysis is redrawn, and the missing game it needs is solved again
+    shutil.rmtree(store.folder(by_id["analysis"]))
+    run(tmp_path)
+    assert ran == ["game.none.base", "analysis"]
 
 
 def test_a_different_key_under_the_same_hash_is_a_collision(
     tmp_path: Path, ran: list[str]
 ) -> None:
     steps = run(tmp_path, "allow_paid=true")
-    node = next(s.node for s in steps if s.node.id == "analyse.none.sft")
+    node = next(s.node for s in steps if s.node.id == "analysis")
     path = pipeline_run.Store(tmp_path, "apps").output_path(node)
-    payload = {"pipeline": {**node.record(), "key": {**node.key, "stage": "other"}}}
-    save_analysis_payload(payload, path)
+    record = json.loads(path.read_text())
+    record["pipeline"]["key"] = {**node.key, "stage": "other"}
+    path.write_text(json.dumps(record))
     with pytest.raises(CollisionError):
         run(tmp_path)
 
 
 def test_unselected_stages_must_exist(tmp_path: Path, ran: list[str]) -> None:
     with pytest.raises(pipeline_run.PlanError, match="generate.test.attacks"):
-        run(tmp_path, "stages=[monitor,analyse]", "allow_paid=true")
+        run(tmp_path, "stages=[monitor,game,analysis]", "allow_paid=true")
     run(tmp_path, "stages=[generate]", "allow_paid=true")
     assert ran and all(i.startswith("generate.") for i in ran)
 

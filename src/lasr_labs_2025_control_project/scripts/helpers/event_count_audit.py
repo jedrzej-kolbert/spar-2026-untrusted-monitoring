@@ -37,7 +37,7 @@ Other channels (honest errors, honeypot boundary, TM-benign support) are
 reported as ``low_count_caveats`` when under 10 events, without driving the
 verdict.
 
-Usage, over every saved condition (analyse folders) under an experiments dir:
+Usage, over every saved condition (game folders) under an experiments dir:
   python -m lasr_labs_2025_control_project.scripts.helpers.event_count_audit \
       --root experiments [--setting apps] --out event_count_audit.json
 """

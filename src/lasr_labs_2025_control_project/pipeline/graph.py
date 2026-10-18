@@ -94,7 +94,7 @@ class Node:
 @dataclass
 class Graph:
     nodes: list[Node]  # topological order
-    targets: list[Node]  # analyse nodes
+    targets: list[Node]  # the analysis node
 
     def by_id(self) -> dict[str, Node]:
         return {node.id: node for node in self.nodes}
@@ -153,7 +153,7 @@ class GraphBuilder:
         self.used_overrides: set[str] = set()
         self._by_id: dict[str, Node] = {}
         self._by_hash: dict[str, Node] = {}
-        self.targets: list[Node] = []
+        self.games: list[Node] = []
 
     # -- bookkeeping -------------------------------------------------------
 
@@ -439,7 +439,8 @@ class GraphBuilder:
             )
         )
 
-    def analyse(self, transform: str, arm_name: str, arm: MonitorArm) -> Node:
+    def game(self, transform: str, arm_name: str, arm: MonitorArm) -> Node:
+        """One condition's solved game (and its bootstrap)."""
         cfg, o = self.cfg, self.cfg.optimization
         condition = {
             "setting": cfg.setting.name,
@@ -460,8 +461,8 @@ class GraphBuilder:
         }
         node = self.add(
             Node(
-                "analyse",
-                f"analyse.{transform}.{arm_name}",
+                "game",
+                f"game.{transform}.{arm_name}",
                 names.condition_name(**condition),
                 params,
                 deps={
@@ -471,8 +472,25 @@ class GraphBuilder:
                 info={"condition": condition},
             )
         )
-        self.targets.append(node)
+        self.games.append(node)
         return node
+
+    def analysis(self) -> Node:
+        """The experiment's figures, drawn once from all its games."""
+        cfg = self.cfg
+        games = {node.id.removeprefix("game."): node for node in self.games}
+        return self.add(
+            Node(
+                "analysis",
+                "analysis",
+                names.fit(
+                    f"analysis.{names.clean(cfg.setting.name)}.{names.clean(cfg.name)}"
+                ),
+                {"experiment": cfg.name},
+                deps=games,
+                info={"experiment": cfg.name},
+            )
+        )
 
 
 def validate(cfg: Config) -> None:
@@ -560,11 +578,12 @@ def build_graph(cfg: Config) -> Graph:
         if arm is None:
             continue
         for transform in arm.transforms or m.transforms:
-            builder.analyse(transform, arm_name, arm)
+            builder.game(transform, arm_name, arm)
     unused = sorted(set(builder.overrides) - builder.used_overrides)
     if unused:
         raise ConfigError(f"inputs names nodes this experiment doesn't have: {unused}")
-    return Graph(list(topological(builder.targets)), builder.targets)
+    analysis = builder.analysis()
+    return Graph(list(topological([analysis])), [analysis])
 
 
 def topological(targets: list[Node]) -> Iterator[Node]:

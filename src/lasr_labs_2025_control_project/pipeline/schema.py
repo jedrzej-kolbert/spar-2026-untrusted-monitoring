@@ -15,7 +15,7 @@ from typing import Any, Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
-STAGES = ("generate", "transform", "finetune", "monitor", "analyse")
+STAGES = ("generate", "transform", "finetune", "monitor", "game", "analysis")
 MONITORS = ("untrusted_collusion", "trusted_suspiciousness", "untrusted_suspiciousness")
 #: analysis variant -> monitors it needs
 VARIANTS = {

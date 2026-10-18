@@ -29,6 +29,7 @@ from omegaconf import OmegaConf
 from lasr_labs_2025_control_project.pipeline import run as pipeline_run
 from lasr_labs_2025_control_project.pipeline.schema import Config, register
 from lasr_labs_2025_control_project.scripts.plot_data import (
+    load_game,
     load_saved_condition,
     resolve_saved_condition,
 )
@@ -150,7 +151,7 @@ def test_minify_and_monitor_stages(tmp_path: Path) -> None:
     status = {s.node.id: s.status for s in steps}
     assert status["generate.test.attacks"] == pipeline_run.INPUT
     assert status["transform.test.minified.attacks"] == pipeline_run.RUN
-    assert status["analyse.minified.base"] == pipeline_run.MISSING  # stage not selected
+    assert status["game.minified.base"] == pipeline_run.MISSING  # stage not selected
 
     store = pipeline_run.Store(tmp_path / "experiments", "apps")
     by_id = {s.node.id: s.node for s in steps}
@@ -180,7 +181,7 @@ def test_minify_and_monitor_stages(tmp_path: Path) -> None:
     assert pipeline_run.RUN not in {s.status for s in again}
 
 
-def test_analyse_stage_solves_and_saves_a_condition(tmp_path: Path) -> None:
+def test_game_and_analysis_stages(tmp_path: Path) -> None:
     monitored = {
         label: _monitored(tmp_path, label)
         for label in ("attacks", "honest", "honeypots")
@@ -198,16 +199,34 @@ def test_analyse_stage_solves_and_saves_a_condition(tmp_path: Path) -> None:
         ),
     ]
     steps = _run(tmp_path, *overrides)
-    (node,) = [s.node for s in steps if s.node.stage == "analyse"]
-    folder = pipeline_run.Store(tmp_path / "experiments", "apps").folder(node)
+    store = pipeline_run.Store(tmp_path / "experiments", "apps")
+    (node,) = [s.node for s in steps if s.node.stage == "game"]
+    folder = store.folder(node)
     names = {p.name for p in folder.iterdir()}
-    assert {
+    assert names == {
         "analysis_data.json.gz",
         "analysis_data_um_only.json.gz",
         "bootstrap_all_monitors.jsonl.gz",
         "bootstrap_um_only.jsonl.gz",
-        "figures",
-    } <= names
+        "scores.json.gz",
+    }
+
+    # the analysis draws the figures once, from the saved games
+    (analysis,) = [s.node for s in steps if s.node.stage == "analysis"]
+    record = json.loads(store.output_path(analysis).read_text())
+    assert (
+        "strategies.png" in record["figures"]
+        and "safety_usefulness_curves.png" in record["figures"]
+    )
+    assert all(
+        (store.folder(analysis) / "figures" / f).exists() for f in record["figures"]
+    )
+    # a saved game is rebuilt for plotting without re-solving
+    game = load_game(folder)
+    assert [r["safety"] for r in game.result.results] == [
+        e["safety"] for e in load_saved_condition(folder)["sweep"]
+    ]
+    assert len(game.replicates) == 2 and game.result.config.parameter_spaces
 
     saved = load_saved_condition(folder)
     assert saved["pipeline"]["hash"] == node.hash

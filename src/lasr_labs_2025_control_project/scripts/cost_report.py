@@ -81,7 +81,7 @@ def collect(run_dir: Path) -> tuple[dict, list[str]]:
     tokens: dict[tuple[str, str, str], int] = defaultdict(int)
     missing = []
     for node in build_graph(cfg).nodes:
-        if node.external is not None or node.stage == "analyse":
+        if node.external is not None or node.stage in ("game", "analysis"):
             continue
         path = store.output_path(node)
         if not path.exists():

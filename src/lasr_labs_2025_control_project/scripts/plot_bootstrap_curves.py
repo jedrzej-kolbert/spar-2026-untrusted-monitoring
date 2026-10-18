@@ -4,7 +4,7 @@ One figure per (setting, U, panel), with the transforms (none / minified /
 paraphrased) as labelled curves: bootstrap median plus a percentile band (80%
 by default), plus one assembled grid per (setting, U). A panel is a collusion
 strategy and monitor arm; label-control arms are left out. Reads every
-analyse folder under --root (the pipeline's experiments dir):
+game folder under --root (the pipeline's experiments dir):
 
     python -m lasr_labs_2025_control_project.scripts.plot_bootstrap_curves \
         --root experiments --out figures/bands [--variant all_monitors] [--ci 0.80]

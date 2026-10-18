@@ -80,8 +80,9 @@ folder under `experiments/<setting>/<stage>/`. Useful options:
   `measurement.monitors` picks which monitors run.
 
 **Where things go.** Each invocation's merged config is saved in
-`experiments/runs/<experiment>/<time>/.hydra/` and attached to every W&B run it made. Analysis
-files and figures are in each condition's `experiments/<setting>/analyse/` folder.
+`experiments/runs/<experiment>/<time>/.hydra/` and attached to every W&B run it made. Each
+condition's solved game is in `experiments/<setting>/game/`, and the experiment's figures in
+`experiments/<setting>/analysis/`.
 
 **Importing existing results.** `.eval` files made outside the pipeline (e.g. one experiment's
 folder from the team Drive) can become steps of a pipeline experiment:
@@ -90,7 +91,7 @@ folder from the team Drive) can become steps of a pipeline experiment:
 I="uv run python -m lasr_labs_2025_control_project.pipeline.ingest"
 $I <folder of .eval files> experiment=paper/apps_causal   # shows which file is which step
 $I <folder of .eval files> experiment=paper/apps_causal --apply
-$P experiment=paper/apps_causal                             # then: analyses (free)
+$P experiment=paper/apps_causal                             # then: games and analysis (free)
 ```
 
 Each file is matched to its step from its contents (models, prompts, split, transform, monitors,
@@ -107,12 +108,15 @@ see its README) and is driven by the pipeline like the other settings.
 
 ## Results
 
-- **W&B** has one run per stage and label, and one analyse run per condition. Filter by job type
+- **W&B** has one run per stage and label, one `game` run per condition (the solved game and its
+  bootstrap, saved as a `game` artifact), and one `analysis` run per experiment, which draws the
+  figures for all its conditions and lists their `game` artifacts as inputs. Filter by job type
   (stage) or by tag (experiment, collusion strategy, transform, monitor arm, label). Runs from
-  one invocation share a group and a `config` artifact. Curves are logged as raw numbers: each y
+  one invocation share a group and a `config` artifact; the config artifact's lineage lists every
+  run made from that config. Curves are logged as raw numbers: each y
   metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a
-  custom panel). Panels plotted against "Step" are meaningless. Each analyse run also logs its
-  figures as images under `figures/`.
+  custom panel). Panels plotted against "Step" are meaningless. The analysis run logs the
+  figures as images under `figures/`; each figure names U, H and T under its legend.
 
   | Panel (y) | x-axis | One point is |
   |---|---|---|
@@ -120,17 +124,23 @@ see its README) and is driven by the pipeline like the other settings.
   | `<variant>/band/safety_{lo,median,hi}` | `<variant>/band/usefulness` | the same, as bootstrap percentiles |
   | `strategy/<variant>/<parameter>` | `strategy/<variant>/usefulness` | one regeneration cutoff: blue's most likely `blue_*` value, or red's best-response `red_*` value, at equilibrium |
   | `strategy/<variant>/{blue_top_probability,blue_support_size,red_nash_support_size}` | `strategy/<variant>/usefulness` | the same: how mixed each team's equilibrium strategy is |
-  | `roc/<monitor>/tpr` | `roc/<monitor>/fpr` | one score threshold: fraction of attacks (tpr) and of negatives (fpr) scoring at or above it |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |
 
-  `<variant>` is `all_monitors`, `um_only` or `tm_only`. For `roc/untrusted_collusion`, negatives are
-  honeypots and "at or above" means U would collude; for the two suspiciousness monitors,
-  negatives are honest solutions. `red_team_roc_threshold` is U's collusion threshold, in YES − NO
-  logprob, so it isn't comparable across monitor arms. Set `red_team_p_attack` panels to a log
+  `<variant>` is `all_monitors`, `um_only` or `tm_only`. ROC curves are W&B ROC charts
+  (`roc/<monitor>`; in an analysis run, one curve per condition): each point is a score
+  threshold, with the fraction of attacks (tpr) and of negatives (fpr) scoring at or above it.
+  For `roc/untrusted_collusion`, negatives are honeypots and "at or above" means U would collude;
+  for the two suspiciousness monitors, negatives are honest solutions. These are the empirical
+  curves; the figures' trusted and collusion ROCs show the fitted model the game uses, which
+  interpolates between thresholds. `red_team_roc_threshold` is U's collusion threshold, in YES −
+  NO logprob, so it isn't comparable across monitor arms. Set `red_team_p_attack` panels to a log
   y-axis. When `red_nash_support_size` > 1, red has several equally good responses, so a jump in
   red's values may not mean anything. `figures/strategies` shows blue's whole mix and the
   bootstrap replicates, with usefulness on the same axis as `figures/outcome_distributions`.
-- **Local figures** (each takes `experiments/<setting>/analyse/` folders):
+  Every figure names U, H and T under its legend.
+- **Local figures**: each experiment's are in its analysis folder
+  (`experiments/<setting>/analysis/`). Other tools take condition folders
+  (`experiments/<setting>/game/`):
   - compare conditions on shared axes: `scripts/plot_data.py <folder>... --out <dir>`;
   - bootstrap bands per collusion strategy: `scripts/plot_bootstrap_curves.py --out <dir>`
     (for the paper's 1000 replicates, run with `optimization.bootstrap.replicates=1000`; it
@@ -140,8 +150,8 @@ see its README) and is driven by the pipeline like the other settings.
 
   Run them with `uv run python -m lasr_labs_2025_control_project.scripts.<name>`.
 - **Published data** is in the HF dataset `jbostock/untrusted-monitoring-2026-paper`, in the
-  old per-experiment layout. To analyse it with the pipeline, pass its monitor outputs as
-  inputs (`+inputs.monitor.<transform>.<arm>.<label>=<file>`).
+  old per-experiment layout. To analyse it with the pipeline, import it (above), or pass its
+  monitor outputs as inputs (`+inputs.monitor.<transform>.<arm>.<label>=<file>`).
 - **Team data**: the APPS and BigCodeBench results are also in the team Google Drive's
   `FINAL_RESULTS` folder. Don't change it without agreeing with the whole team.
 

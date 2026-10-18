@@ -5,8 +5,9 @@ Each node writes one folder, ``<experiments_dir>/<setting>/<stage>/<name>-<hash>
 * generate / transform / monitor: ``<label>.eval``; the node's key is in the
   log header (``eval.metadata["pipeline"]``, beside the W&B lineage block);
 * finetune: ``model.json``, the model id and the node's key;
-* analyse: the analysis files (see ``scripts/plot_data.py``), the key in each
-  payload's ``pipeline`` record.
+* game: the solved game's files (see ``scripts/plot_data.py``), the key in each
+  payload's ``pipeline`` record;
+* analysis: ``figures/`` and ``analysis.json``, the node's key and figure list.
 
 An output counts as done only if it is complete (for .eval files: Inspect
 reported success and every expected sample is there) and its stored key equals
@@ -31,6 +32,9 @@ from lasr_labs_2025_control_project.tracking import (
 
 EVAL_STAGES = ("generate", "transform", "monitor")
 MODEL_FILE = "model.json"
+ANALYSIS_FILE = "analysis.json"
+#: stage -> type of the W&B artifact holding its output
+ARTIFACT_TYPES = {"game": "game", "analysis": "figures", "finetune": "model"}
 
 
 class CollisionError(RuntimeError):
@@ -58,6 +62,8 @@ class Store:
             return folder / f"{node.info['label']}.eval"
         if node.stage == "finetune":
             return folder / MODEL_FILE
+        if node.stage == "analysis":
+            return folder / ANALYSIS_FILE
         return folder / "analysis_data.json.gz"
 
     # -- done? ---------------------------------------------------------------
@@ -98,6 +104,13 @@ class Store:
         if node.stage == "finetune":
             data = json.loads(path.read_text())
             return data.get(PIPELINE_KEY), True, Output(model=data["model"])
+        if node.stage == "analysis":
+            data = json.loads(path.read_text())
+            figures = [
+                path.parent / "figures" / name for name in data.get("figures", [])
+            ]
+            complete = bool(figures) and all(f.exists() for f in figures)
+            return data.get(PIPELINE_KEY), complete, Output(path=str(path.parent))
         from lasr_labs_2025_control_project.scripts.plot_data import (
             bootstrap_path,
             payload_path,
@@ -119,6 +132,16 @@ class Store:
             for v in variants
         )
         return stored, complete, Output(path=str(folder))
+
+    def write_analysis(self, node: Node, figures: list[Path]) -> Output:
+        """Record a drawn analysis (its key and figure files)."""
+        path = self.output_path(node)
+        record = {
+            "figures": sorted(f.name for f in figures),
+            PIPELINE_KEY: node.record(),
+        }
+        path.write_text(json.dumps(record, indent=2) + "\n")
+        return Output(path=str(path.parent))
 
     def write_model(
         self, node: Node, model: str, usage: Optional[dict[str, int]] = None
@@ -155,7 +178,7 @@ class Store:
             if not refs:
                 return None
             return self.write_model(node, refs[0].metadata["model_id"])
-        wanted = "analysis" if node.stage == "analyse" else "eval-log"
+        wanted = ARTIFACT_TYPES.get(node.stage, "eval-log")
         matches = [a for a in artifacts if a.type == wanted]
         if not matches:
             return None
@@ -164,6 +187,14 @@ class Store:
         if node.stage in EVAL_STAGES:
             (source,) = [p for p in downloaded.rglob("*") if p.is_file()]
             shutil.copy(source, self.output_path(node))
+        elif node.stage == "analysis":
+            (folder / "figures").mkdir(exist_ok=True)
+            figures = []
+            for source in downloaded.iterdir():
+                figures.append(
+                    Path(shutil.copy(source, folder / "figures" / source.name))
+                )
+            self.write_analysis(node, figures)
         else:
             for source in downloaded.iterdir():
                 shutil.copy(source, folder / source.name)

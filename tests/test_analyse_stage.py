@@ -1,5 +1,6 @@
-"""Analyse-stage helpers: which monitor variants run, how the run is named,
-and how equilibrium strategies are logged and plotted."""
+"""Analyse-stage helpers: which monitor variants run, how the game and analysis
+runs are named, how ROC curves and equilibrium strategies are logged, and the
+figures (strategies, model caption)."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,14 +10,20 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt  # noqa: E402
+
 from lasr_labs_2025_control_project.scripts.plot_data import (  # noqa: E402
     VARIANT_FLAGS,
+    log_payload_overview,
     log_strategies,
 )
 from lasr_labs_2025_control_project.tracking import names  # noqa: E402
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (  # noqa: E402
     OptimizationResult,
     bootstrap_band,
+)
+from lasr_labs_2025_control_project.utils.numerical_pipeline import (  # noqa: E402
+    visualization as viz,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimization import (  # noqa: E402
     construct_parameter_spaces,
@@ -135,3 +142,72 @@ def test_strategy_figure_includes_new_variables(tmp_path: Path) -> None:
     replicates = [{"sweep": [_sweep_entry(1.0, 0.3)]}, {"error": "boom"}]
     plot_strategies({"cond": result}, str(path), bootstrap={"cond": replicates})
     assert path.stat().st_size > 0
+
+
+class _RocTracker:
+    def __init__(self) -> None:
+        self.rocs: dict[str, Any] = {}
+        self.summaries: list[Any] = []
+
+    def log_roc(self, key: str, curves: Any, title: str) -> None:
+        self.rocs[key] = curves
+
+    def summary(self, data: Any) -> None:
+        self.summaries.append(data)
+
+
+def test_roc_curves_are_logged_with_every_point():
+    # Two points share an fpr: a vertical step that metric panels would drop.
+    payload = {
+        "roc_curves": {
+            "untrusted_collusion": {
+                "fpr": [0.0, 0.5, 0.5, 1.0],
+                "tpr": [0.0, 0.25, 0.75, 1.0],
+            }
+        }
+    }
+    tracker = _RocTracker()
+    log_payload_overview(tracker, payload)  # type: ignore[arg-type]
+    points = tracker.rocs["roc/untrusted_collusion"]["untrusted_collusion"]
+    assert points == [(0.0, 0.0), (0.5, 0.25), (0.5, 0.75), (1.0, 1.0)]
+
+
+def _result(models: dict[str, str]) -> Any:
+    return SimpleNamespace(
+        config=SimpleNamespace(monitor_roc_fn_metadata={"models": models})
+    )
+
+
+def test_models_caption_names_u_h_t_once_or_per_condition():
+    same = {
+        "U": "deepseek-ai/DeepSeek-V3.1",
+        "H": "Qwen/Qwen3.8-27B",
+        "T": "tinker/openai/gpt-oss-20b",
+    }
+    caption = viz.models_caption({"a": _result(same), "b": _result(same)})
+    assert (
+        caption
+        == "U: deepseek-ai/DeepSeek-V3.1 · H: Qwen/Qwen3.8-27B · T: openai/gpt-oss-20b"
+    )
+    other = {**same, "T": "openai/gpt-4o-mini"}
+    lines = viz.models_caption({"a": _result(same), "b": _result(other)})
+    assert lines is not None and lines.count("\n") == 1 and lines.startswith("a: U:")
+    assert viz.models_caption({"a": SimpleNamespace(config=None)}) is None
+
+
+def test_caption_sits_under_the_legend(tmp_path: Path):
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1], label="curve")
+    legend = ax.legend(loc="upper left")
+    token = viz._CAPTION.set("U: a · H: b · T: c")
+    try:
+        viz._save_figure(fig, tmp_path / "f.png")
+    finally:
+        viz._CAPTION.reset(token)
+    (text,) = [t for t in fig.texts if t.get_text().startswith("U:")]
+    renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+    box = fig.transFigure.inverted().transform_bbox(legend.get_window_extent(renderer))
+    x, y = text.get_position()
+    assert y < box.y0 and abs(x - box.x0) < 1e-6 and text.get_fontsize() < 10
+    assert (tmp_path / "f.png").exists()
+    plt.close(fig)

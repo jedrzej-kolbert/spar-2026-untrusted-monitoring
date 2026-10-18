@@ -12,7 +12,7 @@ defaults:
 
 name: adhoc
 seed: 0
-stages: [generate, transform, finetune, monitor, analyse]
+stages: [generate, transform, finetune, monitor, game, analysis]
 allow_paid: false
 allow_unlinked: false
 reuse: local

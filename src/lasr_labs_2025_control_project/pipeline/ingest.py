@@ -47,8 +47,9 @@ from omegaconf import OmegaConf
 
 from lasr_labs_2025_control_project.pipeline.execute import (
     RunContext,
-    analyse_tracker,
+    analysis_tracker,
     finetune_tracker,
+    game_tracker,
     generate_tracker,
     monitor_tracker,
     training_data,
@@ -476,9 +477,10 @@ def log_finetune(
     return ctx.store.write_model(node, model, usage)
 
 
-def log_analysis(node: Node, ctx: RunContext) -> Output:
-    """Re-log a saved analysis (curves, strategies, figures, files) as the node's step."""
+def log_game(node: Node, ctx: RunContext) -> Output:
+    """Re-log a saved game (curves, strategies, ROC charts, files) as the node's step."""
     from lasr_labs_2025_control_project.scripts.plot_data import (
+        SCORES_FILE,
         bootstrap_path,
         log_payload_overview,
         log_strategies,
@@ -494,9 +496,11 @@ def log_analysis(node: Node, ctx: RunContext) -> Output:
         label: resolve_input(str(ctx.outputs[dep.hash].path))
         for label, dep in node.deps.items()
     }
-    tracker = analyse_tracker(node, ctx, inputs)
+    tracker = game_tracker(node, ctx, inputs)
     folder = ctx.store.folder(node)
-    files: list[Path] = []
+    files: list[Path] = (
+        [folder / SCORES_FILE] if (folder / SCORES_FILE).exists() else []
+    )
     with tracker:
         for index, variant in enumerate(node.params["variants"]):
             path = payload_path(folder, index, variant)
@@ -511,11 +515,48 @@ def log_analysis(node: Node, ctx: RunContext) -> Output:
             log_strategies(tracker, variant, payload)
             if index == 0:
                 log_payload_overview(tracker, payload)
-        for image in sorted((folder / "figures").glob("*.png")):
-            tracker.log_image(f"figures/{image.stem}", image)
-        tracker.log_artifact(
-            files, type="analysis", metadata={"variants": node.params["variants"]}
+        artifact = tracker.log_artifact(
+            files,
+            type="game",
+            metadata={"variants": node.params["variants"]},
+            wait=True,
         )
+        tracker.finish(complete=True)
+    if artifact is not None:
+        ctx.artifacts[node.hash] = artifact
+    return Output(path=str(folder))
+
+
+def log_analysis(node: Node, ctx: RunContext) -> Output:
+    """Re-log a drawn analysis (ROC overlays, figures) as the node's step."""
+    import json
+
+    from lasr_labs_2025_control_project.scripts.plot_data import load_saved_condition
+
+    folder = ctx.store.folder(node)
+    record = json.loads(ctx.store.output_path(node).read_text())
+    figures = [folder / "figures" / name for name in record["figures"]]
+    tracker = analysis_tracker(node, ctx)
+    with tracker:
+        payloads = {
+            dep.name: load_saved_condition(ctx.store.folder(dep))
+            for dep in node.deps.values()
+        }
+        monitors = {m for p in payloads.values() for m in p.get("roc_curves", {})}
+        for monitor in sorted(monitors):
+            tracker.log_roc(
+                f"roc/{monitor}",
+                {
+                    name: list(zip(roc["fpr"], roc["tpr"]))
+                    for name, payload in payloads.items()
+                    if (roc := payload.get("roc_curves", {}).get(monitor))
+                },
+                title=f"{monitor} ROC",
+            )
+        for image in figures:
+            if image.suffix == ".png":
+                tracker.log_image(f"figures/{image.stem}", image)
+        tracker.log_artifact(figures, type="figures")
         tracker.finish(complete=True)
     return Output(path=str(folder))
 
@@ -619,6 +660,8 @@ def apply(plan: Plan, ctx: RunContext, match: Optional[Match] = None) -> None:
             assert done is not None and done.model is not None
             usage = _model_usage(ctx.store.output_path(node))
             ctx.outputs[node.hash] = log_finetune(node, ctx, done.model, usage)
+        elif node.stage == "game":
+            ctx.outputs[node.hash] = log_game(node, ctx)
         else:
             ctx.outputs[node.hash] = log_analysis(node, ctx)
         print(f"  {node.id:45} logged")
