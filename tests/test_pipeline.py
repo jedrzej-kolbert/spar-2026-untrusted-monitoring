@@ -438,7 +438,7 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             return Output(path=str(folder))
         if node.stage == "analysis":
             figure = ctx.store.folder(node) / "figures" / "f.png"
-            figure.parent.mkdir(parents=True)
+            figure.parent.mkdir(parents=True, exist_ok=True)
             figure.write_bytes(b"png")
             return ctx.store.write_analysis(node, [figure])
         path = ctx.store.output_path(node)
@@ -511,6 +511,29 @@ def test_unselected_stages_must_exist(tmp_path: Path, ran: list[str]) -> None:
         run(tmp_path, "stages=[monitor,game,analysis]", "allow_paid=true")
     run(tmp_path, "stages=[generate]", "allow_paid=true")
     assert ran and all(i.startswith("generate.") for i in ran)
+
+
+def test_force_reruns_the_step_and_what_depends_on_it(
+    tmp_path: Path, ran: list[str]
+) -> None:
+    run(tmp_path, "allow_paid=true")
+    ran.clear()
+    steps = run(tmp_path, "force=[monitor.none.sft.attacks]", "allow_paid=true")
+    assert ran == ["monitor.none.sft.attacks", "game.none.sft", "analysis"]
+    assert {s.node.id for s in steps if s.status == pipeline_run.RERUN} == set(ran)
+
+    ran.clear()
+    store = pipeline_run.Store(tmp_path, "apps")
+    game = next(s.node for s in steps if s.node.id == "game.none.base")
+    (store.folder(game) / "bootstrap_all_monitors.jsonl.gz").write_bytes(b"old")
+    run(tmp_path, "force=[game]")  # a whole stage; games call no paid models
+    assert not (store.folder(game) / "bootstrap_all_monitors.jsonl.gz").exists()
+    assert ran == ["game.none.base", "game.none.sft", "analysis"]
+
+    with pytest.raises(pipeline_run.PlanError, match="no step or stage"):
+        run(tmp_path, "force=[generate.test.typo]")
+    with pytest.raises(pipeline_run.PlanError, match="analysis"):
+        run(tmp_path, "force=[game]", "stages=[game]")
 
 
 def test_inputs_are_used_without_running(tmp_path: Path, ran: list[str]) -> None:

@@ -42,8 +42,10 @@ Running
 -------
 ``run.py`` walks back from the analysis: anything done locally, given in
 ``inputs`` (a path, ``wandb:<entity>/<project>/<name>:vN``, or a model id),
-or (``reuse=wandb``) found on W&B as a complete run with the same key stops
-the walk. Nodes of stages not in ``stages`` must already exist. A plan that
+or found on W&B as a complete run with the same key (``reuse=wandb``, the
+default; skipped when W&B is offline) stops the walk. ``force`` marks nodes
+and everything downstream of them as not done; they rerun from an emptied
+folder. Nodes of stages not in ``stages`` must already exist. A plan that
 would call paid models only prints itself unless ``allow_paid=true``.
 ``execute.py`` runs a node by calling the stage functions in ``scripts/`` and
 ``finetuning/`` under a ``tracking.StageRun``.

@@ -75,9 +75,21 @@ folder under `experiments/<setting>/<stage>/`. Useful options:
 - `+inputs.<step id>=<output>`: use an existing output instead of running a step. The output can
   be a local `.eval`, a W&B artifact `wandb:<entity>/<project>/<name>:v<N>`, or for a
   fine-tune a model id (`+inputs.finetune.self_rec.none=tinker/tinker://...`).
-- `reuse=wandb`: also reuse outputs that anyone logged to W&B with exactly the same settings.
 - `optimization.variants=[all_monitors,um_only,tm_only]`: add the trusted-monitor-only analysis.
   `measurement.monitors` picks which monitors run.
+
+**Reuse and reruns.** A step is done if an output with the same settings and inputs exists on
+this machine or, when W&B is online, on W&B from anyone's run (`reuse=local` skips W&B). Code and
+prompt wording aren't part of the match (prompts match by name), so after changing them, force a
+rerun:
+
+- `force=[<step id or stage>]`, e.g. `force=[monitor.none.sft.attacks]` or `force=[game]`, reruns
+  those steps and everything that depends on them, replacing their outputs (on W&B the newest
+  run wins). Their stages must be in `stages`.
+- A forced step keeps its seed, so seeded models may give the same answers. For new samples,
+  change `seed`; that reruns everything, fine-tunes included.
+- Steps shared with another experiment (e.g. `self_rec`'s honest generations) are only rerun
+  downstream in this one; force the other experiment's steps too.
 
 **Where things go.** Each invocation's merged config is saved in
 `experiments/runs/<experiment>/<time>/.hydra/` and attached to every W&B run it made. Each

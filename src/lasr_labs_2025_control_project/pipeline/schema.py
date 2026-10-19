@@ -248,8 +248,11 @@ class Config:
     #: without it, a run that would call paid models only prints its plan
     allow_paid: bool = False
     allow_unlinked: bool = False
-    #: "local", or "wandb" to also reuse matching outputs logged to W&B
-    reuse: str = "local"
+    #: "wandb" also reuses matching outputs logged to W&B (when W&B is online);
+    #: "local" only reuses this machine's outputs
+    reuse: str = "wandb"
+    #: step ids or stage names to rerun even if done, with everything downstream
+    force: list[str] = field(default_factory=list)
     experiments_dir: str = "experiments"
     #: node id -> existing output (path, wandb:<entity>/<project>/<name>:vN, or model id)
     inputs: dict[str, Any] = field(default_factory=dict)

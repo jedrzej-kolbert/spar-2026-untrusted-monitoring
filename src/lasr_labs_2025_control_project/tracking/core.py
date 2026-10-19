@@ -59,6 +59,11 @@ def mode() -> str:
     return "online"
 
 
+def available() -> bool:
+    """Whether the W&B API is reachable (online, with a key)."""
+    return _api() is not None
+
+
 def is_ref(path: str | Path) -> bool:
     return str(path).startswith(REF_PREFIX)
 
@@ -392,6 +397,7 @@ def find_pipeline_run(node_hash: str, key: Mapping[str, Any]) -> Any:
     runs = api.runs(
         f"{_entity(api)}/{_project()}",
         filters={"config.pipeline_hash": node_hash, "summary_metrics.complete": True},
+        order="-created_at",  # a forced rerun replaces earlier runs of the node
         lazy=False,  # lazy runs (wandb >= 0.22) carry their config as a raw JSON string
     )
     for run in runs:
