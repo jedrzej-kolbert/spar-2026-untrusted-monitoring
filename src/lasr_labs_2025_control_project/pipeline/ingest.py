@@ -69,6 +69,7 @@ from lasr_labs_2025_control_project.tracking import (
     find_pipeline_run,
     input_counts,
     mode,
+    names,
     resolve_input,
 )
 from lasr_labs_2025_control_project.tracking.local_runs import (
@@ -518,6 +519,7 @@ def log_game(node: Node, ctx: RunContext) -> Output:
         artifact = tracker.log_artifact(
             files,
             type="game",
+            name=names.fit(f"game.{node.name}"),
             metadata={"variants": node.params["variants"]},
             wait=True,
         )

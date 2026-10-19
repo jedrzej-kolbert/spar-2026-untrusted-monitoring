@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 from inspect_ai.log import read_eval_log
 
-from lasr_labs_2025_control_project.tracking import StageRun
+from lasr_labs_2025_control_project.tracking import StageRun, names
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (
     PAPER_GAME_PARAMETERS,
     OptimizationResult,
@@ -292,6 +292,9 @@ def solve_game(
         artifact = tracker.log_artifact(
             files,
             type="game",
+            # Prefixed like the analysis run's figures, so a game never shares a
+            # name with an artifact of another type (W&B refuses that).
+            name=names.fit(f"game.{name}"),
             metadata={
                 "variants": list(variants),
                 "models": primary_payload.get("models"),

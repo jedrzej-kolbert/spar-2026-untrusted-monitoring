@@ -109,12 +109,12 @@ see its README) and is driven by the pipeline like the other settings.
 ## Results
 
 - **W&B** has one run per stage and label, one `game` run per condition (the solved game and its
-  bootstrap, saved as a `game` artifact), and one `analysis` run per experiment, which draws the
-  figures for all its conditions and lists their `game` artifacts as inputs. Filter by job type
-  (stage) or by tag (experiment, collusion strategy, transform, monitor arm, label). Runs from
-  one invocation share a group and a `config` artifact; the config artifact's lineage lists every
-  run made from that config. Curves are logged as raw numbers: each y
-  metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a
+  bootstrap, saved as the `game` artifact `game.<condition>`), and one `analysis` run per
+  experiment, which draws the figures for all its conditions and lists their `game` artifacts as
+  inputs. Filter by job type (stage) or by tag (experiment, collusion strategy, transform, monitor
+  arm, label). Runs from one invocation share a group and a `config` artifact; the config
+  artifact's lineage lists every run made from that config. Curves are logged as raw numbers:
+  each y metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a
   custom panel). Panels plotted against "Step" are meaningless. The analysis run logs the
   figures as images under `figures/`; each figure names U, H and T under its legend.
 
