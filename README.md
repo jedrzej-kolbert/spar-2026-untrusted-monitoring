@@ -143,8 +143,9 @@ steps; use the same value in both.
 ## Results
 
 - **W&B** has one run per stage and label, one `game` run per condition (the solved game and its
-  bootstrap, saved as a `game` artifact), and one `analysis` run per `plot_data.py` invocation,
-  which draws the figures for all its conditions and lists their `game` artifacts as inputs.
+  bootstrap, saved as the `game` artifact `game.<condition>`), and one `analysis` run per
+  `plot_data.py` invocation, which draws the figures for all its conditions and lists their `game`
+  artifacts as inputs.
   Filter by job type (stage) or by tag (collusion strategy, transform, monitor arm, label). Set
   `WANDB_RUN_GROUP=<name>` to group a batch of runs. Curves are logged as raw numbers: each y
   metric has its x-axis metric, which W&B uses as the panel's x-axis (set it by hand on a

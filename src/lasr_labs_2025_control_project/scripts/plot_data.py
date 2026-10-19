@@ -330,6 +330,9 @@ def analyse_condition(
         artifact = tracker.log_artifact(
             files,
             type="game",
+            # Prefixed like the analysis run's figures, so a game never shares a
+            # name with an artifact of another type (W&B refuses that).
+            name=names.fit(f"game.{name}"),
             metadata={"variants": [v[0] for v in variants], "models": models},
             wait=True,
         )
