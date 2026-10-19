@@ -534,6 +534,11 @@ def test_force_reruns_the_step_and_what_depends_on_it(
         run(tmp_path, "force=[generate.test.typo]")
     with pytest.raises(pipeline_run.PlanError, match="analysis"):
         run(tmp_path, "force=[game]", "stages=[game]")
+    # one condition's game alone: this narrower analysis has no output to go stale
+    ran.clear()
+    one = ("measurement.transforms=[none]", "~measurement.arms.sft", "stages=[game]")
+    run(tmp_path, *one, "force=[game.none.base]")
+    assert ran == ["game.none.base"]
 
 
 def test_inputs_are_used_without_running(tmp_path: Path, ran: list[str]) -> None:

@@ -42,7 +42,7 @@ def plan(graph: Graph, cfg: Config, store: Store, ctx: RunContext) -> list[Step]
     count as not done.
     """
     statuses: dict[str, str] = {}
-    stale = stale_nodes(graph, cfg)
+    stale = stale_nodes(graph, cfg, store)
     from_wandb = cfg.reuse == "wandb" and available()
 
     def visit(node: Node) -> None:
@@ -89,7 +89,7 @@ def plan(graph: Graph, cfg: Config, store: Store, ctx: RunContext) -> list[Step]
     return steps
 
 
-def stale_nodes(graph: Graph, cfg: Config) -> set[str]:
+def stale_nodes(graph: Graph, cfg: Config, store: Store) -> set[str]:
     """Hashes of the nodes ``force`` names (by id or stage) and their descendants."""
     known = {node.id for node in graph.nodes} | set(STAGES)
     if unknown := sorted(set(cfg.force) - known):
@@ -106,7 +106,9 @@ def stale_nodes(graph: Graph, cfg: Config) -> set[str]:
     unselected = sorted(
         node.id
         for node in graph.nodes
-        if node.hash in stale and node.stage not in cfg.stages
+        if node.hash in stale
+        and node.stage not in cfg.stages
+        and store.output_path(node).exists()
     )
     if unselected:
         raise PlanError(

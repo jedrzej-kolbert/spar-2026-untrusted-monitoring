@@ -85,7 +85,9 @@ rerun:
 
 - `force=[<step id or stage>]`, e.g. `force=[monitor.none.sft.attacks]` or `force=[game]`, reruns
   those steps and everything that depends on them, replacing their outputs (on W&B the newest
-  run wins). Their stages must be in `stages`.
+  run wins). Downstream steps that already ran must have their stages in `stages`.
+- To run one condition's game alone, narrow the experiment to it, e.g.
+  `stages=[game] measurement.transforms=[none] '~measurement.arms.sft' force=[game.none.base]`.
 - A forced step keeps its seed, so seeded models may give the same answers. For new samples,
   change `seed`; that reruns everything, fine-tunes included.
 - Steps shared with another experiment (e.g. `self_rec`'s honest generations) are only rerun
