@@ -39,6 +39,7 @@ from lasr_labs_2025_control_project.utils.config_loader import (
     load_and_normalize_config,
 )
 from lasr_labs_2025_control_project.utils.utils import (
+    is_python_solution,
     minify_code,
     remove_comments,
 )
@@ -162,6 +163,14 @@ def transform_solutions(
 
     """
     dataset = eval_to_dataset(run.eval_path)
+    if any(
+        not is_python_solution((sample.metadata or {}).get("setting_name"))
+        for sample in dataset
+    ):
+        # The minifier parses Python and the summariser prompts describe code.
+        raise NotImplementedError(
+            "Paraphrasing and minification are not available for BashArena yet"
+        )
 
     scorer_names = []
     if dataset[0].metadata and "scores" in dataset[0].metadata:

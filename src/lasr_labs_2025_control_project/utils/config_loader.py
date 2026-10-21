@@ -19,6 +19,12 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     TransformInfo,
     TransformType,
 )
+from lasr_labs_2025_control_project.utils.basharena_views import (
+    ACTION_VIEW,
+    TRAJECTORY_VIEW,
+    VIEWS,
+    ActionViewOptions,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,11 +126,17 @@ class MonitorRunConfig(RunConfig):
     ``reuse_scores_from``: an existing monitor-results .eval whose scores are
     identical for this run (same inputs, monitors, and prompts). It is copied to
     ``save_path`` instead of re-running the monitors.
+
+    view: "trajectory" scores each finished trajectory once; "action" scores every
+    action in BashArena's per-action format (see basharena_views.action_views),
+    with the same action_options as the SFT data.
     """
 
     eval_path: Path
     monitors: RunMonitors
     reuse_scores_from: Optional[Path] = None
+    view: str = TRAJECTORY_VIEW
+    action_options: Optional[ActionViewOptions] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,8 +293,24 @@ def normalize_monitor_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
         monitors_map[name] = cfg
 
+    view = defaults.get("view", TRAJECTORY_VIEW)
+    if view not in VIEWS:
+        raise ValueError(f"defaults.view must be one of {VIEWS}, got {view!r}")
+    action_options = None
+    if view == ACTION_VIEW:
+        if any(cfg.get("transformed") for cfg in monitors_map.values()):
+            raise ValueError(
+                "view: action renders views from the agent's messages; "
+                "transformed monitors are not supported"
+            )
+        action_options = ActionViewOptions(**(defaults.get("action_view") or {}))
+    elif defaults.get("action_view"):
+        raise ValueError("defaults.action_view is only used with view: action")
+
     return {
         "limit": defaults.get("limit"),
+        "view": view,
+        "action_options": action_options,
         "monitors_map": monitors_map,
         "disable_untrusted_monitor": defaults.get("disable_untrusted_monitor", False),
         "disable_trusted_monitor": defaults.get("disable_trusted_monitor", False),
@@ -421,6 +449,8 @@ def _build_monitor_run_config(
             if reuse is not None
             else None
         ),
+        view=defaults.get("view", TRAJECTORY_VIEW),
+        action_options=defaults.get("action_options"),
     )
 
 

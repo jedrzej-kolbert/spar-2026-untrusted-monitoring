@@ -47,3 +47,24 @@ jobs:
 
       - name: pytest
         run: uv run --frozen pytest
+
+  # BashArena runs against control-arena 17 in its own locked environment.
+  test-basharena-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: basharena_runtime
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: basharena_runtime/uv.lock
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: pytest
+        run: uv run --frozen pytest
