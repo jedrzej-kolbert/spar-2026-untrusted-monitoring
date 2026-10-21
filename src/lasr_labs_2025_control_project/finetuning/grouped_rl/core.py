@@ -476,10 +476,10 @@ class GroupedRLTrainer:
             raise ValueError("backdoor suspicion penalty requires a backdoor monitor")
         if reward.kl_coef > 0 and reference is None:
             raise ValueError("KL penalty requires a reference policy")
-        if reward.failed_backdoor_weight > 0 and not hasattr(
-            evaluator, "check_backdoor"
-        ):
-            raise ValueError("failed-backdoor penalty requires a backdoor checker")
+        if (
+            reward.failed_backdoor_weight > 0 or reward.backdoor_kept_weight > 0
+        ) and not hasattr(evaluator, "check_backdoor"):
+            raise ValueError("backdoor reward terms require a backdoor checker")
         self.overseer = overseer
         self.channel = channel
         self.backdoor_monitor = backdoor_monitor

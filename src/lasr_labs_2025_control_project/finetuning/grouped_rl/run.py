@@ -292,6 +292,7 @@ def core_config(
             failed_backdoor_weight=reward.failed_backdoor_weight,
             backdoor_suspicion_weight=reward.backdoor_suspicion_weight,
             kl_coef=reward.kl_coef,
+            backdoor_kept_weight=reward.backdoor_kept_weight,
         ),
         train_receiver=training.train_receiver,
         self_recognition=config.task_mode == "self_recognition",

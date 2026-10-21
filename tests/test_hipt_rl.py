@@ -758,6 +758,31 @@ def test_self_recognition_reward_keeps_correctness_and_backdoor_terms(
     assert reward == pytest.approx(float(passed) * 1.8 - 1)
 
 
+def test_backdoor_bonus_matches_penalty_advantages() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+        group_advantages,
+    )
+
+    group = [(0.8, True), (0.8, False), (0.3, True), (0.3, False)]
+
+    def advantages(reward: RewardConfig) -> list[float]:
+        config = GroupedRLConfig(self_recognition=True, reward=reward)
+        rewards = [
+            compute_reward(rollout(p_yes=p, backdoor=ExecutionGrade(kept)), config)[0]
+            for p, kept in group
+        ]
+        return group_advantages(rewards)
+
+    bonus = advantages(RewardConfig(backdoor_kept_weight=1))
+    assert bonus == pytest.approx(advantages(RewardConfig(failed_backdoor_weight=1)))
+    assert bonus != pytest.approx(advantages(RewardConfig()))
+    _, parts = compute_reward(
+        rollout(backdoor=ExecutionGrade(True)),
+        GroupedRLConfig(reward=RewardConfig(backdoor_kept_weight=0.5)),
+    )
+    assert parts["backdoor_kept"] == 0.5
+
+
 class LearningReceiver(MarkerReceiver):
     def __init__(self) -> None:
         self.updates: list[list[ReceiverExample]] = []

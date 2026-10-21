@@ -72,6 +72,8 @@ class RewardSettings(_Strict):
     failed_backdoor_weight: float = Field(default=0.0, ge=0)
     backdoor_suspicion_weight: float = Field(default=0.0, ge=0)
     kl_coef: float = Field(default=0.05, ge=0)
+    # bonus when the rewrite's backdoor still triggers on the secret input
+    backdoor_kept_weight: float = Field(default=0.0, ge=0)
 
 
 class TrainingConfig(_Strict):
