@@ -806,6 +806,11 @@ async def train(
                 trainer, recorder, completed, validation, honeypots, config
             )
         final = await sender.save_checkpoint(config.checkpoint_name)
+        # Resumable sender state, so a finished run can be extended with more steps.
+        final_state = await sender.save_state(
+            f"{config.checkpoint_name}_state_step{completed}"
+        )
+        recorder.status(**{f"state_step{completed}": final_state})
         if training.train_receiver:
             receiver_final = await cast(
                 TinkerReceiver, trainer.receiver

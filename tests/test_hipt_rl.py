@@ -1067,6 +1067,11 @@ def driven_run(
         trainer.receiver, "save_checkpoint", save_checkpoint, raising=False
     )
 
+    async def save_state(name: str) -> str:
+        return "tinker://test/weights/" + name
+
+    monkeypatch.setattr(trainer.sender, "save_state", save_state, raising=False)
+
     async def build(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
         return trainer, trainer.sender
 
@@ -1159,6 +1164,7 @@ async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
     await run.train(config, allow_paid=True)
     assert not trainer.receiver.updates
     assert "final_checkpoint" in wb.summary
+    assert wb.summary["state_step1"].endswith("_state_step1")
     assert "final_receiver_checkpoint" not in wb.summary
     training_log = next(v for _, v in wb.logs if "scores/p_self" in v)
     assert training_log["zz_other/train/receiver_updated"] == 0
