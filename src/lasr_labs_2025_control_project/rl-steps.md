@@ -121,9 +121,14 @@ step and in total, prefill/sample/train tokens). Everything else is under
 `zz_other/`. `usage.json` holds the token counts per model.
 
 Costs are estimated from every Tinker request the process makes, priced from
-Tinker's published rates (`usage.py`). `training.max_cost_usd` stops the run before
-a step that would pass it, judged by the previous step's cost, then runs a last
-evaluation and saves both checkpoints.
+Tinker's published rates (`usage.py`). `training.max_cost_usd` reserves each
+request's maximum token cost before dispatch, including concurrent requests and
+baseline/final evaluation. Failed requests are conservatively counted at their
+reserved maximum. It also stops early when the previous step predicts an overrun.
+After exhaustion, no more token requests are dispatched; checkpoints are still
+saved. Final usage is recorded even after a failed step or final evaluation.
+This is a published-rate token-cost cap, not an invoice cap (SDK retries and
+storage are not independently billed here).
 `status.json` and W&B summary contain **both** final checkpoints. Joint training
 currently starts fresh; `--resume-state` is rejected because it restores only the sender.
 

@@ -638,6 +638,7 @@ class FrozenYesNoMonitor:
             user_prompt=MONITOR_USER_PROMPT.format(
                 problem_statement=problem.question, solution=code
             ),
+            single_prefill=True,
         )
 
     async def probabilities(

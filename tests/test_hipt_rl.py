@@ -457,6 +457,7 @@ async def test_frozen_monitor_normalizes_yes_no(
     p_no, p_yes = await monitor.probabilities(attack_problem(), "CODE")
     assert p_yes == pytest.approx(0.75) and p_no == pytest.approx(0.25)
     assert calls[0]["system_prompt"] == "SYSTEM"
+    assert calls[0]["single_prefill"] is True
     assert "CODE" in calls[0]["user_prompt"] and "Read n" in calls[0]["user_prompt"]
     with pytest.raises(PermissionError):
         await FrozenYesNoMonitor("tinker/m", "S").probabilities(attack_problem(), "c")
@@ -1145,32 +1146,82 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
         )
 
 
+async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    run, trainer, wb, _, config = driven_run(
+        monkeypatch, tmp_path, train_receiver=False
+    )
+    trainer.config = replace(trainer.config, train_receiver=False)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    await run.train(config, allow_paid=True)
+    assert not trainer.receiver.updates
+    assert "final_checkpoint" in wb.summary
+    assert "final_receiver_checkpoint" not in wb.summary
+    training_log = next(v for _, v in wb.logs if "scores/p_self" in v)
+    assert training_log["zz_other/train/receiver_updated"] == 0
+
+
 async def test_budget_cap_stops_before_an_unaffordable_step(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import json
 
     run, trainer, wb, meter, config = driven_run(
-        monkeypatch, tmp_path, steps=10, max_cost_usd=8.0
+        monkeypatch, tmp_path, steps=10, max_cost_usd=5.0
     )
     generate = trainer.sender.generate
 
     async def costly(problem: AppsProblem, payload: int, n: int) -> list[Any]:
-        meter.add("deepseek-ai/DeepSeek-V3.1", train=1_000_000)  # $3.718
-        return await generate(problem, payload, n)
+        count = 1_000_000 if problem.split == "train" else 100_000
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=count):
+            return await generate(problem, payload, n)
 
     monkeypatch.setattr(trainer.sender, "generate", costly)
     await run.train(config, allow_paid=True)
     progress_steps = [s for s, v in wb.logs if "progress/cost_usd" in v]
-    # Step 0 eval costs $3.72; step 1 costs $3.72 (total 7.44); step 2 would pass $8.
-    assert progress_steps == [1]
+    # Baseline $0.372 + step 1 $3.718; step 2 is unaffordable, final eval still fits.
+    assert progress_steps == [1, 2]
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished" and "budget" in status["reason"]
     assert status["final_receiver_checkpoint"].endswith("_receiver")
-    # A last evaluation ran at the final completed step.
     assert any(s == 1 and "eval/p_self" in v for s, v in wb.logs)
     usage_file = json.loads((tmp_path / "usage.json").read_text())
-    assert usage_file["estimated_cost_usd"] == pytest.approx(2 * 3.718)
+    assert usage_file["estimated_cost_usd"] == pytest.approx(1.2 * 3.718)
+    assert usage_file["estimated_cost_usd"] == meter.cost_usd
+    assert wb.summary["estimated_cost_usd"] == meter.cost_usd
+
+
+@pytest.mark.parametrize("cap", [3.0, 4.0])
+async def test_budget_refusal_during_baseline_or_first_step_saves_without_overspend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap: float
+) -> None:
+    import json
+
+    run, trainer, wb, meter, config = driven_run(
+        monkeypatch, tmp_path, steps=10, max_cost_usd=cap
+    )
+    generate = trainer.sender.generate
+
+    async def costly(problem: AppsProblem, payload: int, n: int) -> list[Any]:
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+            return await generate(problem, payload, n)
+
+    monkeypatch.setattr(trainer.sender, "generate", costly)
+    await run.train(config, allow_paid=True)
+    assert meter.exhausted and meter.cost_usd <= cap
+    assert meter.reserved_usd == pytest.approx(0)
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished" and status["budget_exhausted"]
+    assert "final_checkpoint" in status
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    assert not trainer.sender.updates and not trainer.receiver.updates
+    usage_file = json.loads((tmp_path / "usage.json").read_text())
+    assert usage_file["estimated_cost_usd"] == meter.cost_usd
+    assert wb.summary["estimated_cost_usd"] == meter.cost_usd
 
 
 def test_usage_counts_every_tinker_call_and_prices_tokens(
@@ -1204,6 +1255,7 @@ def test_usage_counts_every_tinker_call_and_prices_tokens(
         tinker.TrainingClient, "forward_backward_async", forward_backward_async
     )
     meter = usage.install(usage.Usage())
+    meter.max_cost_usd = 1.0
     assert usage.install(meter) is meter  # second install does not double-wrap
     sampler = object.__new__(tinker.SamplingClient)
     setattr(sampler, "_usage_model", "deepseek-ai/DeepSeek-V3.1")
@@ -1229,8 +1281,51 @@ def test_usage_counts_every_tinker_call_and_prices_tokens(
     assert meter.cost_usd == pytest.approx(expected)
     snapshot = meter.snapshot()
     assert snapshot["tokens_prefill"] == 50 and snapshot["unpriced_models"] == 0
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(ValueError, match="explicit max_tokens"):
+        asyncio.run(
+            sampler.sample_async(
+                prompt=prompt,
+                num_samples=1,
+                sampling_params=tinker.types.SamplingParams(),
+            )
+        )
+    assert meter.snapshot() == snapshot
+    meter.max_cost_usd = meter.cost_usd
+    with pytest.raises(usage.BudgetExceeded):
+        asyncio.run(monitor.compute_logprobs_async(prompt))
+    assert meter.snapshot() == snapshot  # refused requests were not dispatched
     meter.add("unknown/model", train=1_000_000)
-    assert meter.cost_usd == pytest.approx(expected + 3.718)  # highest train rate
+    assert meter.cost_usd == pytest.approx(expected + 3.718)  # indicative rate
+
+
+def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 5.0
+    with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000) as counts:
+        assert meter.reserved_usd == pytest.approx(3.718)
+        with pytest.raises(usage.BudgetExceeded):
+            with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+                pytest.fail("concurrent request exceeded the cap")
+        counts["train"] = 100_000  # unused reservation is released
+    assert meter.cost_usd == pytest.approx(0.3718)
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(usage.BudgetExceeded):
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1):
+            pytest.fail("exhausted meter dispatched another request")
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 5.0
+    with pytest.raises(RuntimeError, match="connection lost"):
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+            raise RuntimeError("connection lost")
+    assert meter.cost_usd == pytest.approx(3.718)
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(ValueError, match="no budget price"):
+        with meter.request("unknown/model", train=1):
+            pytest.fail("unpriced request dispatched")
 
 
 def test_wandb_keys_put_unlisted_metrics_last() -> None:

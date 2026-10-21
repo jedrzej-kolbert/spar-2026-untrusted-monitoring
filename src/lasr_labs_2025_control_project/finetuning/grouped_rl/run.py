@@ -630,6 +630,7 @@ async def train(
         return
 
     meter = usage.install()
+    meter.max_cost_usd = config.training.max_cost_usd
     recorder = Recorder(config, output_dir)
     recorder.status(state="starting", parity=parity)
     recorder.scalars(0, "preflight", parity)
@@ -646,9 +647,6 @@ async def train(
             recorder.status(state="stopped", reason=f"overseer gap {gap:.3f} too small")
             raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
 
-    if start_step == 1:
-        await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
-
     rng = random.Random(config.seed)
     order: list[AppsProblem] = []
     skipped = 0
@@ -658,12 +656,16 @@ async def train(
         next_batch(order, train_tasks, training.problems_per_step, rng)
     last_step_cost = 0.0
     completed, last_eval = start_step - 1, start_step - 1
+    step = completed
     try:
+        if start_step == 1:
+            await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
         for step in range(start_step, training.steps + 1):
             spent = meter.cost_usd
             cap = training.max_cost_usd
-            # The previous step (with its evaluation) estimates what this one costs.
-            if cap is not None and spent + last_step_cost > cap:
+            # Stop early if the last step predicts an overrun; SDK reservations also
+            # protect the first step, longer outputs, and every evaluation request.
+            if meter.exhausted or (cap is not None and spent + last_step_cost > cap):
                 recorder.status(
                     state="stopping",
                     step=step - 1,
@@ -689,6 +691,15 @@ async def train(
                 result = error.result
                 recorder.rollouts(step, "train_failed", result.rollouts)
                 recorder.receiver_examples(step, result.receiver_examples)
+                if meter.exhausted:
+                    recorder.status(
+                        state="stopping",
+                        step=step,
+                        reason="budget: refused a request before dispatch",
+                        partial_step=True,
+                    )
+                    click.echo(f"step {step}: budget exhausted; saving current weights")
+                    break
                 if result.sender_updated is None or result.receiver_updated is None:
                     recorder.status(
                         state="stopped", step=step, reason="uncertain update"
@@ -790,7 +801,7 @@ async def train(
                 )
             )
             last_step_cost = meter.cost_usd - spent
-        if completed != last_eval:  # the budget stop came between evaluations
+        if completed != last_eval and not meter.exhausted:
             await run_evaluation(
                 trainer, recorder, completed, validation, honeypots, config
             )
@@ -808,6 +819,16 @@ async def train(
                 config.checkpoints.ckpts_json, config.checkpoint_name, final
             )
     finally:
+        recorder.scalars(step, "progress", meter.snapshot())
+        (output_dir / "usage.json").write_text(
+            json.dumps(
+                {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens},
+                indent=2,
+            )
+        )
+        recorder.status(
+            estimated_cost_usd=meter.cost_usd, budget_exhausted=meter.exhausted
+        )
         recorder.finish()
 
 

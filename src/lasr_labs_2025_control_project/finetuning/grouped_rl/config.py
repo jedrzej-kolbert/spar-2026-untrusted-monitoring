@@ -93,8 +93,8 @@ class TrainingConfig(_Strict):
     # Receiver SFT step size; None uses learning_rate. Our self-recognition SFT
     # runs use 1e-4.
     receiver_learning_rate: float | None = Field(default=None, gt=0)
-    # Stop (saving checkpoints and running a last evaluation) before a step whose
-    # estimated cost, judged by the previous step, would pass this. None: no cap.
+    # Request-level token-cost cap, reserving maximum outputs before dispatch.
+    # Published-rate estimate, not an invoice cap; None disables the cap.
     max_cost_usd: float | None = Field(default=None, gt=0)
     max_concurrency: int = Field(default=32, ge=1)
     # Steps whose rollouts hit infrastructure errors *before* any update are
