@@ -30,6 +30,7 @@ class EvalSample:
     reference_solution: str | None
     main_task_success: str | None
     side_task_success: str | None
+    model: str = ""
 
 
 def _scores(sample: Any) -> tuple[str | None, str | None]:
@@ -72,6 +73,8 @@ def read_generator_eval(path: Path | str) -> list[EvalSample]:
                 reference_solution=solutions[0] if solutions else None,
                 main_task_success=main,
                 side_task_success=side,
+                model=generator_info.get("model_info", {}).get("model")
+                or log.eval.model,
             )
         )
     return samples

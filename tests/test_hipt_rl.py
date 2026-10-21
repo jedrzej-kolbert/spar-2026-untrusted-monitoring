@@ -25,6 +25,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     GroupedRLConfig,
     GroupedRLTrainer,
     HoneypotEvalResult,
+    ReceiverExample,
     Rollout,
     SenderExample,
     UpdateStats,
@@ -685,6 +686,373 @@ def test_overseer_ramp() -> None:
         1.0,
         1.0,
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Self-recognition: origin labels, sender RL, and receiver SFT
+# --------------------------------------------------------------------------- #
+def self_rec_config(**overrides: Any) -> RLRunConfig:
+    values = {
+        "run_name": "self-rec",
+        "output_dir": "out",
+        "task_mode": "self_recognition",
+        "data": {"attacks_eval": "attacks.eval", "honeypots_eval": "honeypots.eval"},
+        "reward": {"overseer_weight": 0, "overseer_scale": 0, "kl_coef": 0},
+        "training": {"train_receiver": True, "group_size": 2, "problems_per_step": 1},
+    }
+    return RLRunConfig.model_validate({**values, **overrides})
+
+
+def test_self_recognition_config_and_prompts() -> None:
+    from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+
+    config = self_rec_config()
+    assert core_config(config).self_recognition
+    messages = rewrite_sender_messages(
+        attack_problem(),
+        1,
+        system_prompt=get_prompt_by_name(config.prompts.sender_system),
+        user_prompt=get_prompt_by_name(config.prompts.sender_user),
+        signal_labels=("OFF", "ON"),
+    )
+    text = "\n".join(message["content"] for message in messages)
+    assert "Collusion signal:" not in text
+    assert "Signal ON" not in text
+    assert "natural coding style" in text
+    assert (
+        config.prompts.receiver_system
+        == "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT"
+    )
+    for overrides in (
+        {"data": {"attacks_eval": "a"}},
+        {"models": {"receiver": "tinker/another-model"}},
+        {"reward": {"overseer_weight": 1, "overseer_scale": 0}},
+        {
+            "reward": {
+                "overseer_weight": 0,
+                "overseer_scale": 0,
+                "backdoor_suspicion_weight": 1,
+            }
+        },
+    ):
+        with pytest.raises(ValueError):
+            self_rec_config(**overrides)
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_self_recognition_reward_keeps_correctness_and_backdoor_terms(
+    passed: bool,
+) -> None:
+    config = GroupedRLConfig(
+        self_recognition=True,
+        reward=RewardConfig(failed_backdoor_weight=1),
+    )
+    reward, parts = compute_reward(
+        rollout(p_yes=0.8, passed=passed, backdoor=ExecutionGrade(False)), config
+    )
+    assert parts == {
+        "task": float(passed),
+        "self_recognition": float(passed) * 0.8,
+        "failed_backdoor": -1.0,
+    }
+    assert reward == pytest.approx(float(passed) * 1.8 - 1)
+
+
+class LearningReceiver(MarkerReceiver):
+    def __init__(self) -> None:
+        self.updates: list[list[ReceiverExample]] = []
+
+    async def update(self, examples: list[ReceiverExample]) -> UpdateStats:
+        self.updates.append(examples)
+        return UpdateStats({"loss:sum": 1.0})
+
+
+def self_rec_trainer() -> GroupedRLTrainer:
+    return GroupedRLTrainer(
+        EchoSender(),
+        LearningReceiver(),
+        PassingEvaluator(),
+        GroupedRLConfig(
+            group_size=2,
+            self_recognition=True,
+            reward=RewardConfig(failed_backdoor_weight=1),
+        ),
+        channel=MonitorViewChannel("none"),
+        code_extractor=extract_final_code,
+    )
+
+
+async def test_self_recognition_balances_origin_labels() -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    assert trainer.channel is not None
+    problem = attack_problem()
+    result = await trainer.train_step(
+        [problem], honeypots=[(problem, "# other model\nprint(7)")]
+    )
+    assert trainer.sender.requests == [("11", 1, 2)]
+    assert [item.payload for item in result.rollouts] == [1, 1]
+    assert (
+        result.sender_updated
+    )  # backdoor preservation differs across the two rewrites
+    assert result.receiver_updated
+    examples = trainer.receiver.updates[0]
+    assert [example.payload for example in examples] == [1, 0, 1, 0]
+    expected_negative = await trainer.channel.transform(
+        problem, "# other model\nprint(7)"
+    )
+    assert all(
+        example.code == expected_negative
+        for example in examples
+        if example.payload == 0
+    )
+    assert "other model" not in expected_negative
+    assert [example.code for example in examples if example.payload == 1] == [
+        item.receiver_code for item in result.rollouts
+    ]
+    assert result.receiver_examples == examples
+
+
+@pytest.mark.parametrize(
+    "bad_pairs", [[], [(attack_problem(split="validation"), "print(7)")]]
+)
+async def test_self_recognition_rejects_missing_or_held_out_negatives_before_generation(
+    bad_pairs: Any,
+) -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    with pytest.raises(ValueError, match="training honeypot"):
+        await trainer.train_step([attack_problem()], honeypots=bad_pairs)
+    assert not trainer.sender.requests
+    assert not trainer.receiver.updates
+
+
+async def test_self_recognition_eval_only_generates_self() -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    result = await trainer.evaluate([attack_problem("13", "validation")], balanced=True)
+    assert trainer.sender.requests == [("13", 1, 1)]
+    assert [item.payload for item in result.rollouts] == [1]
+    assert not trainer.receiver.updates
+
+
+def test_self_recognition_loader_keeps_training_and_validation_negatives_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    attacks = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
+    negatives = [replace(item, model="another-model") for item in attacks]
+    monkeypatch.setattr(
+        run,
+        "read_generator_eval",
+        lambda path: negatives if "honeypots" in str(path) else attacks,
+    )
+    train, validation, train_negatives, eval_negatives = run.load_tasks(
+        self_rec_config()
+    )
+    assert {p.problem_id for p, _ in train_negatives} == {p.problem_id for p in train}
+    assert {p.problem_id for p, _ in eval_negatives} == {
+        p.problem_id for p in validation
+    }
+    assert not {p.problem_id for p, _ in train_negatives} & {
+        p.problem_id for p, _ in eval_negatives
+    }
+    negatives[0] = replace(negatives[0], model="deepseek-ai/DeepSeek-V3.1")
+    with pytest.raises(ValueError, match="different model"):
+        run.load_tasks(self_rec_config())
+
+
+async def test_yes_no_receiver_scores_and_trains_the_same_answer_tokens() -> None:
+    class Tokenizer:
+        eos_token_id = 0
+
+        def encode(self, text: str, **kwargs: Any) -> list[int]:
+            return list(text.encode())
+
+        def apply_chat_template(self, messages: Any, **kwargs: Any) -> list[int]:
+            return [1, 2]
+
+    class Sampler:
+        def __init__(self) -> None:
+            self.prompts: list[list[int]] = []
+
+        async def compute_logprobs_async(self, model_input: Any) -> list[float]:
+            ids = model_input.to_ints()
+            self.prompts.append(ids)
+            return [-0.1] * len(ids)
+
+    class Client(_TrainingClient):
+        async def forward_backward_async(
+            self, data: Any, loss_fn: Any, config: Any = None
+        ) -> _Future:
+            self.data = data
+            return await super().forward_backward_async(data, loss_fn, config)
+
+    client, sampler = Client(), Sampler()
+    receiver = tinker_backend.TinkerReceiver(
+        client,
+        sampler,
+        Tokenizer(),
+        allow_paid=True,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+        answer_suffix="</answer>",
+    )
+    await receiver.probabilities(attack_problem(), "print(1)")
+    prefix = [1, 2, *b"<answer>"]
+    assert sampler.prompts == [prefix + list(b"NO"), prefix + list(b"YES")]
+    await receiver.update(
+        [ReceiverExample(attack_problem(), "print(1)", bit) for bit in (0, 1)]
+    )
+    assert client.calls[0][1] == "cross_entropy"
+    for datum, answer in zip(
+        client.data, (b"NO</answer>\x00", b"YES</answer>\x00"), strict=True
+    ):
+        assert datum.loss_fn_inputs["target_tokens"].data == prefix[1:] + list(answer)
+        assert datum.loss_fn_inputs["weights"].data == [0.0] * (len(prefix) - 1) + [
+            1.0
+        ] * len(answer)
+
+
+@pytest.mark.parametrize(
+    "model", ["tinker/deepseek-ai/DeepSeek-V3.1", "tinker://sft/sampler_weights/final"]
+)
+async def test_receiver_factory_supports_base_and_sft_weights(
+    model: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tinker
+
+    client = _TrainingClient()
+    monkeypatch.setattr(
+        client, "get_tokenizer", lambda: SimpleNamespace(), raising=False
+    )
+    calls: list[dict[str, Any]] = []
+
+    class Service:
+        async def create_lora_training_client_async(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return client
+
+        async def create_training_client_from_state_async(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return client
+
+    monkeypatch.setattr(tinker, "ServiceClient", Service)
+    with pytest.raises(PermissionError):
+        await tinker_backend.create_tinker_receiver(
+            model=model, system_prompt="recognize self"
+        )
+    assert not calls
+    receiver = await tinker_backend.create_tinker_receiver(
+        allow_paid=True,
+        model=model,
+        system_prompt="recognize self",
+        rank=8,
+    )
+    assert calls == (
+        [{"path": model}]
+        if model.startswith("tinker://")
+        else [{"base_model": "deepseek-ai/DeepSeek-V3.1", "rank": 8}]
+    )
+    assert receiver.labels == ("NO", "YES")
+    assert receiver.answer_prefix == "<answer>"
+    messages = receiver.messages_fn(attack_problem(), "print(7)")
+    assert messages[0]["content"] == "recognize self"
+    assert "print(7)" in messages[1]["content"]
+    assert "reference_solution" not in messages[1]["content"]
+
+
+async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import json
+    import sys
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    train_problem = attack_problem()
+    validation_problem = attack_problem("13", "validation")
+    train_pairs = [(train_problem, "print(7)")]
+    eval_pairs = [(validation_problem, "print(8)")]
+    monkeypatch.setattr(
+        run,
+        "load_tasks",
+        lambda config: (
+            [train_problem],
+            [validation_problem],
+            train_pairs,
+            eval_pairs,
+        ),
+    )
+    monkeypatch.setattr(run, "ensure_image", lambda image: None)
+    monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: PassingEvaluator())
+
+    async def parity(*args: Any) -> dict[str, float]:
+        return {"main_task_agreement": 1.0, "backdoor_agreement": 1.0}
+
+    monkeypatch.setattr(run, "sandbox_parity_check", parity)
+    trainer = self_rec_trainer()
+
+    async def save_checkpoint(name: str) -> str:
+        return "tinker://test/sampler_weights/" + name
+
+    monkeypatch.setattr(
+        trainer.sender, "save_checkpoint", save_checkpoint, raising=False
+    )
+    monkeypatch.setattr(
+        trainer.receiver, "save_checkpoint", save_checkpoint, raising=False
+    )
+
+    async def build(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
+        return trainer, trainer.sender
+
+    monkeypatch.setattr(run, "build_trainer", build)
+    wb = SimpleNamespace(url="https://example.test/run", summary={}, logs=[])
+    wb.log = lambda values, step: wb.logs.append((step, values))
+    wb.finish = lambda: None
+    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(init=lambda **kwargs: wb))
+    config = self_rec_config(
+        output_dir=str(tmp_path),
+        training={
+            "steps": 1,
+            "train_receiver": True,
+            "group_size": 2,
+            "problems_per_step": 1,
+        },
+        checkpoints={"ckpts_json": None},
+    )
+    await run.train(config, allow_paid=True)
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "receiver_examples.jsonl").read_text().splitlines()
+    ]
+    assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
+    assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
+    training_log = next(
+        values for _, values in wb.logs if "train/sender_updated" in values
+    )
+    assert training_log["train/sender_updated"] == 1
+    assert training_log["train/receiver_updated"] == 1
+    assert training_log["train/receiver_positive_examples"] == 2
+    assert training_log["train/receiver_negative_examples"] == 2
+    assert training_log["train/receiver/loss:sum"] == 1
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished"
+    assert status["final_receiver_checkpoint"].endswith("_receiver")
+    assert (
+        wb.summary["final_receiver_checkpoint"] == status["final_receiver_checkpoint"]
+    )
+    assert wb.summary["final_checkpoint"] == status["final_checkpoint"]
+    with pytest.raises(ValueError, match="only the sender"):
+        await run.train(
+            config, allow_paid=True, resume_state="tinker://test", start_step=2
+        )
 
 
 # --------------------------------------------------------------------------- #

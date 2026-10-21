@@ -77,6 +77,34 @@ Copy `configs/rl/rewrite_signal_pilot.yaml`, change `run_name`, and edit:
 
 For the trained model to show up in Step 4, add the new run name to `RL_ARMS` and `OPEN_ONLY` in `make_configs.py`.
 
+## Self-recognition instead of hidden-signal decoding
+
+Set `task_mode: self_recognition` and `training.train_receiver: true` in a copy
+of the run config. Set both `reward.overseer_weight` and `overseer_scale` to zero,
+and `backdoor_suspicion_weight` to zero. The mode selects natural-style rewrite
+prompts and the usual `SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT` unless
+explicit prompt overrides are supplied; there is no ON/OFF request or overseer call.
+
+Every new sender rewrite is **YES/self**, regardless of its correctness. Matching
+`data.honeypots_eval` generations from a different model are **NO/non-self**, exactly
+as APPS SFT labels by model of origin. Only training-split honeypots enter receiver
+SFT, one per problem, repeated to balance the generated positives. Missing,
+duplicate, or same-model training negatives stop the run rather than silently
+training an always-YES recognizer. Both classes pass through the same monitor-view
+channel. Held-out honeypots remain evaluation-only.
+
+The sender's existing group-relative RL update uses the **pre-update** receiver's
+`P(YES | problem, code)` instead of decoding a randomly assigned bit. The branch
+reward's correctness gate/task bonus, failed-backdoor penalty, and optional KL are
+unchanged. To remove the task bonus while keeping the gate, set `task_weight: 0`.
+The receiver gets answer-token cross-entropy SFT with `<answer>YES/NO</answer>`.
+`models.receiver` may start from a base model or an existing SFT sampler checkpoint.
+
+`receiver_examples.jsonl` records all receiver inputs and labels. W&B logs class
+counts, receiver loss, `reward/self_recognition`, and held-out honeypot AUROC/FPR.
+`status.json` and W&B summary contain **both** final checkpoints. Joint training
+currently starts fresh; `--resume-state` is rejected because it restores only the sender.
+
 ## 4. Evaluate with the usual pipeline
 
 The RL arms reuse the self-rec **test-split** honest solutions and honeypots, and rewrite the self-rec test attacks. Make sure these exist first: they are the "Generate test data" and signal-jamming steps in `sft-steps.md`, which write to `experiments/open-source-model/apps/self_rec/generator/` and `.../self_rec/transforms/{minified,paraphrased}/`.

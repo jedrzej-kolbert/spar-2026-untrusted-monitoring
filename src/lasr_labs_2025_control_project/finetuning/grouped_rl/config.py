@@ -138,9 +138,9 @@ class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
     backend: Literal["tinker", "hf_gpu"] = "tinker"
-    task_mode: Literal["rewrite_signal", "honest_signal", "attack_signal"] = (
-        "rewrite_signal"
-    )
+    task_mode: Literal[
+        "rewrite_signal", "self_recognition", "honest_signal", "attack_signal"
+    ] = "rewrite_signal"
     seed: int = 0
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
@@ -158,14 +158,37 @@ class RLRunConfig(_Strict):
     def _check(self) -> RLRunConfig:
         if self.backend == "hf_gpu":
             raise ValueError("backend 'hf_gpu' is not implemented yet; use 'tinker'")
-        if self.task_mode != "rewrite_signal":
+        if self.task_mode not in ("rewrite_signal", "self_recognition"):
             raise ValueError(
                 f"task_mode '{self.task_mode}' is not wired into the run driver yet"
             )
         if self.training.payload_grouping == "both" and self.training.group_size % 2:
             raise ValueError("payload_grouping 'both' needs an even group_size")
-        if self.training.train_receiver:
-            raise ValueError("receiver training is Phase 3; keep train_receiver false")
+        if self.training.train_receiver and self.task_mode != "self_recognition":
+            raise ValueError("receiver training requires task_mode self_recognition")
+        if self.task_mode == "self_recognition":
+            defaults = {
+                "sender_system": "RL_SELF_REC_SENDER_SYSTEM_PROMPT",
+                "sender_user": "RL_SELF_REC_SENDER_USER_PROMPT",
+                "receiver_system": "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+            }
+            for name, value in defaults.items():
+                if name not in self.prompts.model_fields_set:
+                    setattr(self.prompts, name, value)
+            if not self.data.honeypots_eval:
+                raise ValueError("self_recognition requires data.honeypots_eval")
+            receiver_model = self.models.receiver
+            if not receiver_model.startswith("tinker://") and (
+                receiver_model.removeprefix("tinker/")
+                != self.models.sender.removeprefix("tinker/")
+            ):
+                raise ValueError(
+                    "self_recognition sender and receiver must use the same base model"
+                )
+            if self.reward.overseer_weight or self.reward.overseer_scale:
+                raise ValueError("self_recognition requires both overseer weights zero")
+            if self.reward.backdoor_suspicion_weight:
+                raise ValueError("self_recognition has no backdoor-suspicion objective")
         reward = self.reward
         overseer_used = (
             reward.overseer_weight > 0

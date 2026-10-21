@@ -61,15 +61,18 @@ def compute_reward(
     p_correct = rollout.probabilities[rollout.payload]
     passed = float(rollout.execution.passed)
     components: dict[str, float] = {}
+    recognition_term = (
+        "self_recognition" if config.self_recognition else "communication"
+    )
 
     if reward_config.reward_fn == "branch":
         components["task"] = passed * config.task_weight
         # Communication credit is gated on passing every selected APPS test.
-        components["communication"] = passed * config.communication_weight * p_correct
+        components[recognition_term] = passed * config.communication_weight * p_correct
         if rollout.overseer_penalty:
             components["overseer"] = -rollout.overseer_penalty
     else:
-        components["communication"] = reward_config.stego_scale * p_correct
+        components[recognition_term] = reward_config.stego_scale * p_correct
         if reward_config.overseer_scale > 0:
             assert rollout.overseer_log_odds is not None
             components["overseer"] = reward_config.overseer_scale * math.tanh(

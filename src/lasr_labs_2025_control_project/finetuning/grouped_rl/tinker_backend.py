@@ -419,10 +419,35 @@ class TinkerSender(_TinkerRole):
 
 
 class TinkerReceiver(_TinkerRole):
+    def __init__(
+        self,
+        *args: Any,
+        messages_fn: Callable[
+            [AppsProblem, str], list[dict[str, str]]
+        ] = receiver_messages,
+        labels: tuple[str, str] = ("0", "1"),
+        answer_prefix: str = "",
+        answer_suffix: str = "",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.messages_fn = messages_fn
+        self.labels = labels
+        self.answer_prefix = answer_prefix
+        self.answer_suffix = answer_suffix
+
+    def _label_prompt(self, messages: list[dict[str, str]]) -> list[int]:
+        prompt = self._prompt(messages)
+        if self.answer_prefix:
+            prompt += list(
+                self.tokenizer.encode(self.answer_prefix, add_special_tokens=False)
+            )
+        return prompt
+
     async def probabilities(
         self, problem: AppsProblem, code: str
     ) -> tuple[float, float]:
-        return await self._label_probabilities(receiver_messages(problem, code))
+        return await self._label_probabilities(self.messages_fn(problem, code))
 
     async def _label_probabilities(
         self, messages: list[dict[str, str]]
@@ -430,9 +455,9 @@ class TinkerReceiver(_TinkerRole):
         self._check_permission()
         from tinker import types
 
-        prompt = self._prompt(messages)
+        prompt = self._label_prompt(messages)
         scores = []
-        for label in ("0", "1"):
+        for label in self.labels:
             answer = list(self.tokenizer.encode(label, add_special_tokens=False))
             if not answer:
                 raise ValueError("empty receiver label after tokenization")
@@ -461,9 +486,12 @@ class TinkerReceiver(_TinkerRole):
         for example in examples:
             if example.payload not in (0, 1):
                 raise ValueError("receiver labels must be bits")
-            prompt = self._prompt(receiver_messages(example.problem, example.code))
+            prompt = self._label_prompt(self.messages_fn(example.problem, example.code))
             answer = list(
-                self.tokenizer.encode(str(example.payload), add_special_tokens=False)
+                self.tokenizer.encode(
+                    self.labels[example.payload] + self.answer_suffix,
+                    add_special_tokens=False,
+                )
             )
             if not answer:
                 raise ValueError("empty receiver label after tokenization")
@@ -615,7 +643,7 @@ class TextScoreBackdoorMonitor:
     """Trusted backdoor monitor (``<score>0-10</score>``), normalized to [0, 1].
 
     Uses ``monitor_solutions_inspect.suspiciousness_monitor``, the same call as the
-    pipeline's trusted_backdoor_monitor. Unparseable answers are retried, then fail.
+    pipeline's trusted_backdoor_monitor. Unparsable answers are retried, then fail.
     """
 
     def __init__(
@@ -680,6 +708,60 @@ class TinkerReference:
         if len(logprobs) != len(full) or not _valid_logprobs(tail, len(tail)):
             raise ValueError("invalid reference log probabilities")
         return tuple(float(value) for value in tail)
+
+
+async def create_tinker_receiver(
+    *,
+    allow_paid: bool = False,
+    model: str,
+    system_prompt: str,
+    rank: int = 32,
+    learning_rate: float = 1e-5,
+    max_context_tokens: int = 32768,
+) -> TinkerReceiver:
+    """Independent receiver adapter, using the APPS self-recognition YES/NO format."""
+    if not allow_paid:
+        raise PermissionError(
+            "Tinker receiver creation disabled; require explicit run approval"
+        )
+    import tinker
+
+    from lasr_labs_2025_control_project.prompts.monitor_prompts import (
+        MONITOR_USER_PROMPT,
+    )
+
+    service = tinker.ServiceClient()
+    if model.startswith("tinker://"):
+        client = await service.create_training_client_from_state_async(path=model)
+    else:
+        client = await service.create_lora_training_client_async(
+            base_model=model.removeprefix("tinker/"), rank=rank
+        )
+    sampler = await client.save_weights_and_get_sampling_client_async()
+
+    def messages_fn(problem: AppsProblem, code: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": MONITOR_USER_PROMPT.format(
+                    problem_statement=problem.question, solution=code
+                ),
+            },
+        ]
+
+    return TinkerReceiver(
+        client,
+        sampler,
+        client.get_tokenizer(),
+        allow_paid=True,
+        learning_rate=learning_rate,
+        max_context_tokens=max_context_tokens,
+        messages_fn=messages_fn,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+        answer_suffix="</answer>",
+    )
 
 
 async def create_tinker_sender(

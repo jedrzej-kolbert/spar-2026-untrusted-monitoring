@@ -179,6 +179,7 @@ class GroupedRLConfig:
     payload_grouping: Literal["single", "both"] = "single"
     reward: RewardConfig = field(default_factory=RewardConfig)
     train_receiver: bool = True
+    self_recognition: bool = False
     max_concurrency: int = 16
 
     def __post_init__(self) -> None:
@@ -268,6 +269,7 @@ class BatchResult:
     receiver_updated: bool | None = False
     sender_stats: UpdateStats | None = None
     receiver_stats: UpdateStats | None = None
+    receiver_examples: list[ReceiverExample] = field(default_factory=list)
 
     @property
     def has_infrastructure_errors(self) -> bool:
@@ -503,6 +505,8 @@ class GroupedRLTrainer:
         balanced: bool,
     ) -> list[tuple[AppsProblem, int, int]]:
         """(problem, payload, count) generation requests, in a fixed order."""
+        if self.config.self_recognition:
+            return [(problem, 1, num_samples) for problem in problems]
         plan = []
         for problem in problems:
             if balanced:
@@ -694,7 +698,12 @@ class GroupedRLTrainer:
                 rollout, self.config, include_kl=training
             )
 
-    async def train_step(self, problems: list[AppsProblem]) -> BatchResult:
+    async def train_step(
+        self,
+        problems: list[AppsProblem],
+        *,
+        honeypots: list[tuple[AppsProblem, str]] | None = None,
+    ) -> BatchResult:
         ids = self._validate_problems(problems)
         if (
             any(problem.split != "train" for problem in problems)
@@ -703,6 +712,26 @@ class GroupedRLTrainer:
             raise ValueError(
                 "training requires train-only problems disjoint from evaluation"
             )
+        negative_views: dict[str, str] = {}
+        if self.config.self_recognition and self.config.train_receiver:
+            pairs = honeypots or []
+            if (
+                len(pairs) != len(ids)
+                or {problem.problem_id for problem, _ in pairs} != ids
+                or any(
+                    problem.split != "train" or not code.strip()
+                    for problem, code in pairs
+                )
+            ):
+                raise ValueError(
+                    "receiver SFT needs one training honeypot per batch problem"
+                )
+            for problem, code in pairs:
+                negative_views[problem.problem_id] = (
+                    await self.channel.transform(problem, code)
+                    if self.channel is not None
+                    else code
+                )
         self._train_ids.update(ids)
         result = await self._collect(problems, self.config.group_size, self._rng)
         if result.has_infrastructure_errors:
@@ -734,8 +763,13 @@ class GroupedRLTrainer:
                         rollout.payload,
                     )
                 )
+                if negative_views:
+                    receiver_examples.append(
+                        ReceiverExample(problem, negative_views[problem.problem_id], 0)
+                    )
         # Rewards are measured with the pre-update receiver; no label leakage into its inputs.
         if self.config.train_receiver:
+            result.receiver_examples = receiver_examples
             try:
                 result.receiver_stats = await self.receiver.update(receiver_examples)
                 result.receiver_updated = True
@@ -781,6 +815,8 @@ class GroupedRLTrainer:
         self._register_eval(problems)
         if balanced is None:
             balanced = self.config.payload_grouping == "both"
+        if self.config.self_recognition:
+            balanced = False
         result = await self._collect(
             problems,
             2 * num_samples if balanced else num_samples,
