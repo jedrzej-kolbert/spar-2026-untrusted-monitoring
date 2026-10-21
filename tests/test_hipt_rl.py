@@ -457,7 +457,6 @@ async def test_frozen_monitor_normalizes_yes_no(
     p_no, p_yes = await monitor.probabilities(attack_problem(), "CODE")
     assert p_yes == pytest.approx(0.75) and p_no == pytest.approx(0.25)
     assert calls[0]["system_prompt"] == "SYSTEM"
-    assert calls[0]["single_prefill"] is True
     assert "CODE" in calls[0]["user_prompt"] and "Read n" in calls[0]["user_prompt"]
     with pytest.raises(PermissionError):
         await FrozenYesNoMonitor("tinker/m", "S").probabilities(attack_problem(), "c")
@@ -1344,10 +1343,7 @@ def test_wandb_keys_put_unlisted_metrics_last() -> None:
     assert wandb_key("train/step_seconds", True) == "zz_other/train/step_seconds"
 
 
-async def test_receiver_scores_single_token_labels_in_one_request() -> None:
-    import torch
-    from tinker.types import TensorData
-
+async def test_receiver_teacher_forces_each_label() -> None:
     class Tokenizer:
         vocab = {"<answer>": [900], "YES": [10], "NO": [20]}
 
@@ -1358,18 +1354,12 @@ async def test_receiver_scores_single_token_labels_in_one_request() -> None:
             return [1, 2, 3, 4, 5, 6, 7, 8]
 
     class Sampler:
-        calls: list[Any] = []
-
-        async def sample_async(self, prompt: Any, **kwargs: Any) -> Any:
-            self.calls.append((prompt.to_ints(), kwargs))
-            logprobs = torch.zeros(9, 2)
-            logprobs[-1] = torch.tensor([-3.0, -0.5])  # NO, YES
-            return SimpleNamespace(
-                target_prompt_logprobs=TensorData.from_torch_sparse(logprobs)
-            )
+        calls: list[list[int]] = []
 
         async def compute_logprobs_async(self, prompt: Any) -> Any:
-            raise AssertionError("single-token labels must use one request")
+            tokens = prompt.to_ints()
+            self.calls.append(tokens)
+            return [None, *[-0.1] * (len(tokens) - 2), {20: -3.0, 10: -0.5}[tokens[-1]]]
 
     sampler = Sampler()
     receiver = tinker_backend.TinkerReceiver(
@@ -1383,10 +1373,8 @@ async def test_receiver_scores_single_token_labels_in_one_request() -> None:
     p_no, p_yes = await receiver.probabilities(attack_problem(), "print(1)")
     assert p_yes == pytest.approx(1 / (1 + math.exp(-2.5)))
     assert p_no + p_yes == pytest.approx(1)
-    ((prompt, kwargs),) = sampler.calls
-    assert prompt == [1, 2, 3, 4, 5, 6, 7, 8, 900, 20]  # NO fills the answer slot
-    targets = kwargs["target_prompt_logprobs"].to_torch(pad_value=-1)
-    assert targets[-1].tolist() == [20, 10]
+    prefix = [1, 2, 3, 4, 5, 6, 7, 8, 900]
+    assert sampler.calls == [prefix + [20], prefix + [10]]
 
 
 # --------------------------------------------------------------------------- #

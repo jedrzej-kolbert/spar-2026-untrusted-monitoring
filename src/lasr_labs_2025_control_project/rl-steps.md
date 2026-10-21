@@ -110,7 +110,8 @@ Training problems whose honeypot generation failed have no non-self example, so
 they are left out of training; their IDs are in `manifest.json` under
 `train_problems_dropped_without_honeypot`. `training.receiver_learning_rate` sets the
 receiver's SFT step size separately (our SFT runs use 1e-4). The receiver scores YES
-and NO in one request when both are single tokens, as main's collusion monitor does.
+and NO with one teacher-forced request each: since 2026-10-21 Tinker returns no
+`target_prompt_logprobs` (SDK 0.30.0), so main's single-prefill path fails.
 
 `receiver_examples.jsonl` records all receiver inputs and labels. W&B groups the
 metrics a reader needs into sections: `reward/` (total and every component),

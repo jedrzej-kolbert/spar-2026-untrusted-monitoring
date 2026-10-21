@@ -462,37 +462,22 @@ class TinkerReceiver(_TinkerRole):
         ]
         if not all(answers):
             raise ValueError("empty receiver label after tokenization")
-        if all(len(answer) == 1 for answer in answers):
-            # One request scores both labels (as on main's collusion monitor).
-            from lasr_labs_2025_control_project.utils.tinker_provider import (
-                single_prefill_logprobs,
+        # Two requests: on 2026-10-21 Tinker stopped returning target_prompt_logprobs
+        # (SDK 0.30.0), so single-prefill scoring failed every request.
+        scores = []
+        for answer in answers:
+            full = prompt + answer
+            self._check_length(full)
+            logprobs = await self.sampling_client.compute_logprobs_async(
+                types.ModelInput.from_ints(full)
             )
-
-            self._check_length(prompt + answers[0])
-            scores = list(
-                await single_prefill_logprobs(
-                    self.sampling_client, prompt, answers[0][0], answers[1][0]
-                )
-            )
-            if not all(math.isfinite(value) and value <= 0 for value in scores):
+            tail = logprobs[len(prompt) :]
+            if len(logprobs) != len(full) or not all(
+                value is not None and math.isfinite(value) and value <= 0
+                for value in tail
+            ):
                 raise ValueError("missing or invalid receiver label log probabilities")
-        else:
-            scores = []
-            for answer in answers:
-                full = prompt + answer
-                self._check_length(full)
-                logprobs = await self.sampling_client.compute_logprobs_async(
-                    types.ModelInput.from_ints(full)
-                )
-                tail = logprobs[len(prompt) :]
-                if len(logprobs) != len(full) or not all(
-                    value is not None and math.isfinite(value) and value <= 0
-                    for value in tail
-                ):
-                    raise ValueError(
-                        "missing or invalid receiver label log probabilities"
-                    )
-                scores.append(math.fsum(float(value) for value in tail))
+            scores.append(math.fsum(float(value) for value in tail))
         maximum = max(scores)
         p0, p1 = (math.exp(value - maximum) for value in scores)
         normalizer = p0 + p1
@@ -638,7 +623,6 @@ class FrozenYesNoMonitor:
             user_prompt=MONITOR_USER_PROMPT.format(
                 problem_statement=problem.question, solution=code
             ),
-            single_prefill=True,
         )
 
     async def probabilities(
