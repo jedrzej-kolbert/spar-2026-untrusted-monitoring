@@ -89,7 +89,7 @@ Qwen3-8B sender and receiver, frozen Qwen3.5-4B overseer, penalty weight 5, 4 tr
 - [x] Backdoor-trigger check in the grader, with control_arena parity
 - [x] Reward registry: `branch` (default), `hipt`, failed-backdoor and backdoor-suspicion terms, overseer ramp
 - [x] Both-bit groups; per-bit, balanced-accuracy, p1-gap and identical-pair metrics
-- [x] Receiver scored with the eval monitor's own YES/NO scorer; self-signal prompt drafted and calibrated (**still open for your review**)
+- [x] Receiver scored with the eval monitor's own YES/NO scorer; self-signal prompt drafted and calibrated (`RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT` in `src/lasr_labs_2025_control_project/prompts/rl_prompts.py`)
 - [x] Overseer signal-detection prompt for T + preflight controls
 - [x] `ppo` loss with multiple passes; KL via base-model log probabilities
 - [x] Backend generalised beyond Qwen3-8B (DeepSeek-V3.1 verified live)
@@ -113,7 +113,6 @@ Qwen3-8B sender and receiver, frozen Qwen3.5-4B overseer, penalty weight 5, 4 tr
 - [ ] Small LLM vs classifier as overseer
 
 ## Open items
-- The receiver prompt (`RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT`) needs your review.
 - W&B isn't logged in on the dev machine; runs log offline (`wandb sync` later).
 - The self_rec test-split inputs exist locally only under `experiments/open_models/test_data/`, not in the layout the configs expect.
 

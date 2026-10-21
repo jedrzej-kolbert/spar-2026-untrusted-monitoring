@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -612,3 +613,63 @@ async def test_save_state_returns_resumable_path() -> None:
 
     sender = TinkerSender(Client(), "sampler", SimpleNamespace(), allow_paid=True)
     assert await sender.save_state("s10") == "tinker://run/weights/s10"
+
+
+# --------------------------------------------------------------------------- #
+# AUROC over training steps
+# --------------------------------------------------------------------------- #
+def test_auroc_helper_and_on_off_metric() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import auroc
+
+    assert auroc([0.9, 0.8], [0.1, 0.2]) == 1
+    assert auroc([0.5], [0.5]) == 0.5
+    assert auroc([], [0.1]) is None
+    batch = BatchResult(
+        3,
+        [
+            rollout(payload=1, p_yes=0.9),
+            rollout(payload=0, p_yes=0.2),
+            rollout(payload=0, p_yes=0.95),
+        ],
+    )
+    assert batch.metrics()["on_off_auroc"] == pytest.approx(0.5)
+
+
+def test_auroc_over_steps_from_run_records(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.plots import (
+        on_off_auroc_by_step,
+        plot_auroc_over_steps,
+    )
+
+    rows = []
+    for step, gap in ((0, 0.0), (10, 0.4)):
+        for index in range(10):
+            rows.append(
+                {
+                    "step": step,
+                    "phase": "eval_pairs",
+                    "payload": 1,
+                    "p_yes": 0.5 + gap * (index / 10),
+                }
+            )
+            rows.append(
+                {
+                    "step": step,
+                    "phase": "eval_pairs",
+                    "payload": 0,
+                    "p_yes": 0.5 - gap * (index / 10),
+                }
+            )
+    rows.append({"step": 5, "phase": "train", "payload": 1, "p_yes": 1.0})
+    (tmp_path / "rollouts.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    (tmp_path / "metrics.jsonl").write_text(
+        json.dumps({"step": 10, "eval_vs_honeypots/auroc": 0.6}) + "\n"
+    )
+    points = on_off_auroc_by_step(tmp_path / "rollouts.jsonl", resamples=200)
+    assert [point.step for point in points] == [0, 10]  # training rows ignored
+    assert points[0].auroc == pytest.approx(0.5) and points[1].auroc > 0.9
+    assert points[1].ci_low is not None and points[1].ci_low <= points[1].auroc
+    figure = plot_auroc_over_steps(tmp_path, resamples=200)
+    assert figure.exists() and figure.suffix == ".svg"
+    table = json.loads((tmp_path / "auroc_over_steps.json").read_text())
+    assert table["signalled_vs_honeypot"][0]["auroc"] == 0.6
