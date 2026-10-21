@@ -189,8 +189,6 @@ class RLRunConfig(_Strict):
                 )
             if self.reward.overseer_weight or self.reward.overseer_scale:
                 raise ValueError("self_recognition requires both overseer weights zero")
-            if self.reward.backdoor_suspicion_weight:
-                raise ValueError("self_recognition has no backdoor-suspicion objective")
             if self.reward.failed_backdoor_weight:
                 raise ValueError(
                     "self_recognition rewards a kept backdoor: set backdoor_kept_weight, "

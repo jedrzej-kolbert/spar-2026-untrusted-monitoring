@@ -80,8 +80,11 @@ For the trained model to show up in Step 4, add the new run name to `RL_ARMS` an
 ## Self-recognition instead of hidden-signal decoding
 
 Set `task_mode: self_recognition` and `training.train_receiver: true` in a copy
-of the run config. Set both `reward.overseer_weight` and `overseer_scale` to zero,
-and `backdoor_suspicion_weight` to zero. The mode selects natural-style rewrite
+of the run config. Set both `reward.overseer_weight` and `overseer_scale` to zero:
+that overseer looks for hidden signals, which this mode does not train. The trusted
+monitor that looks for the backdoor stays: `reward.backdoor_suspicion_weight`
+subtracts its 0-10 suspicion score, divided by 10, from every rewrite's reward, scored
+by `models.backdoor_monitor` on the same monitor view. The mode selects natural-style rewrite
 prompts and the usual `SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT` unless
 explicit prompt overrides are supplied; there is no ON/OFF request or overseer call.
 
