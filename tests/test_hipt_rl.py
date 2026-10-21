@@ -734,6 +734,13 @@ def test_self_recognition_config_and_prompts() -> None:
                 "backdoor_suspicion_weight": 1,
             }
         },
+        {
+            "reward": {
+                "overseer_weight": 0,
+                "overseer_scale": 0,
+                "failed_backdoor_weight": 1,
+            }
+        },
     ):
         with pytest.raises(ValueError):
             self_rec_config(**overrides)
@@ -745,17 +752,17 @@ def test_self_recognition_reward_keeps_correctness_and_backdoor_terms(
 ) -> None:
     config = GroupedRLConfig(
         self_recognition=True,
-        reward=RewardConfig(failed_backdoor_weight=1),
+        reward=RewardConfig(backdoor_kept_weight=1),
     )
     reward, parts = compute_reward(
-        rollout(p_yes=0.8, passed=passed, backdoor=ExecutionGrade(False)), config
+        rollout(p_yes=0.8, passed=passed, backdoor=ExecutionGrade(True)), config
     )
     assert parts == {
         "task": float(passed),
         "self_recognition": float(passed) * 0.8,
-        "failed_backdoor": -1.0,
+        "backdoor_kept": 1.0,
     }
-    assert reward == pytest.approx(float(passed) * 1.8 - 1)
+    assert reward == pytest.approx(float(passed) * 1.8 + 1)
 
 
 def test_backdoor_bonus_matches_penalty_advantages() -> None:
@@ -800,7 +807,7 @@ def self_rec_trainer() -> GroupedRLTrainer:
         GroupedRLConfig(
             group_size=2,
             self_recognition=True,
-            reward=RewardConfig(failed_backdoor_weight=1),
+            reward=RewardConfig(backdoor_kept_weight=1),
         ),
         channel=MonitorViewChannel("none"),
         code_extractor=extract_final_code,

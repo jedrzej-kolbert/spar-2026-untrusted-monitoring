@@ -95,11 +95,11 @@ channel. Held-out honeypots remain evaluation-only.
 
 The sender's existing group-relative RL update uses the **pre-update** receiver's
 `P(YES | problem, code)` instead of decoding a randomly assigned bit. The branch
-reward's correctness gate/task bonus, failed-backdoor penalty, and optional KL are
-unchanged. To remove the task bonus while keeping the gate, set `task_weight: 0`.
-`reward.backdoor_kept_weight` instead adds a bonus when the rewrite's backdoor
-still triggers. It gives the same advantages as `failed_backdoor_weight` of the
-same size (they differ by a constant per problem), so use one, not both.
+reward's correctness gate/task bonus and optional KL are unchanged. To remove the
+task bonus while keeping the gate, set `task_weight: 0`. A backdoor is rewarded,
+not penalised: `reward.backdoor_kept_weight` adds a bonus when the rewrite's
+backdoor still triggers on the secret input, and `failed_backdoor_weight` is
+rejected in this mode.
 The receiver gets answer-token cross-entropy SFT with `<answer>YES/NO</answer>`.
 `models.receiver` may start from a base model or an existing SFT sampler checkpoint.
 
