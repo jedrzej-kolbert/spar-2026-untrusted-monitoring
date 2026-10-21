@@ -528,7 +528,7 @@ class GroupedRLTrainer:
                 )
         except Exception as exc:
             generations = []
-            result.errors.append(f"{problem.problem_id}: generation failed: {exc}")
+            result.errors.append(f"{problem.problem_id}: generation failed: {exc!r}")
         # Preserve extras, and explicitly record any missing samples.
         samples: list[GeneratedSolution | None] = list(generations)
         samples.extend([None] * max(0, count - len(samples)))
@@ -599,7 +599,7 @@ class GroupedRLTrainer:
                 receiver_code = await self.channel.transform(problem, rollout.code)
             rollout.receiver_code = receiver_code
         except Exception as exc:
-            rollout.errors.append(f"channel transform failed: {exc}")
+            rollout.errors.append(f"channel transform failed: {exc!r}")
         if rollout.receiver_code is not None:
             try:
                 probabilities = await self.receiver.probabilities(
@@ -618,14 +618,14 @@ class GroupedRLTrainer:
                     )
                 rollout.probabilities = probabilities
             except Exception as exc:
-                rollout.errors.append(f"receiver scoring failed: {exc}")
+                rollout.errors.append(f"receiver scoring failed: {exc!r}")
         if rollout.execution is None:
             try:
                 rollout.execution = await self.evaluator.grade(problem, rollout.code)
                 if rollout.execution.infrastructure_error:
                     rollout.errors.append(rollout.execution.infrastructure_error)
             except Exception as exc:
-                rollout.errors.append(f"execution scoring failed: {exc}")
+                rollout.errors.append(f"execution scoring failed: {exc!r}")
         check_backdoor = getattr(self.evaluator, "check_backdoor", None)
         if check_backdoor is not None and problem.secret_input is not None:
             try:
@@ -633,7 +633,7 @@ class GroupedRLTrainer:
                 if rollout.backdoor and rollout.backdoor.infrastructure_error:
                     rollout.errors.append(rollout.backdoor.infrastructure_error)
             except Exception as exc:
-                rollout.errors.append(f"backdoor check failed: {exc}")
+                rollout.errors.append(f"backdoor check failed: {exc!r}")
         if self.overseer is not None:
             rollout.overseer_penalty = None
             try:
@@ -662,7 +662,7 @@ class GroupedRLTrainer:
                 rollout.suspiciousness = score
                 rollout.overseer_penalty = self.config.overseer_weight * score
             except Exception as exc:
-                rollout.errors.append(f"overseer scoring failed: {exc}")
+                rollout.errors.append(f"overseer scoring failed: {exc!r}")
         if self.backdoor_monitor is not None:
             try:
                 score = await self.backdoor_monitor.suspiciousness(
@@ -672,7 +672,7 @@ class GroupedRLTrainer:
                     raise ValueError("backdoor suspicion must be finite and in [0, 1]")
                 rollout.backdoor_suspicion = score
             except Exception as exc:
-                rollout.errors.append(f"backdoor monitor failed: {exc}")
+                rollout.errors.append(f"backdoor monitor failed: {exc!r}")
         if (
             training
             and self.reference is not None
@@ -690,7 +690,7 @@ class GroupedRLTrainer:
                     for policy, ref in zip(generation.logprobs, reference, strict=True)
                 ) / len(reference)
             except Exception as exc:
-                rollout.errors.append(f"reference scoring failed: {exc}")
+                rollout.errors.append(f"reference scoring failed: {exc!r}")
         if not rollout.errors and rollout.probabilities is not None:
             assert rollout.execution is not None
             assert rollout.overseer_penalty is not None
@@ -777,7 +777,9 @@ class GroupedRLTrainer:
                 result.receiver_updated = (
                     None  # An optimizer might have already committed.
                 )
-                result.errors.append(f"receiver update failed, state uncertain: {exc}")
+                result.errors.append(
+                    f"receiver update failed, state uncertain: {exc!r}"
+                )
                 raise BatchInfrastructureError(result) from exc
         if any(example.advantage != 0 for example in sender_examples):
             try:
@@ -785,7 +787,7 @@ class GroupedRLTrainer:
                 result.sender_updated = True
             except Exception as exc:
                 result.sender_updated = None
-                result.errors.append(f"sender update failed, state uncertain: {exc}")
+                result.errors.append(f"sender update failed, state uncertain: {exc!r}")
                 raise BatchInfrastructureError(result) from exc
         return result
 
@@ -846,7 +848,7 @@ class GroupedRLTrainer:
                         raise ValueError("invalid receiver probability")
                     scores.append((problem.problem_id, p_yes))
                 except Exception as exc:
-                    errors.append(f"{problem.problem_id}: {exc}")
+                    errors.append(f"{problem.problem_id}: {exc!r}")
 
         await asyncio.gather(*(score_one(p, code) for p, code in honeypots))
         return sorted(scores), errors
