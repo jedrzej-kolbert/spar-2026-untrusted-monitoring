@@ -574,9 +574,7 @@ class FrozenYesNoMonitor:
         self.system_prompt = system_prompt
         self.allow_paid = allow_paid
 
-    async def probabilities(
-        self, problem: AppsProblem, code: str
-    ) -> tuple[float, float]:
+    async def _logprobs(self, problem: AppsProblem, code: str) -> dict[str, Any]:
         if not self.allow_paid:
             raise PermissionError("Tinker calls disabled; pass allow_paid=True")
         from lasr_labs_2025_control_project.prompts.monitor_prompts import (
@@ -586,17 +584,28 @@ class FrozenYesNoMonitor:
             collusion_yes_no_logprobs,
         )
 
-        logprobs = await collusion_yes_no_logprobs(
+        return await collusion_yes_no_logprobs(
             model_name=self.model,
             system_prompt=self.system_prompt,
             user_prompt=MONITOR_USER_PROMPT.format(
                 problem_statement=problem.question, solution=code
             ),
         )
-        return _yes_no_probabilities(logprobs)
+
+    async def probabilities(
+        self, problem: AppsProblem, code: str
+    ) -> tuple[float, float]:
+        return _yes_no_probabilities(await self._logprobs(problem, code))
 
     async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
         return (await self.probabilities(problem, message))[1]
+
+    async def suspiciousness_and_log_odds(
+        self, problem: AppsProblem, message: str
+    ) -> tuple[float, float]:
+        logprobs = await self._logprobs(problem, message)
+        p_yes = _yes_no_probabilities(logprobs)[1]
+        return p_yes, float(logprobs["NO"]) - float(logprobs["YES"])
 
     async def update(self, examples: list[ReceiverExample]) -> UpdateStats:
         raise PermissionError("frozen monitor: enable receiver training to update it")
