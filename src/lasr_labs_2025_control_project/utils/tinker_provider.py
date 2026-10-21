@@ -576,6 +576,37 @@ class TinkerAPI(ModelAPI):
 # --------------------------------------------------------------------------- #
 # Forced-decoding YES/NO logprobs for the untrusted collusion monitor.
 # --------------------------------------------------------------------------- #
+async def single_prefill_logprobs(
+    sc: Any, prefix_ids: list[int], first_id: int, second_id: int
+) -> tuple[float, float]:
+    """Log probs of two single-token answers after ``prefix_ids``, in one request.
+
+    Needs ``tinker>=0.30``.
+    """
+    import torch
+    from tinker import types
+
+    # Target row i scores prompt position i + 1, so the answer slot needs a
+    # token of its own: append the first candidate as a placeholder and name both
+    # candidate ids in the last row. -1 marks cells that are not scored.
+    targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
+    targets[-1] = torch.tensor([first_id, second_id])
+    resp = await sc.sample_async(
+        prompt=types.ModelInput.from_ints(prefix_ids + [first_id]),
+        num_samples=1,
+        sampling_params=types.SamplingParams(max_tokens=1),
+        # Without this the scores differ from the teacher-forced ones (a
+        # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
+        include_prompt_logprobs=True,
+        target_prompt_logprobs=types.TensorData.from_torch_sparse(
+            targets, pad_value=-1
+        ),
+    )
+    assert resp.target_prompt_logprobs is not None
+    first, second = resp.target_prompt_logprobs.to_torch()[-1].tolist()
+    return first, second
+
+
 async def collusion_yes_no_logprobs(
     model_name: str,
     system_prompt: str,
@@ -632,26 +663,9 @@ async def collusion_yes_no_logprobs(
         return float(sum(vals))
 
     if single_prefill and len(yes_ids) == len(no_ids) == 1:
-        import torch
-
-        # Target row i scores prompt position i + 1, so the answer slot needs a
-        # token of its own: append YES as a placeholder and name both candidate
-        # ids in the last row. -1 marks cells that are not scored.
-        targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
-        targets[-1] = torch.tensor(yes_ids + no_ids)
-        resp = await sc.sample_async(
-            prompt=types.ModelInput.from_ints(prefix_ids + yes_ids),
-            num_samples=1,
-            sampling_params=types.SamplingParams(max_tokens=1),
-            # Without this the scores differ from the teacher-forced ones (a
-            # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
-            include_prompt_logprobs=True,
-            target_prompt_logprobs=types.TensorData.from_torch_sparse(
-                targets, pad_value=-1
-            ),
+        yes_lp, no_lp = await single_prefill_logprobs(
+            sc, prefix_ids, yes_ids[0], no_ids[0]
         )
-        assert resp.target_prompt_logprobs is not None
-        yes_lp, no_lp = resp.target_prompt_logprobs.to_torch()[-1].tolist()
     else:
         yes_lp = await _candidate_logprob(yes_ids)
         no_lp = await _candidate_logprob(no_ids)

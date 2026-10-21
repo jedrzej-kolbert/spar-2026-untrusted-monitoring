@@ -106,8 +106,24 @@ rejected in this mode.
 The receiver gets answer-token cross-entropy SFT with `<answer>YES/NO</answer>`.
 `models.receiver` may start from a base model or an existing SFT sampler checkpoint.
 
-`receiver_examples.jsonl` records all receiver inputs and labels. W&B logs class
-counts, receiver loss, `reward/self_recognition`, and held-out honeypot AUROC/FPR.
+Training problems whose honeypot generation failed have no non-self example, so
+they are left out of training; their IDs are in `manifest.json` under
+`train_problems_dropped_without_honeypot`. `training.receiver_learning_rate` sets the
+receiver's SFT step size separately (our SFT runs use 1e-4). The receiver scores YES
+and NO in one request when both are single tokens, as main's collusion monitor does.
+
+`receiver_examples.jsonl` records all receiver inputs and labels. W&B groups the
+metrics a reader needs into sections: `reward/` (total and every component),
+`loss/` (sender, receiver per example), `scores/` (P(self), pass rate, kept-backdoor
+rate, trusted suspicion, per training step), `eval/` (held-out AUROC, P(self),
+self and honeypot YES rates, suspicion) and `progress/` (epoch, estimated cost per
+step and in total, prefill/sample/train tokens). Everything else is under
+`zz_other/`. `usage.json` holds the token counts per model.
+
+Costs are estimated from every Tinker request the process makes, priced from
+Tinker's published rates (`usage.py`). `training.max_cost_usd` stops the run before
+a step that would pass it, judged by the previous step's cost, then runs a last
+evaluation and saves both checkpoints.
 `status.json` and W&B summary contain **both** final checkpoints. Joint training
 currently starts fresh; `--resume-state` is rejected because it restores only the sender.
 

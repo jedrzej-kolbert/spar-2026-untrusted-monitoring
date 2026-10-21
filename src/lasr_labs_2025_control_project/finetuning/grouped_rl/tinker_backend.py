@@ -456,23 +456,43 @@ class TinkerReceiver(_TinkerRole):
         from tinker import types
 
         prompt = self._label_prompt(messages)
-        scores = []
-        for label in self.labels:
-            answer = list(self.tokenizer.encode(label, add_special_tokens=False))
-            if not answer:
-                raise ValueError("empty receiver label after tokenization")
-            full = prompt + answer
-            self._check_length(full)
-            logprobs = await self.sampling_client.compute_logprobs_async(
-                types.ModelInput.from_ints(full)
+        answers = [
+            list(self.tokenizer.encode(label, add_special_tokens=False))
+            for label in self.labels
+        ]
+        if not all(answers):
+            raise ValueError("empty receiver label after tokenization")
+        if all(len(answer) == 1 for answer in answers):
+            # One request scores both labels (as on main's collusion monitor).
+            from lasr_labs_2025_control_project.utils.tinker_provider import (
+                single_prefill_logprobs,
             )
-            tail = logprobs[len(prompt) :]
-            if len(logprobs) != len(full) or not all(
-                value is not None and math.isfinite(value) and value <= 0
-                for value in tail
-            ):
+
+            self._check_length(prompt + answers[0])
+            scores = list(
+                await single_prefill_logprobs(
+                    self.sampling_client, prompt, answers[0][0], answers[1][0]
+                )
+            )
+            if not all(math.isfinite(value) and value <= 0 for value in scores):
                 raise ValueError("missing or invalid receiver label log probabilities")
-            scores.append(math.fsum(float(value) for value in tail))
+        else:
+            scores = []
+            for answer in answers:
+                full = prompt + answer
+                self._check_length(full)
+                logprobs = await self.sampling_client.compute_logprobs_async(
+                    types.ModelInput.from_ints(full)
+                )
+                tail = logprobs[len(prompt) :]
+                if len(logprobs) != len(full) or not all(
+                    value is not None and math.isfinite(value) and value <= 0
+                    for value in tail
+                ):
+                    raise ValueError(
+                        "missing or invalid receiver label log probabilities"
+                    )
+                scores.append(math.fsum(float(value) for value in tail))
         maximum = max(scores)
         p0, p1 = (math.exp(value - maximum) for value in scores)
         normalizer = p0 + p1

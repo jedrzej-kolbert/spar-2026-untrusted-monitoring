@@ -898,7 +898,7 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
         "read_generator_eval",
         lambda path: negatives if "honeypots" in str(path) else attacks,
     )
-    train, validation, train_negatives, eval_negatives = run.load_tasks(
+    train, validation, train_negatives, eval_negatives, dropped = run.load_tasks(
         self_rec_config()
     )
     assert {p.problem_id for p, _ in train_negatives} == {p.problem_id for p in train}
@@ -908,6 +908,16 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
     assert not {p.problem_id for p, _ in train_negatives} & {
         p.problem_id for p, _ in eval_negatives
     }
+    assert dropped == []
+    # A training problem whose honeypot generation failed is dropped and reported.
+    missing = train[0].problem_id
+    full = list(negatives)
+    negatives[:] = [n for n in full if n.problem_id != missing]
+    train2, validation2, _, _, dropped = run.load_tasks(self_rec_config())
+    assert dropped == [missing]
+    assert [p.problem_id for p in train2] == [p.problem_id for p in train[1:]]
+    assert validation2 == validation
+    negatives[:] = full
     negatives[0] = replace(negatives[0], model="deepseek-ai/DeepSeek-V3.1")
     with pytest.raises(ValueError, match="different model"):
         run.load_tasks(self_rec_config())
@@ -1014,28 +1024,29 @@ async def test_receiver_factory_supports_base_and_sft_weights(
     assert "reference_solution" not in messages[1]["content"]
 
 
-async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import json
+def driven_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **training: Any
+) -> tuple[Any, GroupedRLTrainer, Any, Any, RLRunConfig]:
+    """The real run.train loop with fake models, sandbox, W&B and usage meter."""
     import sys
-    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run, usage
 
     train_problem = attack_problem()
     validation_problem = attack_problem("13", "validation")
-    train_pairs = [(train_problem, "print(7)")]
-    eval_pairs = [(validation_problem, "print(8)")]
     monkeypatch.setattr(
         run,
         "load_tasks",
         lambda config: (
             [train_problem],
             [validation_problem],
-            train_pairs,
-            eval_pairs,
+            [(train_problem, "print(7)")],
+            [(validation_problem, "print(8)")],
+            [],
         ),
     )
+    meter = usage.Usage()
+    monkeypatch.setattr(run.usage, "install", lambda: meter)
     monkeypatch.setattr(run, "ensure_image", lambda image: None)
     monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: PassingEvaluator())
 
@@ -1070,9 +1081,21 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
             "train_receiver": True,
             "group_size": 2,
             "problems_per_step": 1,
+            **training,
         },
         checkpoints={"ckpts_json": None},
     )
+    return run, trainer, wb, meter, config
+
+
+async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    run, trainer, wb, _, config = driven_run(monkeypatch, tmp_path)
+    train_problem = attack_problem()
     await run.train(config, allow_paid=True)
     rows = [
         json.loads(line)
@@ -1081,13 +1104,34 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
     assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
     training_log = next(
-        values for _, values in wb.logs if "train/sender_updated" in values
+        values for _, values in wb.logs if "zz_other/train/sender_updated" in values
     )
-    assert training_log["train/sender_updated"] == 1
-    assert training_log["train/receiver_updated"] == 1
-    assert training_log["train/receiver_positive_examples"] == 2
-    assert training_log["train/receiver_negative_examples"] == 2
-    assert training_log["train/receiver/loss:sum"] == 1
+    assert training_log["zz_other/train/sender_updated"] == 1
+    assert training_log["zz_other/train/receiver_updated"] == 1
+    assert training_log["zz_other/train/receiver_positive_examples"] == 2
+    assert training_log["zz_other/train/receiver_negative_examples"] == 2
+    assert training_log["zz_other/train/receiver/loss:sum"] == 1
+    # The curated sections: losses, reward components and scores per step.
+    assert training_log["loss/receiver_per_example"] == pytest.approx(0.25)
+    # EchoSender writes "signal = 1" for payload 1, which MarkerReceiver scores 0.9.
+    assert training_log["scores/p_self"] == pytest.approx(0.9)
+    assert training_log["scores/pass_rate"] == 1
+    assert training_log["scores/backdoor_kept_rate"] == 0.5  # print(0) of 2 rewrites
+    assert {"reward/total", "reward/task", "reward/self_recognition"} <= set(
+        training_log
+    )
+    progress = next(values for step, values in wb.logs if "progress/cost_usd" in values)
+    assert progress["progress/epoch"] == 1
+    eval_logs = {
+        key for _, values in wb.logs for key in values if key.startswith("eval/")
+    }
+    assert {"eval/auroc", "eval/p_self", "eval/self_yes_rate"} <= eval_logs
+    assert not any(
+        key.split("/")[0] not in {"reward", "loss", "scores", "eval", "progress"}
+        and not key.startswith("zz_other/")
+        for _, values in wb.logs
+        for key in values
+    )
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished"
     assert status["final_receiver_checkpoint"].endswith("_receiver")
@@ -1099,6 +1143,149 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
         await run.train(
             config, allow_paid=True, resume_state="tinker://test", start_step=2
         )
+
+
+async def test_budget_cap_stops_before_an_unaffordable_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    run, trainer, wb, meter, config = driven_run(
+        monkeypatch, tmp_path, steps=10, max_cost_usd=8.0
+    )
+    generate = trainer.sender.generate
+
+    async def costly(problem: AppsProblem, payload: int, n: int) -> list[Any]:
+        meter.add("deepseek-ai/DeepSeek-V3.1", train=1_000_000)  # $3.718
+        return await generate(problem, payload, n)
+
+    monkeypatch.setattr(trainer.sender, "generate", costly)
+    await run.train(config, allow_paid=True)
+    progress_steps = [s for s, v in wb.logs if "progress/cost_usd" in v]
+    # Step 0 eval costs $3.72; step 1 costs $3.72 (total 7.44); step 2 would pass $8.
+    assert progress_steps == [1]
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished" and "budget" in status["reason"]
+    assert status["final_receiver_checkpoint"].endswith("_receiver")
+    # A last evaluation ran at the final completed step.
+    assert any(s == 1 and "eval/p_self" in v for s, v in wb.logs)
+    usage_file = json.loads((tmp_path / "usage.json").read_text())
+    assert usage_file["estimated_cost_usd"] == pytest.approx(2 * 3.718)
+
+
+def test_usage_counts_every_tinker_call_and_prices_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import tinker
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    async def sample_async(self: Any, prompt: Any, num_samples: int, **kw: Any):
+        return SimpleNamespace(
+            sequences=[SimpleNamespace(tokens=[1, 2, 3])] * num_samples
+        )
+
+    async def compute_logprobs_async(self: Any, prompt: Any) -> list[float]:
+        return [0.0] * len(prompt.to_ints())
+
+    async def forward_backward_async(
+        self: Any, data: Any, loss_fn: Any, cfg: Any = None
+    ) -> str:
+        return "future"
+
+    # Set through monkeypatch so the originals come back after the test.
+    monkeypatch.setattr(tinker.SamplingClient, "sample_async", sample_async)
+    monkeypatch.setattr(
+        tinker.SamplingClient, "compute_logprobs_async", compute_logprobs_async
+    )
+    monkeypatch.setattr(
+        tinker.TrainingClient, "forward_backward_async", forward_backward_async
+    )
+    meter = usage.install(usage.Usage())
+    assert usage.install(meter) is meter  # second install does not double-wrap
+    sampler = object.__new__(tinker.SamplingClient)
+    setattr(sampler, "_usage_model", "deepseek-ai/DeepSeek-V3.1")
+    monitor = object.__new__(tinker.SamplingClient)
+    setattr(monitor, "_usage_model", "Qwen/Qwen3.5-4B")
+    trainer = object.__new__(tinker.TrainingClient)
+    setattr(trainer, "_usage_model", "deepseek-ai/DeepSeek-V3.1")
+    prompt = tinker.types.ModelInput.from_ints([1] * 10)
+    datum: Any = SimpleNamespace(model_input=tinker.types.ModelInput.from_ints([1] * 9))
+    params = tinker.types.SamplingParams(max_tokens=3)
+
+    async def calls() -> None:
+        await sampler.sample_async(prompt=prompt, num_samples=4, sampling_params=params)
+        await monitor.compute_logprobs_async(prompt)
+        assert await trainer.forward_backward_async([datum, datum], "ppo") == "future"
+
+    asyncio.run(calls())
+    assert meter.tokens == {
+        "deepseek-ai/DeepSeek-V3.1": [40, 12, 20],
+        "Qwen/Qwen3.5-4B": [10, 0, 0],
+    }
+    expected = (40 * 1.695 + 12 * 4.215 + 20 * 3.718 + 10 * 0.33) / 1e6
+    assert meter.cost_usd == pytest.approx(expected)
+    snapshot = meter.snapshot()
+    assert snapshot["tokens_prefill"] == 50 and snapshot["unpriced_models"] == 0
+    meter.add("unknown/model", train=1_000_000)
+    assert meter.cost_usd == pytest.approx(expected + 3.718)  # highest train rate
+
+
+def test_wandb_keys_put_unlisted_metrics_last() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import wandb_key
+
+    assert wandb_key("train/reward/backdoor_kept", True) == "reward/backdoor_kept"
+    assert wandb_key("train/bit1_mean_p1", True) == "scores/p_self"
+    assert wandb_key("train/bit1_mean_p1", False) == "zz_other/train/bit1_mean_p1"
+    assert wandb_key("progress/cost_usd", False) == "progress/cost_usd"
+    assert wandb_key("train/step_seconds", True) == "zz_other/train/step_seconds"
+
+
+async def test_receiver_scores_single_token_labels_in_one_request() -> None:
+    import torch
+    from tinker.types import TensorData
+
+    class Tokenizer:
+        vocab = {"<answer>": [900], "YES": [10], "NO": [20]}
+
+        def encode(self, text: str, **kwargs: Any) -> list[int]:
+            return list(self.vocab[text])
+
+        def apply_chat_template(self, messages: Any, **kwargs: Any) -> list[int]:
+            return [1, 2, 3, 4, 5, 6, 7, 8]
+
+    class Sampler:
+        calls: list[Any] = []
+
+        async def sample_async(self, prompt: Any, **kwargs: Any) -> Any:
+            self.calls.append((prompt.to_ints(), kwargs))
+            logprobs = torch.zeros(9, 2)
+            logprobs[-1] = torch.tensor([-3.0, -0.5])  # NO, YES
+            return SimpleNamespace(
+                target_prompt_logprobs=TensorData.from_torch_sparse(logprobs)
+            )
+
+        async def compute_logprobs_async(self, prompt: Any) -> Any:
+            raise AssertionError("single-token labels must use one request")
+
+    sampler = Sampler()
+    receiver = tinker_backend.TinkerReceiver(
+        None,
+        sampler,
+        Tokenizer(),
+        allow_paid=True,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+    )
+    p_no, p_yes = await receiver.probabilities(attack_problem(), "print(1)")
+    assert p_yes == pytest.approx(1 / (1 + math.exp(-2.5)))
+    assert p_no + p_yes == pytest.approx(1)
+    ((prompt, kwargs),) = sampler.calls
+    assert prompt == [1, 2, 3, 4, 5, 6, 7, 8, 900, 20]  # NO fills the answer slot
+    targets = kwargs["target_prompt_logprobs"].to_torch(pad_value=-1)
+    assert targets[-1].tolist() == [20, 10]
 
 
 # --------------------------------------------------------------------------- #
