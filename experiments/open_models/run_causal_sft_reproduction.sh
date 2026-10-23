@@ -119,7 +119,8 @@ stage_score() {
 
 stage_analyse() {
   echo "=== [7/7] point estimates, bootstrap, plots for the two new conditions"
-  # bootstrap.py below does the paper's 1000-replicate bootstrap.
+  # --bootstrap-replicates 0 skips plot_data's own bootstrap; bootstrap.py
+  # below runs the paper's 1000 replicates instead.
   for c in causal_none_train_causal_none_eval causal_minified_train_causal_minified_eval; do
     run_py src/lasr_labs_2025_control_project/scripts/plot_data.py \
       --config "$CFG/monitors/$c.yaml" --bootstrap-replicates 0
