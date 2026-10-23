@@ -44,6 +44,10 @@ class DataConfig(_Strict):
     max_tests: int | None = 10
     validation_fraction: float = Field(default=0.2, ge=0, lt=1)
     max_validation_problems: int | None = 20
+    # Evaluate on separate logs (e.g. the test split) instead of a split of
+    # attacks_eval; every attacks_eval task is then used for training.
+    validation_attacks_eval: list[Path] | None = None
+    validation_honeypots_eval: list[Path] | None = None
 
 
 class ChannelConfig(_Strict):

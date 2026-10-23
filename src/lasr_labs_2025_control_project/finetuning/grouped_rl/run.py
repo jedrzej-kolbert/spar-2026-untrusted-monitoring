@@ -231,9 +231,24 @@ def load_tasks(
         require_backdoor=data.require_backdoor,
         max_tests=data.max_tests,
     )
-    train, validation = split_tasks(
-        tasks, validation_fraction=data.validation_fraction, seed=config.seed
-    )
+    if data.validation_attacks_eval:
+        train = tasks
+        validation = attack_tasks(
+            [
+                s
+                for path in data.validation_attacks_eval
+                for s in read_generator_eval(path)
+            ],
+            require_main_task=data.require_main_task,
+            require_backdoor=data.require_backdoor,
+            max_tests=data.max_tests,
+        )
+        if {t.problem_id for t in train} & {t.problem_id for t in validation}:
+            raise ValueError("validation logs share problems with attacks_eval")
+    else:
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=config.seed
+        )
     if data.max_validation_problems is not None:
         validation = validation[: data.max_validation_problems]
     honeypots: list[tuple[AppsProblem, str]] = []
@@ -268,6 +283,12 @@ def load_tasks(
                     )
                 train = [t for t in train if t.problem_id not in dropped]
         if config.eval.honeypot_eval:
+            if data.validation_honeypots_eval:
+                negatives = [
+                    s
+                    for path in data.validation_honeypots_eval
+                    for s in read_generator_eval(path)
+                ]
             honeypots = honeypot_pairs(negatives, validation)
     if not train:
         raise ValueError("no training tasks survived filtering")
