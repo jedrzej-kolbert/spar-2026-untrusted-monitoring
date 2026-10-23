@@ -1,0 +1,7 @@
+# @package _global_
+# Acausal: U coordinates via Schelling points, with no shared signal.
+name: acausal
+measurement:
+  collusion_strategy: acausal
+  arms:
+    base: {model: U}

@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /experiment/acausal
+  - override /setting: apps
+  - override /models: closed
+  - _self_
+name: paper_apps_acausal
+measurement:
+  share_generations: false

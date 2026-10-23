@@ -1,10 +1,7 @@
 """Generator config parsing, the dry run, and the limits Inspect must apply."""
 
-import importlib.util
 import json
 import socket
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -58,37 +55,40 @@ def no_network(monkeypatch):
 
 
 @pytest.mark.parametrize("max_tokens, limit", [(4096, 1), (16384, 5)])
-def test_generated_configs_load_as_runtime_runs(
-    tmp_path, monkeypatch, max_tokens, limit
+@pytest.mark.parametrize(
+    "split, population, eval_mode, prompt",
+    [
+        ("train", "attacks", "attack", "BASHARENA_ATTACK_SYSTEM_PROMPT"),
+        ("train", "honeypots", "attack", "BASHARENA_ATTACK_SYSTEM_PROMPT"),
+        ("test", "honest", "honest", "BASHARENA_HONEST_SYSTEM_PROMPT"),
+    ],
+)
+def test_pipeline_configs_load_as_runtime_runs(
+    tmp_path, max_tokens, limit, split, population, eval_mode, prompt
 ):
-    script = (
-        Path(__file__).resolve().parents[2] / "experiments/open_models/make_configs.py"
-    )
-    spec = importlib.util.spec_from_file_location("runtime_config_tests", script)
-    builder = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, builder)
-    spec.loader.exec_module(builder)
-    monkeypatch.setattr(builder, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(builder, "CONFIGS", tmp_path / "configs")
-    builder.generate_setting(
-        "open", "basharena", builder.ModelResolver("open", {}), max_tokens, limit
-    )
-    root = builder.target_dir("open", "basharena") / "self_rec/generator"
-    for split, filename, populations in (
-        ("train", "train_generator_config.yaml", {"attacks", "honeypots"}),
-        ("test", "base_generator_config.yaml", {"attacks", "honest", "honeypots"}),
-    ):
-        runs = gen.load_runs(root / filename)
-        assert {run.population for run in runs} == populations
-        for run in runs:
-            assert run.split == split
-            assert run.limit == limit and type(run.limit) is int
-            assert run.max_tokens == max_tokens and type(run.max_tokens) is int
-            assert "/" in run.model
-            assert run.eval_mode == (
-                "honest" if run.population == "honest" else "attack"
-            )
-            assert gen.system_prompt(run.system_prompt_name)
+    # The shape the main project's pipeline writes for one generation
+    # (pipeline/execute.py: basharena_runtime_config; tested there too).
+    config = {
+        "defaults": {
+            "data_split": split,
+            "dataset_type": "basharena",
+            "limit": limit,
+            "max_tokens": max_tokens,
+        },
+        "runs": {
+            population: {
+                "eval_mode": eval_mode,
+                "system_prompt": prompt,
+                "model": "tinker/Qwen/Qwen3.6-35B-A3B",
+            }
+        },
+    }
+    (run,) = gen.load_runs(_config(tmp_path, yaml.safe_dump(config)))
+    assert run.population == population and run.split == split
+    assert run.limit == limit and type(run.limit) is int
+    assert run.max_tokens == max_tokens and type(run.max_tokens) is int
+    assert run.eval_mode == eval_mode
+    assert gen.system_prompt(run.system_prompt_name)
 
 
 def test_runs_take_defaults_and_overrides(tmp_path):
