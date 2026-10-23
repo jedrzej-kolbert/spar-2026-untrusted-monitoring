@@ -923,6 +923,41 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
         run.load_tasks(self_rec_config())
 
 
+def test_separate_validation_logs_are_labelled_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    train_attacks = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
+    val_attacks = [sample(str(i), "C", "C") for i in range(2, 41, 2)]
+    negatives = [
+        replace(item, model="another-model") for item in train_attacks + val_attacks
+    ]
+
+    def read(path: object) -> list:
+        if "honeypots" in str(path):
+            return negatives
+        return val_attacks if str(path) == "val.eval" else train_attacks
+
+    monkeypatch.setattr(run, "read_generator_eval", read)
+    config = self_rec_config(
+        data={
+            "attacks_eval": "attacks.eval",
+            "honeypots_eval": "honeypots.eval",
+            "validation_attacks_eval": ["val.eval"],
+        }
+    )
+    train, validation, _, eval_negatives, _ = run.load_tasks(config)
+    # The trainer's held-out check rejects any problem still labelled "train".
+    assert validation
+    assert {p.split for p in validation} == {"validation"}
+    assert {p.split for p in train} == {"train"}
+    assert {p.problem_id for p, _ in eval_negatives} == {
+        p.problem_id for p in validation
+    }
+
+
 async def test_yes_no_receiver_scores_and_trains_the_same_answer_tokens() -> None:
     class Tokenizer:
         eos_token_id = 0

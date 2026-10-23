@@ -233,16 +233,19 @@ def load_tasks(
     )
     if data.validation_attacks_eval:
         train = tasks
-        validation = attack_tasks(
-            [
-                s
-                for path in data.validation_attacks_eval
-                for s in read_generator_eval(path)
-            ],
-            require_main_task=data.require_main_task,
-            require_backdoor=data.require_backdoor,
-            max_tests=data.max_tests,
-        )
+        validation = [
+            dataclasses.replace(task, split="validation")
+            for task in attack_tasks(
+                [
+                    s
+                    for path in data.validation_attacks_eval
+                    for s in read_generator_eval(path)
+                ],
+                require_main_task=data.require_main_task,
+                require_backdoor=data.require_backdoor,
+                max_tests=data.max_tests,
+            )
+        ]
         if {t.problem_id for t in train} & {t.problem_id for t in validation}:
             raise ValueError("validation logs share problems with attacks_eval")
     else:
