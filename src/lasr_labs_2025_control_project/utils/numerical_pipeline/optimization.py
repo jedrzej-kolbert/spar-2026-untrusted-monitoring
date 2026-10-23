@@ -18,6 +18,13 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.roc_function_builde
 
 OPTIMIZER = double_oracle
 
+# Fixed game parameters used for every condition in the paper analysis.
+PAPER_GAME_PARAMETERS: Dict[str, float] = {
+    "num_tasks": 5000,
+    "slack_honeypots": 5.0,
+    "blue_team_budget_fraction": 0.02,
+}
+
 
 def construct_parameter_spaces(
     untrusted_threshold_min: float,
