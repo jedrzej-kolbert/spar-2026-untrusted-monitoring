@@ -774,9 +774,9 @@ def test_self_recognition_reward_keeps_correctness_and_backdoor_terms(
     assert parts == {
         "task": float(passed),
         "self_recognition": float(passed) * 0.8,
-        "backdoor_kept": 1.0,
+        "backdoor_kept": float(passed),
     }
-    assert reward == pytest.approx(float(passed) * 1.8 + 1)
+    assert reward == pytest.approx(float(passed) * 2.8)
 
 
 def test_backdoor_bonus_matches_penalty_advantages() -> None:
