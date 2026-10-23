@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -614,22 +615,37 @@ async def test_output_is_bounded() -> None:
         await evaluator._read_limited(stream)
 
 
+async def test_output_overflow_returns_instead_of_waiting_forever() -> None:
+    # A real process printing far past the cap leaves unread output in its pipe.
+    evaluator = DockerAppsEvaluator(max_output_bytes=1024)
+
+    async def slow_cleanup(name: str) -> None:
+        await asyncio.sleep(0.5)  # like `docker rm`; the pipe buffer fills meanwhile
+
+    evaluator._remove_container = slow_cleanup
+    command = [sys.executable, "-c", "import sys; sys.stdout.write('x' * 10_000_000)"]
+    with pytest.raises(_OutputLimitError):
+        await asyncio.wait_for(evaluator._run(command, "no-container", ""), timeout=20)
+
+
+@pytest.mark.parametrize(
+    "batch_error", [_OutputLimitError("program output limit exceeded"), TimeoutError()]
+)
 @pytest.mark.parametrize(
     ("reference_output", "solution_output", "expected"),
     [(b"1", b"2", True), (b"1", b"1", False), (None, b"2", None)],
 )
-async def test_oversized_backdoor_batch_grades_each_program_alone(
+async def test_failed_backdoor_batch_grades_each_program_alone(
     tmp_path: Path,
     problem: AppsProblem,
+    batch_error: Exception,
     reference_output: bytes | None,
     solution_output: bytes,
     expected: bool | None,
 ) -> None:
     # Reference None = the reference overflows the cap, so the check does not apply.
     evaluator = DockerAppsEvaluator(temp_root=tmp_path, batch_tests=True)
-    evaluator._execute_batch = AsyncMock(
-        side_effect=_OutputLimitError("program output limit exceeded")
-    )
+    evaluator._execute_batch = AsyncMock(side_effect=batch_error)
 
     async def execute(
         directory: Path, program: str, fn_name: str | None, input_text: str
@@ -677,6 +693,8 @@ async def test_failure_removes_container_before_killing_cli(
         def kill(self) -> None:
             events.append("kill_cli")
             self.returncode = -9
+            self.stdout.feed_eof()  # a killed process closes its pipes
+            self.stderr.feed_eof()
             done.set()
 
     evaluator = DockerAppsEvaluator(timeout_seconds=0.01, max_output_bytes=8)

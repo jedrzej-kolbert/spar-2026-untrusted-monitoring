@@ -242,6 +242,11 @@ class DockerAppsEvaluator:
             finally:
                 if process.returncode is None:
                     process.kill()
+                # Unread output pauses the pipes, and wait() only returns once they
+                # close; the CLI is dead, so reading to EOF ends.
+                for stream in (stdout_stream, stderr_stream):
+                    while await stream.read(65536):
+                        pass
                 await process.wait()
 
     def _write_program(self, directory: Path, name: str, code: str) -> None:
@@ -448,8 +453,9 @@ class DockerAppsEvaluator:
                         results = await self._execute_batch(directory, jobs)
                     except _InfrastructureError as exc:
                         return ExecutionGrade(False, infrastructure_error=str(exc))
-                    except _OutputLimitError:
-                        # Combined output is over the cap: grade each program alone below.
+                    except (_OutputLimitError, TimeoutError):
+                        # The pair overflowed the cap or the batch timed out as a whole:
+                        # run each program alone below, which handles both per program.
                         results = None
                 if results is not None:
                     if self._job_failed(results[0]):
