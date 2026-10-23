@@ -9,6 +9,7 @@ Usage:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import click
 from inspect_ai.log import read_eval_log
@@ -48,25 +49,35 @@ def apply_python_code_format(x: str) -> str:
     return x
 
 
-def process_eval_log(
-    data_path: str | Path,
+def detect_generator_model(log: Any) -> str:
+    """The model that wrote the solutions: generator_info, else the eval's model."""
+    if log.samples:
+        sample_data = {**log.samples[0].metadata, **log.samples[0].store}
+        generator_info = sample_data.get("generator_info")
+        if isinstance(generator_info, dict):
+            model_info = generator_info.get("model_info")
+            if isinstance(model_info, dict) and model_info.get("model"):
+                return model_info["model"]
+    return log.eval.model
+
+
+def eval_log_to_dataset(
+    log: Any,
     model_name: str,
-    output_json_path: str | Path,
     transformed: bool = False,
     keep_comments: bool = False,
     view: str = TRAJECTORY_VIEW,
     action_options: ActionViewOptions | None = None,
 ) -> Dataset:
-    """Process eval log and extract successful solutions to Dataset format.
+    """Extract successful solutions from a read eval log into Dataset format.
 
-    Reads .eval files produced by generate_solutions_inspect.py or transform_solutions_inspect.py.
-    Extracts solutions from metadata/store (base_solution or transformed_solution),
-    problem statements from metadata (main_task_description), and filters based on scores.
+    Solutions come from metadata/store (base_solution or transformed_solution),
+    problem statements from main_task_description; samples that fail
+    check_sample_is_valid are skipped.
 
     Args:
-        data_path: Path to .eval log file
+        log: An inspect EvalLog with samples.
         model_name: Model name to assign to all solutions
-        output_json_path: Path to output JSON file
         transformed: If True, use transformed_solution; if False, use base_solution
         keep_comments: If True, keep comments in base_solution (only when transformed=False)
         view: "trajectory" (one solution per trajectory) or "action" (one solution
@@ -74,30 +85,7 @@ def process_eval_log(
             per-action monitor sees it; see utils.action_views). Use the same
             action_options as the monitor and checkpoint scoring.
         action_options: Options for per-action views (view == "action").
-
-    Returns:
-        Dataset object containing successful solutions
     """
-    logger.info(
-        f"Starting process_eval_log with data_path={data_path}, model_name={model_name}, output_json_path={output_json_path}, "
-        f"transformed={transformed}, keep_comments={keep_comments}"
-    )
-
-    data_path = Path(data_path)
-    output_json_path = Path(output_json_path)
-
-    if not data_path.exists():
-        logger.error(f"Eval log file does not exist: {data_path}")
-        raise FileNotFoundError(f"Eval log file does not exist: {data_path}")
-    logger.info(f"Eval log file found: {data_path}")
-
-    output_json_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Ensured output directory exists: {output_json_path.parent}")
-
-    # Read eval log using inspect_ai
-    logger.info("Reading eval log...")
-    log = read_eval_log(str(data_path))
-
     if log.samples is None:
         logger.error("No samples found in eval log")
         raise ValueError("No samples found in eval log")
@@ -270,6 +258,62 @@ def process_eval_log(
     logger.info(
         f"Dataset contains {len(dataset)} problems with {num_solutions} total solutions"
     )
+    return dataset
+
+
+def process_eval_log(
+    data_path: str | Path,
+    model_name: str,
+    output_json_path: str | Path,
+    transformed: bool = False,
+    keep_comments: bool = False,
+    view: str = TRAJECTORY_VIEW,
+    action_options: ActionViewOptions | None = None,
+) -> Dataset:
+    """Process eval log and extract successful solutions to Dataset format.
+
+    Reads .eval files produced by generate_solutions_inspect.py or transform_solutions_inspect.py
+    and writes the eval_log_to_dataset result to a JSON file.
+
+    Args:
+        data_path: Path to .eval log file
+        model_name: Model name to assign to all solutions
+        output_json_path: Path to output JSON file
+        transformed: If True, use transformed_solution; if False, use base_solution
+        keep_comments: If True, keep comments in base_solution (only when transformed=False)
+        view, action_options: See eval_log_to_dataset.
+
+    Returns:
+        Dataset object containing successful solutions
+    """
+    logger.info(
+        f"Starting process_eval_log with data_path={data_path}, model_name={model_name}, output_json_path={output_json_path}, "
+        f"transformed={transformed}, keep_comments={keep_comments}"
+    )
+
+    data_path = Path(data_path)
+    output_json_path = Path(output_json_path)
+
+    if not data_path.exists():
+        logger.error(f"Eval log file does not exist: {data_path}")
+        raise FileNotFoundError(f"Eval log file does not exist: {data_path}")
+    logger.info(f"Eval log file found: {data_path}")
+
+    output_json_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured output directory exists: {output_json_path.parent}")
+
+    # Read eval log using inspect_ai
+    logger.info("Reading eval log...")
+    dataset = eval_log_to_dataset(
+        read_eval_log(str(data_path)),
+        model_name,
+        transformed,
+        keep_comments,
+        view=view,
+        action_options=action_options,
+    )
+    if len(dataset) == 0:
+        return dataset
 
     # Save to JSON
     logger.info(f"Writing dataset to JSON: {output_json_path}")
@@ -357,33 +401,8 @@ def main(
         # Auto-detect model name if not provided
         if model_name is None:
             logger.info("Model name not provided, auto-detecting from eval log...")
-            log = read_eval_log(str(data_path))
-
-            # Try to get generator model from sample store (works for both generate and transform)
-            if log.samples and len(log.samples) > 0:
-                sample = log.samples[0]
-                # Merge metadata and store (store takes precedence)
-                sample_data = {**sample.metadata, **sample.store}
-
-                # Try to get generator model from generator_info
-                generator_info = sample_data.get("generator_info")
-                if generator_info and isinstance(generator_info, dict):
-                    model_info = generator_info.get("model_info")
-                    if model_info and isinstance(model_info, dict):
-                        model_name = model_info.get("model")
-                        if model_name:
-                            logger.info(
-                                f"Auto-detected generator model from sample metadata: {model_name}"
-                            )
-
-                # Fallback to eval.model if generator_info not found
-                if not model_name:
-                    model_name = log.eval.model
-                    logger.info(f"Auto-detected model from eval log: {model_name}")
-            else:
-                # No samples, use eval.model as fallback
-                model_name = log.eval.model
-                logger.info(f"Auto-detected model from eval log: {model_name}")
+            model_name = detect_generator_model(read_eval_log(str(data_path)))
+            logger.info(f"Auto-detected generator model: {model_name}")
 
         dataset = process_eval_log(
             data_path,

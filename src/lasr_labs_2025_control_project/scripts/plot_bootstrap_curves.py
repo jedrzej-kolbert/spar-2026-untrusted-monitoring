@@ -15,8 +15,10 @@ import gzip
 import json
 from pathlib import Path
 
-import numpy as np
 
+from lasr_labs_2025_control_project.utils.numerical_pipeline.bootstrap import (
+    bootstrap_band,
+)
 from lasr_labs_2025_control_project.utils.numerical_pipeline.visualization import (
     PLOT_FILE_FORMAT,
     plot_safety_usefulness_bands,
@@ -40,17 +42,7 @@ TRANSFORMS = [
 
 def load_band(path: Path, ci: float) -> dict[str, list[float]]:
     replicates = [json.loads(line) for line in gzip.open(path, "rt")]
-    sweeps = [r["sweep"] for r in replicates if "sweep" in r]
-    usefulness = [entry["usefulness"] for entry in sweeps[0]]
-    safety = np.array([[entry["safety"] for entry in sweep] for sweep in sweeps])
-    tail = 100.0 * (1.0 - ci) / 2.0
-    lo, med, hi = np.percentile(safety, [tail, 50.0, 100.0 - tail], axis=0)
-    return {
-        "usefulness": usefulness,
-        "safety_median": med.tolist(),
-        "safety_lo": lo.tolist(),
-        "safety_hi": hi.tolist(),
-    }
+    return bootstrap_band(replicates, ci)
 
 
 def main() -> None:
