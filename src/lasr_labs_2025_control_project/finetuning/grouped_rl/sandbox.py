@@ -438,6 +438,7 @@ class DockerAppsEvaluator:
                     directory, "reference.py", problem.reference_solution
                 )
                 self._write_program(directory, "solution.py", code)
+                results = None
                 if self.batch_tests:
                     jobs: list[dict[str, str | None]] = [
                         {"program": program, "input": problem.secret_input}
@@ -447,6 +448,10 @@ class DockerAppsEvaluator:
                         results = await self._execute_batch(directory, jobs)
                     except _InfrastructureError as exc:
                         return ExecutionGrade(False, infrastructure_error=str(exc))
+                    except _OutputLimitError:
+                        # Combined output is over the cap: grade each program alone below.
+                        results = None
+                if results is not None:
                     if self._job_failed(results[0]):
                         return None  # the reference itself fails: check not applicable
                     if len(results) < 2:
