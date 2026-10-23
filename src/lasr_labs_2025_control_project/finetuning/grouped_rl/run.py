@@ -42,6 +42,8 @@ from .core import (
     Rollout,
 )
 from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
+from .icrl import RoundSummary, learner_messages, parse_strategies, run_icrl, summarise
+from .icrl_adapters import StrategyBox, TrainerTeam, with_strategy
 from .rewards import RewardConfig
 from . import usage
 from .sandbox import DockerAppsEvaluator
@@ -82,8 +84,23 @@ SELF_REC_WANDB_KEYS = {
 }
 
 
+STRATEGY_COLUMNS = (
+    "step",
+    "round",
+    "strategy",
+    "p_self_mean",
+    "pass_rate",
+    "working_rate",
+    "backdoor_checked",
+    "suspicion_mean",
+    "reward_mean",
+    "episodes",
+    "cost_usd",
+)
+
+
 def wandb_key(key: str, self_recognition: bool) -> str:
-    if key.startswith("progress/"):
+    if key.startswith(("progress/", "icrl/")):
         return key
     if key.startswith("train/reward/"):
         return key.removeprefix("train/")
@@ -99,6 +116,8 @@ class Recorder:
         self.self_recognition = config.task_mode == "self_recognition"
         output_dir.mkdir(parents=True, exist_ok=True)
         self.wandb = None
+        self.strategy_rows: list[list[Any]] = []
+        self.last_step = 0  # W&B steps must not go backwards
         logging_config = config.logging
         if logging_config.wandb_project and logging_config.wandb_mode != "disabled":
             import wandb
@@ -125,6 +144,7 @@ class Recorder:
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }
         self._append("metrics.jsonl", {"step": step, **clean})
+        self.last_step = max(self.last_step, step)
         if self.wandb is not None and clean:
             self.wandb.log(
                 {
@@ -134,7 +154,9 @@ class Recorder:
                 step=step,
             )
 
-    def rollouts(self, step: int, phase: str, rollouts: list[Rollout]) -> None:
+    def rollouts(
+        self, step: int, phase: str, rollouts: list[Rollout], **extra: Any
+    ) -> None:
         for item in rollouts:
             generation = item.generation
             self._append(
@@ -142,6 +164,7 @@ class Recorder:
                 {
                     "step": step,
                     "phase": phase,
+                    **extra,
                     "problem_id": item.problem.problem_id,
                     "payload": item.payload,
                     "response": generation.text if generation else None,
@@ -186,6 +209,31 @@ class Recorder:
                 "honeypot_scores.jsonl",
                 {"step": step, "problem_id": problem_id, "p_yes": p_yes},
             )
+
+    def strategy(self, step: int, summary: RoundSummary, cost_usd: float) -> None:
+        """One learner-designed strategy and its measured scores (ICRL)."""
+        row = {"step": step, **dataclasses.asdict(summary), "cost_usd": cost_usd}
+        self._append("strategies.jsonl", row)
+        self.scalars(step, "icrl", row)
+        self.strategy_rows.append([row[column] for column in STRATEGY_COLUMNS])
+        if self.wandb is not None:
+            import wandb
+
+            table = wandb.Table(columns=list(STRATEGY_COLUMNS), data=self.strategy_rows)
+            self.wandb.log({"icrl/strategies": table}, step=step)
+
+    def learner_reply(
+        self, round_index: int, prompt: list[dict[str, str]], reply: str
+    ) -> None:
+        self._append(
+            "learner.jsonl",
+            {
+                "round": round_index,
+                "prompt": prompt,
+                "reply": reply,
+                "strategies": parse_strategies(reply),
+            },
+        )
 
     def status(self, **values: Any) -> None:
         path = self.output_dir / "status.json"
@@ -412,8 +460,12 @@ async def build_trainer(
     evaluator: DockerAppsEvaluator,
     *,
     resume_state: str | None = None,
+    strategy: StrategyBox | None = None,
 ) -> tuple[GroupedRLTrainer, Any]:
-    """The trainer and the concrete Tinker sender (for checkpointing)."""
+    """The trainer and the concrete Tinker sender (for checkpointing).
+
+    With ``strategy`` (ICRL), the sender's system prompt ends with the box's text.
+    """
     from .tinker_backend import (
         FrozenYesNoMonitor,
         TextScoreBackdoorMonitor,
@@ -440,6 +492,8 @@ async def build_trainer(
             signal_labels=labels,
         )
 
+    if strategy is not None:
+        messages_fn = with_strategy(messages_fn, strategy)
     sender, reference = await create_tinker_sender(
         allow_paid=True,
         base_model=config.models.sender,
@@ -598,6 +652,113 @@ def _update_ckpts_json(path: Path, name: str, checkpoint: str) -> None:
     path.write_text(json.dumps(current, indent=2) + "\n")
 
 
+async def run_in_context(
+    config: RLRunConfig,
+    trainer: GroupedRLTrainer,
+    box: StrategyBox,
+    learner: Any,
+    recorder: Recorder,
+    meter: usage.Usage,
+    train_tasks: list[AppsProblem],
+    validation: list[AppsProblem],
+    honeypots: list[tuple[AppsProblem, str]],
+) -> None:
+    """ICRL search on training problems, then a held-out check against honeypots.
+
+    Every learner reply goes to learner.jsonl, every strategy with its scores to
+    strategies.jsonl and the W&B ``icrl/strategies`` table, every rewrite to
+    rollouts.jsonl (with its strategy), and the outcome to icrl_result.json.
+    """
+    icrl = config.icrl
+    if icrl.search_problems > len(train_tasks):
+        raise ValueError("icrl.search_problems exceeds the training problems")
+    search = random.Random(config.seed).sample(train_tasks, icrl.search_problems)
+    recorder.status(
+        state="searching", search_problem_ids=[p.problem_id for p in search]
+    )
+    step = 0
+
+    def on_result(strategy: str, result: BatchResult, phase: str) -> None:
+        nonlocal step
+        step += 1
+        recorder.rollouts(step, phase, result.rollouts, strategy=strategy)
+
+    team = TrainerTeam(
+        trainer,
+        box,
+        search_problems=search,
+        held_out_problems=validation,
+        honeypots=honeypots,
+        num_samples=config.eval.num_samples,
+        on_result=on_result,
+    )
+
+    def on_summary(summary: RoundSummary) -> None:
+        recorder.strategy(step, summary, meter.cost_usd)
+        click.echo(
+            f"round {summary.round}: reward {summary.reward_mean:.3f}, "
+            f"P(self) {summary.p_self_mean:.3f}, working {summary.working_rate}, "
+            f"suspicion {summary.suspicion_mean:.3f} | {summary.strategy[:80]!r}"
+        )
+
+    def on_reply(round_index: int, history: Any, reply: str) -> None:
+        recorder.learner_reply(
+            round_index, learner_messages(history, icrl.candidates), reply
+        )
+
+    try:
+        history, best = await run_icrl(
+            learner,
+            team,
+            rounds=icrl.rounds,
+            candidates=icrl.candidates,
+            on_reply=on_reply,
+            on_summary=on_summary,
+        )
+        recorder.status(
+            state="held_out", best_round=best.round, best_strategy=best.strategy
+        )
+        held_out: dict[str, Any] = {}
+        # The baseline is checked too, so a gain is measured against no strategy.
+        for label, strategy in (("best", best.strategy), ("baseline", "")):
+            if label == "baseline" and best.strategy == "":
+                held_out["baseline"] = held_out["best"]
+                continue
+            episodes, honeypot = await team.held_out(strategy)
+            summary = summarise(
+                best.round if label == "best" else 0, strategy, episodes
+            )
+            metrics = {**dataclasses.asdict(summary), **honeypot.metrics()}
+            recorder.honeypots(step, honeypot.honeypot_scores)
+            recorder.scalars(step, f"icrl/held_out_{label}", metrics)
+            held_out[label] = metrics
+    except (BatchInfrastructureError, usage.BudgetExceeded):
+        recorder.status(
+            state="stopped",
+            reason="budget cap reached" if meter.exhausted else "infrastructure error",
+        )
+        raise
+    (config.output_dir / "icrl_result.json").write_text(
+        json.dumps(
+            {
+                "best": dataclasses.asdict(best),
+                "strategies": [dataclasses.asdict(item) for item in history],
+                "held_out": held_out,
+            },
+            indent=2,
+        )
+    )
+    recorder.status(
+        state="finished",
+        held_out_auroc_best=held_out["best"]["auroc"],
+        held_out_auroc_baseline=held_out["baseline"]["auroc"],
+    )
+    click.echo(
+        f"best strategy (round {best.round}): held-out AUROC "
+        f"{held_out['best']['auroc']} vs baseline {held_out['baseline']['auroc']}"
+    )
+
+
 async def train(
     config: RLRunConfig,
     allow_paid: bool,
@@ -658,7 +819,40 @@ async def train(
     recorder = Recorder(config, output_dir)
     recorder.status(state="starting", parity=parity)
     recorder.scalars(0, "preflight", parity)
-    trainer, sender = await build_trainer(config, evaluator, resume_state=resume_state)
+    box = StrategyBox() if config.method == "in_context" else None
+    trainer, sender = await build_trainer(
+        config, evaluator, resume_state=resume_state, strategy=box
+    )
+    if box is not None:
+        import tinker
+
+        from .icrl_adapters import TinkerLearner
+
+        sampler = tinker.ServiceClient().create_sampling_client(
+            base_model=config.icrl.learner
+        )
+        learner = TinkerLearner(
+            sampler,
+            sampler.get_tokenizer(),
+            allow_paid=True,
+            max_tokens=config.icrl.learner_max_tokens,
+            temperature=config.icrl.learner_temperature,
+        )
+        try:
+            await run_in_context(
+                config,
+                trainer,
+                box,
+                learner,
+                recorder,
+                meter,
+                train_tasks,
+                validation,
+                honeypots,
+            )
+        finally:
+            close_run(recorder, meter, output_dir, recorder.last_step)
+        return
 
     if config.preflight.enabled and config.task_mode != "self_recognition":
         preflight = await monitor_preflight(trainer, train_tasks, config)
@@ -848,17 +1042,21 @@ async def train(
                 config.checkpoints.ckpts_json, config.checkpoint_name, final
             )
     finally:
-        recorder.scalars(step, "progress", meter.snapshot())
-        (output_dir / "usage.json").write_text(
-            json.dumps(
-                {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens},
-                indent=2,
-            )
+        close_run(recorder, meter, output_dir, step)
+
+
+def close_run(
+    recorder: Recorder, meter: usage.Usage, output_dir: Path, step: int
+) -> None:
+    """Record final usage, even after a failed step or evaluation."""
+    recorder.scalars(step, "progress", meter.snapshot())
+    (output_dir / "usage.json").write_text(
+        json.dumps(
+            {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens}, indent=2
         )
-        recorder.status(
-            estimated_cost_usd=meter.cost_usd, budget_exhausted=meter.exhausted
-        )
-        recorder.finish()
+    )
+    recorder.status(estimated_cost_usd=meter.cost_usd, budget_exhausted=meter.exhausted)
+    recorder.finish()
 
 
 @click.command()

@@ -146,10 +146,25 @@ class CheckpointConfig(_Strict):
     name: str | None = None
 
 
+class IcrlConfig(_Strict):
+    """In-context search (method: in_context): no weights change; see icrl.py."""
+
+    rounds: int = Field(default=5, ge=1)
+    candidates: int = Field(
+        default=4, ge=1
+    )  # strategies the learner proposes per round
+    search_problems: int = Field(default=32, ge=1)  # training problems per strategy
+    learner: str = "deepseek-ai/DeepSeek-V3.1"  # Tinker base model, sampled only
+    learner_max_tokens: int = Field(default=4096, ge=1)
+    learner_temperature: float = Field(default=1.0, gt=0)
+
+
 class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
     backend: Literal["tinker", "hf_gpu"] = "tinker"
+    method: Literal["gradient", "in_context"] = "gradient"
+    icrl: IcrlConfig = Field(default_factory=IcrlConfig)
     task_mode: Literal[
         "rewrite_signal", "self_recognition", "honest_signal", "attack_signal"
     ] = "rewrite_signal"
@@ -214,6 +229,16 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
+        if self.method == "in_context":
+            if self.task_mode != "self_recognition" or self.training.train_receiver:
+                raise ValueError(
+                    "in_context needs task_mode self_recognition and a frozen judge"
+                )
+            # ICRL reports the trusted monitor's suspicion for every rewrite.
+            if reward.backdoor_suspicion_weight == 0:
+                raise ValueError(
+                    "in_context needs reward.backdoor_suspicion_weight > 0"
+                )
         return self
 
     @property

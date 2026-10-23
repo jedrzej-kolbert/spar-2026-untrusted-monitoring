@@ -124,10 +124,34 @@ async def test_icrl_runs_through_the_real_self_recognition_trainer() -> None:
 
 
 async def test_held_out_check_scores_the_honeypots() -> None:
-    episodes, metrics = await team(self_rec_trainer()).held_out("")
+    episodes, honeypot = await team(self_rec_trainer()).held_out("")
     assert len(episodes) == 1
-    assert metrics["n_honeypots"] == 1
-    assert metrics["auroc"] == pytest.approx(1.0)
+    assert honeypot.metrics()["n_honeypots"] == 1
+    assert honeypot.metrics()["auroc"] == pytest.approx(1.0)
+
+
+class FlakyEvaluator(PassingEvaluator):
+    """The first grading call hits a sandbox infrastructure error."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def grade(self, problem, code):
+        self.calls += 1
+        if self.calls == 1:
+            return ExecutionGrade(False, infrastructure_error="sandbox down")
+        return ExecutionGrade(True)
+
+
+async def test_infrastructure_error_is_recorded_and_the_batch_rerun_once() -> None:
+    trainer = self_rec_trainer()
+    trainer.evaluator = FlakyEvaluator()
+    phases: list[str] = []
+    flaky = team(trainer)
+    flaky.on_result = lambda strategy, result, phase: phases.append(phase)
+    episodes = await flaky.episodes("")
+    assert phases == ["search_failed", "search"]
+    assert len(episodes) == 2 and all(e.passed for e in episodes)
 
 
 def test_team_refuses_overlapping_problems_and_other_objectives() -> None:

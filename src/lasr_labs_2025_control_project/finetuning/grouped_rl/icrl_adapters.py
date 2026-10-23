@@ -11,7 +11,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .core import AppsProblem, GroupedRLTrainer, Rollout
+from .core import (
+    AppsProblem,
+    BatchInfrastructureError,
+    BatchResult,
+    GroupedRLTrainer,
+    HoneypotEvalResult,
+    Rollout,
+)
 from .icrl import Episode, RoundSummary, learner_messages, parse_strategies
 from .tinker_backend import _TinkerRole
 
@@ -73,6 +80,8 @@ class TrainerTeam:
     ``box`` must be the one wrapped into the sender's ``messages_fn`` with
     ``with_strategy``. Search problems choose the strategy; held-out problems and
     honeypots only check the chosen one, so they must not overlap the search set.
+    ``on_result(strategy, result, phase)`` sees every evaluated batch, including one
+    that hit a sandbox infrastructure error; such a batch is run once more.
     """
 
     trainer: GroupedRLTrainer
@@ -81,6 +90,7 @@ class TrainerTeam:
     held_out_problems: Sequence[AppsProblem]
     honeypots: Sequence[tuple[AppsProblem, str]]
     num_samples: int = 1
+    on_result: Callable[[str, BatchResult, str], None] | None = None
 
     def __post_init__(self) -> None:
         if not self.trainer.config.self_recognition:
@@ -94,25 +104,37 @@ class TrainerTeam:
             replace(p, split="validation") for p in self.search_problems
         ]
 
-    async def _run(self, strategy: str, problems: Sequence[AppsProblem]):
+    def _report(self, strategy: str, result: BatchResult, phase: str) -> None:
+        if self.on_result is not None:
+            self.on_result(strategy, result, phase)
+
+    async def _run(
+        self, strategy: str, problems: Sequence[AppsProblem], phase: str
+    ) -> BatchResult:
         self.box.text = strategy
-        return await self.trainer.evaluate(list(problems), self.num_samples)
+        for attempt in (1, 2):
+            try:
+                result = await self.trainer.evaluate(list(problems), self.num_samples)
+            except BatchInfrastructureError as error:
+                self._report(strategy, error.result, f"{phase}_failed")
+                if attempt == 2:
+                    raise
+                continue
+            self._report(strategy, result, phase)
+            return result
+        raise AssertionError("unreachable")
 
     async def episodes(self, strategy: str) -> list[Episode]:
-        result = await self._run(strategy, self.search_problems)
+        result = await self._run(strategy, self.search_problems, "search")
         return [episode_from(rollout) for rollout in result.rollouts]
 
-    async def held_out(
-        self, strategy: str
-    ) -> tuple[list[Episode], dict[str, float | int | None]]:
-        """Episodes on held-out problems and the judge's metrics against honeypots."""
-        result = await self._run(strategy, self.held_out_problems)
+    async def held_out(self, strategy: str) -> tuple[list[Episode], HoneypotEvalResult]:
+        """Episodes on held-out problems and the judge's scores against honeypots."""
+        result = await self._run(strategy, self.held_out_problems, "held_out")
         honeypot = await self.trainer.evaluate_against_honeypots(
             list(self.held_out_problems), list(self.honeypots), signalled=result
         )
-        return [
-            episode_from(rollout) for rollout in result.rollouts
-        ], honeypot.metrics()
+        return [episode_from(rollout) for rollout in result.rollouts], honeypot
 
 
 class TinkerLearner(_TinkerRole):

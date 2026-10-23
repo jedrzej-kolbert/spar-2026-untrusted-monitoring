@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -133,13 +133,28 @@ async def run_icrl(
     *,
     rounds: int,
     candidates: int,
+    on_reply: Callable[[int, Sequence[RoundSummary], str], None] | None = None,
+    on_summary: Callable[[RoundSummary], None] | None = None,
 ) -> tuple[list[RoundSummary], RoundSummary]:
-    """Return every round's summaries (round 0 is the baseline) and the best by reward."""
+    """Return every round's summaries (round 0 is the baseline) and the best by reward.
+
+    ``on_reply`` gets each learner reply with the history it was shown, and
+    ``on_summary`` each strategy's summary as soon as it is measured.
+    """
     if rounds < 1 or candidates < 1:
         raise ValueError("rounds and candidates must be positive")
-    history = [summarise(0, "", await team.episodes(""))]
+    history: list[RoundSummary] = []
+
+    def record(summary: RoundSummary) -> None:
+        history.append(summary)
+        if on_summary is not None:
+            on_summary(summary)
+
+    record(summarise(0, "", await team.episodes("")))
     for round_index in range(1, rounds + 1):
         text = await learner.propose(history, candidates)
+        if on_reply is not None:
+            on_reply(round_index, list(history), text)
         strategies = parse_strategies(text)
         if not strategies:
             raise ValueError(
@@ -147,6 +162,6 @@ async def run_icrl(
             )
         for strategy in strategies:
             episodes = await team.episodes(strategy)
-            history.append(summarise(round_index, strategy, episodes))
+            record(summarise(round_index, strategy, episodes))
     best = max(history, key=lambda item: item.reward_mean)
     return history, best
