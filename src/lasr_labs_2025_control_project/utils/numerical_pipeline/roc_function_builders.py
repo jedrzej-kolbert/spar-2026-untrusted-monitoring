@@ -2,7 +2,6 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 from scipy.optimize import minimize
 
 TParameterizedROCFunctionType = Callable[
