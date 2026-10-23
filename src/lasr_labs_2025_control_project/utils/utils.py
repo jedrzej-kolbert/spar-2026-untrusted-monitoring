@@ -260,6 +260,9 @@ def check_sample_is_valid(
 
     For BashArena see basharena_views.trajectory_is_valid.
 
+    The README's "Data pipeline" section describes this filter for researchers;
+    keep it in sync.
+
     Args:
         scores: Scores dict from an inspect_ai sample
         eval_mode: "honest"/"attack" from the sample metadata. BashArena only: its
