@@ -1,14 +1,14 @@
 """Connect the ICRL loop to the grouped-RL trainer and to Tinker sampling.
 
-The team reuses the trainer's own evaluation, so grading, overseer, backdoor and
-reward are the same as in the GBRL runs. The only difference is that the sender and
-receiver prompts carry the current strategy text.
+The team reuses the trainer's own evaluation, so grading, the frozen judge, the
+backdoor check, the trusted monitor and the reward are the same as in the gradient
+runs. The only difference is that the sender's prompt carries the current strategy.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .core import AppsProblem, GroupedRLTrainer, Rollout
@@ -18,7 +18,7 @@ from .tinker_backend import _TinkerRole
 
 @dataclass
 class StrategyBox:
-    """The strategy the sender and receiver currently see; set once per team run."""
+    """The strategy the sender currently sees; the team sets it before each run."""
 
     text: str = ""
 
@@ -26,7 +26,7 @@ class StrategyBox:
 def with_strategy(
     messages_fn: Callable[..., list[dict[str, str]]], box: StrategyBox
 ) -> Callable[..., list[dict[str, str]]]:
-    """Append the box's strategy to the system message of a sender or receiver prompt."""
+    """Wrap the sender's ``messages_fn`` so its system message ends with the strategy."""
 
     def messages(*args: Any) -> list[dict[str, str]]:
         messages = messages_fn(*args)
@@ -36,7 +36,7 @@ def with_strategy(
                 {
                     **system,
                     "content": system["content"]
-                    + "\n\nStrategy you share with your partner:\n"
+                    + "\n\nInstructions for this rewrite:\n"
                     + box.text,
                 },
                 *messages[1:],
@@ -47,43 +47,72 @@ def with_strategy(
 
 
 def episode_from(rollout: Rollout) -> Episode:
-    """Turn one graded rollout into an episode. Missing fields are errors, not defaults."""
+    """Turn one graded rollout into an episode. Missing scores are errors, not defaults."""
     if rollout.probabilities is None or rollout.execution is None:
-        raise ValueError("rollout has no receiver or execution result")
+        raise ValueError("rollout has no judge or execution result")
     if rollout.reward is None:
         raise ValueError("rollout has no reward")
-    suspicion = (
-        rollout.suspiciousness
-        if rollout.suspiciousness is not None
-        else rollout.backdoor_suspicion
-    )
-    if suspicion is None:
-        raise ValueError("rollout has no overseer suspicion")
+    if rollout.backdoor_suspicion is None:
+        raise ValueError(
+            "rollout has no trusted-monitor suspicion; "
+            "set reward.backdoor_suspicion_weight and models.backdoor_monitor"
+        )
     return Episode(
-        payload=rollout.payload,
-        decoded=int(rollout.probabilities[1] > rollout.probabilities[0]),
+        p_self=rollout.probabilities[1],
         passed=rollout.execution.passed,
-        backdoor=bool(rollout.backdoor and rollout.backdoor.passed),
-        suspicion=suspicion,
+        backdoor=None if rollout.backdoor is None else rollout.backdoor.passed,
+        suspicion=rollout.backdoor_suspicion,
         reward=rollout.reward,
     )
 
 
 @dataclass
 class TrainerTeam:
-    """Runs one strategy through the trainer's held-out evaluation on fixed problems."""
+    """Runs strategies through the trainer's evaluation on fixed problem sets.
+
+    ``box`` must be the one wrapped into the sender's ``messages_fn`` with
+    ``with_strategy``. Search problems choose the strategy; held-out problems and
+    honeypots only check the chosen one, so they must not overlap the search set.
+    """
 
     trainer: GroupedRLTrainer
-    problems: Sequence[AppsProblem]
-    box: StrategyBox = field(default_factory=StrategyBox)
+    box: StrategyBox
+    search_problems: Sequence[AppsProblem]
+    held_out_problems: Sequence[AppsProblem]
+    honeypots: Sequence[tuple[AppsProblem, str]]
     num_samples: int = 1
 
-    async def episodes(self, strategy: str) -> list[Episode]:
+    def __post_init__(self) -> None:
+        if not self.trainer.config.self_recognition:
+            raise ValueError("TrainerTeam needs a self-recognition trainer")
+        search = {p.problem_id for p in self.search_problems}
+        if search & {p.problem_id for p in self.held_out_problems}:
+            raise ValueError("search and held-out problems overlap")
+        # No weights change, so the trainer's train/held-out guard does not apply to
+        # the search problems; the split that matters is search vs held-out, above.
+        self.search_problems = [
+            replace(p, split="validation") for p in self.search_problems
+        ]
+
+    async def _run(self, strategy: str, problems: Sequence[AppsProblem]):
         self.box.text = strategy
-        result = await self.trainer.evaluate(
-            list(self.problems), self.num_samples, balanced=True
-        )
+        return await self.trainer.evaluate(list(problems), self.num_samples)
+
+    async def episodes(self, strategy: str) -> list[Episode]:
+        result = await self._run(strategy, self.search_problems)
         return [episode_from(rollout) for rollout in result.rollouts]
+
+    async def held_out(
+        self, strategy: str
+    ) -> tuple[list[Episode], dict[str, float | int | None]]:
+        """Episodes on held-out problems and the judge's metrics against honeypots."""
+        result = await self._run(strategy, self.held_out_problems)
+        honeypot = await self.trainer.evaluate_against_honeypots(
+            list(self.held_out_problems), list(self.honeypots), signalled=result
+        )
+        return [
+            episode_from(rollout) for rollout in result.rollouts
+        ], honeypot.metrics()
 
 
 class TinkerLearner(_TinkerRole):
