@@ -493,22 +493,42 @@ async def build_trainer(
         )
 
     if strategy is not None:
-        messages_fn = with_strategy(messages_fn, strategy)
-    sender, reference = await create_tinker_sender(
-        allow_paid=True,
-        base_model=config.models.sender,
-        rank=training.lora_rank,
-        learning_rate=training.learning_rate,
-        with_reference=reward.kl_coef > 0,
-        resume_state=resume_state,
-        messages_fn=messages_fn,
-        loss_fn=training.loss_fn,
-        ppo_passes=training.ppo_passes,
-        clip_epsilon=training.clip_epsilon,
-        temperature=training.temperature,
-        max_tokens=training.max_tokens,
-        max_context_tokens=training.max_context_tokens,
-    )
+        import tinker
+
+        from .tinker_backend import TinkerSender
+
+        # ICRL never trains the sender. Sampling the base model directly gives what
+        # a fresh LoRA adapter gives, without waiting for Tinker training capacity.
+        sampler = tinker.ServiceClient().create_sampling_client(
+            base_model=config.models.sender
+        )
+        sender = TinkerSender(
+            None,
+            sampler,
+            sampler.get_tokenizer(),
+            allow_paid=True,
+            messages_fn=with_strategy(messages_fn, strategy),
+            temperature=training.temperature,
+            max_tokens=training.max_tokens,
+            max_context_tokens=training.max_context_tokens,
+        )
+        reference = None
+    else:
+        sender, reference = await create_tinker_sender(
+            allow_paid=True,
+            base_model=config.models.sender,
+            rank=training.lora_rank,
+            learning_rate=training.learning_rate,
+            with_reference=reward.kl_coef > 0,
+            resume_state=resume_state,
+            messages_fn=messages_fn,
+            loss_fn=training.loss_fn,
+            ppo_passes=training.ppo_passes,
+            clip_epsilon=training.clip_epsilon,
+            temperature=training.temperature,
+            max_tokens=training.max_tokens,
+            max_context_tokens=training.max_context_tokens,
+        )
     if training.train_receiver:
         receiver = await create_tinker_receiver(
             allow_paid=True,
