@@ -161,3 +161,37 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
     held_out = table("icrl/held_out")
     assert [row[0] for row in held_out.data] == ["best", "baseline"]
     assert {"strategy", "reward_mean", "reward/task", "auroc"} <= set(held_out.columns)
+
+
+class FailingSender:
+    async def generate(self, problem: Any, payload: int, num_samples: int) -> list:
+        raise ValueError("tokenizer.chat_template is not set")
+
+
+async def test_a_failed_batch_records_its_cause(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+        BatchInfrastructureError,
+    )
+
+    config = icrl_config(tmp_path)
+    trainer = self_rec_trainer()
+    trainer.sender = FailingSender()
+    held_out = attack_problem("13", "validation")
+    with pytest.raises(BatchInfrastructureError):
+        await run_in_context(
+            config,
+            trainer,
+            StrategyBox(),
+            OneShotLearner(),
+            Recorder(config, tmp_path),
+            usage.Usage(),
+            [attack_problem("11"), attack_problem("15")],
+            [held_out],
+            [(held_out, "# another model\nprint(7)")],
+        )
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "batch_errors.jsonl").read_text().splitlines()
+    ]
+    assert [row["phase"] for row in rows] == ["search_failed", "search_failed"]
+    assert "chat_template is not set" in rows[0]["errors"][0]

@@ -258,6 +258,15 @@ class Recorder:
         )
         self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
 
+    def batch_errors(
+        self, step: int, phase: str, strategy: str, errors: list[str]
+    ) -> None:
+        self._append(
+            "batch_errors.jsonl",
+            {"step": step, "phase": phase, "strategy": strategy, "errors": errors},
+        )
+        self.sync_file("batch_errors.jsonl")
+
     def sync_file(self, name: str) -> None:
         # Upload the file to the W&B run and keep it in sync as it grows.
         if self.wandb is not None:
@@ -736,6 +745,10 @@ async def run_in_context(
         step += 1
         recorder.rollouts(step, phase, result.rollouts, strategy=strategy)
         recorder.sync_file("rollouts.jsonl")
+        if result.errors:
+            # Batch-level causes (e.g. a sender exception) are not on any rollout.
+            logger.warning("%s batch errors: %s", phase, result.errors[:3])
+            recorder.batch_errors(step, phase, strategy, result.errors)
 
     team = TrainerTeam(
         trainer,
