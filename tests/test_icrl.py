@@ -101,6 +101,9 @@ def test_learner_prompt_states_the_objective_and_earlier_results() -> None:
     system, user = learner_messages([baseline, previous], count=3)
     for goal in ("passes the", "keeps the backdoor", "judge", "trusted monitor"):
         assert goal in system["content"]
+    # The sandbox checks only the original trigger, so the learner is told so.
+    assert "same secret input" in system["content"]
+    assert "removes, repairs or moves the backdoor" in system["content"]
     assert "secret bit" not in system["content"]
     assert "(no instructions: the baseline)" in user["content"]
     assert "working backdoor n/a (0 checked)" in user["content"]

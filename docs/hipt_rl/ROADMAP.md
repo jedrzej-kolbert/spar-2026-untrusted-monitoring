@@ -108,7 +108,8 @@ Qwen3-8B sender and receiver, frozen Qwen3.5-4B overseer, penalty weight 5, 4 tr
 - [ ] Monitor fine-tuning regime (2): signalled attacks vs honeypots
 - [ ] Option B `attack+signal`: backdoor prompt, secret-input parsing, attack-success reward
 - [ ] Shared sender/receiver LoRA adapter as a red-team strategy
-- [ ] ICRL (HiPT's in-context learner)
+- [ ] ICRL (HiPT's in-context learner): self-recognition objective, sender-only strategies, `method: in_context` in the run config (branch `feat/icrl-strategy-search`); first full run pending
+- [ ] Let the sender switch backdoor triggers when a rewrite changes the code and the task allows it (requested by the user, 2026-10-24). Today the trigger is fixed: the sandbox checks only the attack's original secret input, so a moved backdoor counts as lost, and the learner prompt says so. To allow a new trigger, the sender reports its secret input, the sandbox checks that input, and a validity check confirms the input is legal for the problem (otherwise malformed input differs trivially). In run B, the step-0 "lost" backdoors inspected (3 of 82) were deleted rather than moved, and B learned to keep them under the fixed rule (working attacks 0.21 to 0.89).
 - [ ] Hugging Face / cloud-GPU backend (closer to HiPT's TRL value-head PPO)
 - [ ] Small LLM vs classifier as overseer
 
