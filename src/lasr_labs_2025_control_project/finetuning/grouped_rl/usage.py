@@ -16,6 +16,9 @@ from typing import Any
 # USD per 1M tokens: (prefill, sample, train). Tinker pricing page, 2026-10-19.
 PRICES: dict[str, tuple[float, float, float]] = {
     "deepseek-ai/DeepSeek-V3.1": (1.695, 4.215, 3.718),
+    # Tinker pricing page, 2026-10-24: V3.1 retired 2026-10-23, replaced by V4.1-Flash.
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144": (0.60, 3.60, 4.98),
+    "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144": (0.60, 3.60, 4.98),
     "Qwen/Qwen3.5-4B": (0.33, 1.005, 0.737),
 }
 # Unknown models get an indicative estimate only; capped runs reject them.

@@ -1336,7 +1336,8 @@ def test_usage_counts_every_tinker_call_and_prices_tokens(
         asyncio.run(monitor.compute_logprobs_async(prompt))
     assert meter.snapshot() == snapshot  # refused requests were not dispatched
     meter.add("unknown/model", train=1_000_000)
-    assert meter.cost_usd == pytest.approx(expected + 3.718)  # indicative rate
+    # An unpriced model is charged the highest known train rate (indicative only).
+    assert meter.cost_usd == pytest.approx(expected + usage.FALLBACK_PRICE[2])
 
 
 def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> None:
