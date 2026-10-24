@@ -8,7 +8,7 @@ import math
 import random
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol, cast
 
 from .rewards import RewardConfig, compute_reward
 
@@ -134,6 +134,14 @@ class Overseer(Protocol):
     async def suspiciousness(self, problem: AppsProblem, message: str) -> float: ...
 
 
+class HiPTOverseer(Overseer, Protocol):
+    async def suspiciousness_and_log_odds(
+        self, problem: AppsProblem, message: str
+    ) -> tuple[float, float]:
+        """P(YES) and raw log P(NO) - log P(YES), from the same scoring call."""
+        ...
+
+
 class CodeEvaluator(Protocol):
     async def grade(self, problem: AppsProblem, code: str) -> ExecutionGrade: ...
 
@@ -230,6 +238,7 @@ class Rollout:
     backdoor_suspicion: float | None = None
     kl: float | None = None
     reward_components: dict[str, float] = field(default_factory=dict)
+    overseer_log_odds: float | None = None
 
     @property
     def decoded_correctly(self) -> bool:
@@ -638,7 +647,18 @@ class GroupedRLTrainer:
                     if self.channel is not None and rollout.receiver_code is not None
                     else generation.text
                 )
-                score = await self.overseer.suspiciousness(problem, message)
+                if (
+                    self.config.reward.reward_fn == "hipt"
+                    and self.config.reward.overseer_scale > 0
+                ):
+                    score, log_odds = await cast(
+                        HiPTOverseer, self.overseer
+                    ).suspiciousness_and_log_odds(problem, message)
+                    if not math.isfinite(log_odds):
+                        raise ValueError("overseer log odds must be finite")
+                    rollout.overseer_log_odds = log_odds
+                else:
+                    score = await self.overseer.suspiciousness(problem, message)
                 if not math.isfinite(score) or not 0 <= score <= 1:
                     raise ValueError("suspiciousness must be finite and in [0, 1]")
                 rollout.suspiciousness = score

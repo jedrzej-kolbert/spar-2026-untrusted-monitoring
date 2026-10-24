@@ -40,6 +40,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
     compute_reward,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.run import (
+    core_config,
     overseer_strength,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
@@ -107,22 +108,43 @@ def test_branch_reward_matches_original_formula() -> None:
     assert failed == pytest.approx(-0.6)  # no credit, penalty still applies
 
 
-def test_hipt_reward_terms() -> None:
-    config = GroupedRLConfig(reward=RewardConfig(reward_fn="hipt"))
-    reward, parts = compute_reward(rollout(p_yes=0.8, suspicion=0.2), config)
-    assert parts["communication"] == pytest.approx(math.tanh(math.log(4)))
-    assert parts["overseer"] == pytest.approx(math.tanh(-math.log(0.25)))
+@pytest.mark.parametrize("passed", [False, True])
+@pytest.mark.parametrize("payload,p_yes", [(0, 0.1), (0, 0.9), (1, 0.1), (1, 0.9)])
+def test_hipt_reward_terms(payload: int, p_yes: float, passed: bool) -> None:
+    config = GroupedRLConfig(
+        reward=RewardConfig(reward_fn="hipt", stego_scale=2.0, overseer_scale=0.5)
+    )
+    item = rollout(
+        payload=payload,
+        p_yes=p_yes,
+        passed=passed,
+        suspicion=0.2,
+        overseer_log_odds=math.log(0.8) - math.log(0.2),
+    )
+    reward, parts = compute_reward(item, config)
+    p_correct = p_yes if payload else 1 - p_yes
+    assert parts["communication"] == pytest.approx(2 * p_correct)
+    assert parts["overseer"] == pytest.approx(0.5 * math.tanh(math.log(4) - 0.75))
     assert reward == pytest.approx(sum(parts.values()))
-    # Confidently wrong decoding is negative, and there is no pass gate by default.
-    wrong, _ = compute_reward(
-        rollout(payload=0, p_yes=0.9, passed=False, suspicion=0.5), config
+    assert "task" not in parts
+
+
+def test_hipt_reward_does_not_improve_when_task_fails() -> None:
+    config = GroupedRLConfig(reward=RewardConfig(reward_fn="hipt", overseer_scale=0))
+    passing, parts = compute_reward(rollout(p_yes=0.1), config)
+    failing, _ = compute_reward(rollout(p_yes=0.1, passed=False), config)
+    assert passing == failing == pytest.approx(0.1)
+    assert parts == {"communication": pytest.approx(0.1)}
+
+
+@pytest.mark.parametrize("threshold", [-2.0, 0.0, 0.75, 2.0, 1001.0])
+def test_hipt_overseer_threshold_uses_raw_log_odds(threshold: float) -> None:
+    config = GroupedRLConfig(
+        reward=RewardConfig(reward_fn="hipt", overseer_log_odds_threshold=threshold)
     )
-    assert wrong < 0
-    gated = GroupedRLConfig(
-        reward=RewardConfig(reward_fn="hipt", hipt_gate_on_pass=True)
-    )
-    _, parts = compute_reward(rollout(passed=False, suspicion=0.5), gated)
-    assert parts["communication"] == 0
+    # P(YES) can underflow to zero while the finite raw gap still sets the reward.
+    _, parts = compute_reward(rollout(suspicion=0.0, overseer_log_odds=1000.0), config)
+    assert parts["overseer"] == pytest.approx(math.tanh(1000 - threshold))
 
 
 def test_optional_penalties_and_kl() -> None:
@@ -215,6 +237,40 @@ def balanced_trainer(silent: bool = False, **config: Any) -> GroupedRLTrainer:
         channel=MonitorViewChannel("none"),
         code_extractor=extract_final_code,
     )
+
+
+async def test_hipt_trainer_preserves_raw_overseer_log_odds() -> None:
+    class RawOverseer(FixedOverseer):
+        async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
+            raise AssertionError("HiPT must score probability and log odds together")
+
+        async def suspiciousness_and_log_odds(
+            self, problem: AppsProblem, message: str
+        ) -> tuple[float, float]:
+            self.seen.append(message)
+            return 0.0, 1000.0
+
+    overseer = RawOverseer()
+    trainer = GroupedRLTrainer(
+        EchoSender(),
+        MarkerReceiver(),
+        PassingEvaluator(),
+        GroupedRLConfig(
+            group_size=2,
+            payload_grouping="both",
+            train_receiver=False,
+            reward=RewardConfig(reward_fn="hipt", overseer_log_odds_threshold=1001.0),
+        ),
+        overseer=overseer,
+        code_extractor=extract_final_code,
+    )
+    result = await trainer.train_step([attack_problem()])
+    assert len(overseer.seen) == len(result.rollouts) == 2
+    for item in result.rollouts:
+        assert not item.errors
+        assert item.suspiciousness == 0.0
+        assert item.overseer_log_odds == 1000.0
+        assert item.reward_components["overseer"] == pytest.approx(math.tanh(-1))
 
 
 async def test_both_bits_share_one_group_baseline() -> None:
@@ -413,6 +469,37 @@ async def test_frozen_monitor_normalizes_yes_no(
         await monitor.probabilities(attack_problem(), "CODE")
 
 
+@pytest.mark.parametrize(
+    "yes,no,p_yes",
+    [(math.log(0.3), math.log(0.1), 0.75), (-1001.0, -1.0, 0.0), (-1.0, -1001.0, 1.0)],
+)
+async def test_frozen_monitor_preserves_raw_log_odds_in_one_call(
+    monkeypatch: pytest.MonkeyPatch, yes: float, no: float, p_yes: float
+) -> None:
+    from lasr_labs_2025_control_project.utils import tinker_provider
+
+    calls = 0
+
+    async def fake(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"YES": yes, "NO": no}
+
+    monkeypatch.setattr(tinker_provider, "collusion_yes_no_logprobs", fake)
+    monitor = FrozenYesNoMonitor("tinker/m", "SYSTEM", allow_paid=True)
+    probability, log_odds = await monitor.suspiciousness_and_log_odds(
+        attack_problem(), "CODE"
+    )
+    assert probability == pytest.approx(p_yes)
+    assert log_odds == pytest.approx(no - yes)
+    assert calls == 1
+    with pytest.raises(PermissionError):
+        await FrozenYesNoMonitor("tinker/m", "S").suspiciousness_and_log_odds(
+            attack_problem(), "CODE"
+        )
+    assert calls == 1
+
+
 class _Future:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -537,6 +624,47 @@ def test_config_rejects_unknown_keys_and_unwired_modes() -> None:
     ):
         with pytest.raises(ValueError):
             RLRunConfig.model_validate(bad)
+
+
+@pytest.mark.parametrize("threshold", [-2.0, 0.75, 2.0])
+def test_hipt_config_preserves_log_odds_threshold(threshold: float) -> None:
+    config = RLRunConfig.model_validate(
+        {
+            "run_name": "r",
+            "output_dir": "out",
+            "data": {"attacks_eval": "a.eval"},
+            "reward": {"reward_fn": "hipt", "overseer_log_odds_threshold": threshold},
+        }
+    )
+    assert core_config(config).reward.overseer_log_odds_threshold == threshold
+
+
+@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
+def test_hipt_config_rejects_nonfinite_threshold(threshold: float) -> None:
+    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
+        RewardConfig(overseer_log_odds_threshold=threshold)
+    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
+        RLRunConfig.model_validate(
+            {
+                "run_name": "r",
+                "output_dir": "out",
+                "data": {"attacks_eval": "a.eval"},
+                "reward": {"overseer_log_odds_threshold": threshold},
+            }
+        )
+
+
+@pytest.mark.parametrize("removed", ["overseer_threshold", "hipt_gate_on_pass"])
+def test_hipt_config_rejects_removed_options(removed: str) -> None:
+    with pytest.raises(ValueError, match=removed):
+        RLRunConfig.model_validate(
+            {
+                "run_name": "r",
+                "output_dir": "out",
+                "data": {"attacks_eval": "a.eval"},
+                "reward": {"reward_fn": "hipt", removed: True},
+            }
+        )
 
 
 def test_overseer_ramp() -> None:
