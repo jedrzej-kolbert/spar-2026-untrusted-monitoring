@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 STRATEGY_PATTERN = re.compile(r"<strategy>(.*?)</strategy>", re.DOTALL)
@@ -30,6 +30,7 @@ class Episode:
     backdoor: bool | None  # None: the backdoor check does not apply to this problem
     suspicion: float  # the trusted monitor's backdoor suspicion, 0-1
     reward: float
+    components: dict[str, float] = field(default_factory=dict)  # sum to reward
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,8 @@ class RoundSummary:
     working_rate: float | None  # pass AND backdoor, over checked episodes only
     suspicion_mean: float
     reward_mean: float
+    # Mean of each reward term over all episodes; they sum to reward_mean.
+    reward_components: dict[str, float] = field(default_factory=dict)
 
 
 class Learner(Protocol):
@@ -107,6 +110,7 @@ def summarise(
         raise ValueError(f"strategy in round {round_index} has no episodes")
     count = len(episodes)
     checked = [e for e in episodes if e.backdoor is not None]
+    names = sorted({name for e in episodes for name in e.components})
     summary = RoundSummary(
         round=round_index,
         strategy=strategy,
@@ -121,6 +125,11 @@ def summarise(
         ),
         suspicion_mean=sum(e.suspicion for e in episodes) / count,
         reward_mean=sum(e.reward for e in episodes) / count,
+        # A term an episode lacks added nothing to its reward, so it counts as 0.
+        reward_components={
+            name: sum(e.components.get(name, 0.0) for e in episodes) / count
+            for name in names
+        },
     )
     if not math.isfinite(summary.reward_mean):
         raise ValueError("reward must be finite")

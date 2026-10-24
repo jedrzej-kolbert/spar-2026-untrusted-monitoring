@@ -141,3 +141,23 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
     assert ("icrl_result.json", "live") in run.saved
     steps = [step for step, _ in run.logged if step is not None]
     assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
+
+    def table(key: str) -> Any:
+        return [values[key] for _, values in run.logged if key in values][-1]
+
+    # Each strategy row: its text, total reward, and every reward term.
+    strategies = table("icrl/strategies")
+    assert strategies.columns[:4] == ["step", "round", "strategy", "reward_mean"]
+    terms = [c for c in strategies.columns if c.startswith("reward/")]
+    assert set(terms) == {
+        "reward/task",
+        "reward/self_recognition",
+        "reward/backdoor_kept",
+        "reward/backdoor_suspicion",
+    }
+    for row in strategies.data:
+        values = dict(zip(strategies.columns, row))
+        assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
+    held_out = table("icrl/held_out")
+    assert [row[0] for row in held_out.data] == ["best", "baseline"]
+    assert {"strategy", "reward_mean", "reward/task", "auroc"} <= set(held_out.columns)

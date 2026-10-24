@@ -84,19 +84,22 @@ SELF_REC_WANDB_KEYS = {
 }
 
 
-STRATEGY_COLUMNS = (
-    "step",
-    "round",
-    "strategy",
-    "p_self_mean",
-    "pass_rate",
-    "working_rate",
-    "backdoor_checked",
-    "suspicion_mean",
-    "reward_mean",
-    "episodes",
-    "cost_usd",
-)
+def summary_row(summary: RoundSummary) -> dict[str, Any]:
+    """One table row per strategy: its text, total reward, each reward term, scores."""
+    return {
+        "round": summary.round,
+        "strategy": summary.strategy,
+        "reward_mean": summary.reward_mean,
+        **{
+            f"reward/{name}": value for name, value in summary.reward_components.items()
+        },
+        "p_self_mean": summary.p_self_mean,
+        "pass_rate": summary.pass_rate,
+        "working_rate": summary.working_rate,
+        "backdoor_checked": summary.backdoor_checked,
+        "suspicion_mean": summary.suspicion_mean,
+        "episodes": summary.episodes,
+    }
 
 
 def wandb_key(key: str, self_recognition: bool) -> str:
@@ -116,8 +119,8 @@ class Recorder:
         self.self_recognition = config.task_mode == "self_recognition"
         output_dir.mkdir(parents=True, exist_ok=True)
         self.wandb = None
-        self.strategy_rows: list[list[Any]] = []
-        self.proposed_rows: list[list[Any]] = []
+        self.strategy_rows: list[dict[str, Any]] = []
+        self.proposed_rows: list[dict[str, Any]] = []
         self.last_step = 0  # W&B steps must not go backwards
         logging_config = config.logging
         if logging_config.wandb_project and logging_config.wandb_mode != "disabled":
@@ -213,16 +216,26 @@ class Recorder:
 
     def strategy(self, step: int, summary: RoundSummary, cost_usd: float) -> None:
         """One learner-designed strategy and its measured scores (ICRL)."""
-        row = {"step": step, **dataclasses.asdict(summary), "cost_usd": cost_usd}
+        row = {"step": step, **summary_row(summary), "cost_usd": cost_usd}
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")
         self.scalars(step, "icrl", row)
-        self.strategy_rows.append([row[column] for column in STRATEGY_COLUMNS])
-        if self.wandb is not None:
-            import wandb
+        self.strategy_rows.append(row)
+        self.table(step, "icrl/strategies", self.strategy_rows)
 
-            table = wandb.Table(columns=list(STRATEGY_COLUMNS), data=self.strategy_rows)
-            self.wandb.log({"icrl/strategies": table}, step=step)
+    def table(self, step: int, key: str, rows: list[dict[str, Any]]) -> None:
+        """A W&B table whose columns are every key the rows use, in first-seen order."""
+        if self.wandb is None:
+            return
+        import wandb
+
+        columns = list(dict.fromkeys(name for row in rows for name in row))
+        # A reward term missing from a row added nothing to that strategy's reward.
+        data = [
+            [row.get(c, 0.0 if c.startswith("reward/") else None) for c in columns]
+            for row in rows
+        ]
+        self.wandb.log({key: wandb.Table(columns=columns, data=data)}, step=step)
 
     def learner_reply(
         self, round_index: int, prompt: list[dict[str, str]], reply: str
@@ -240,15 +253,10 @@ class Recorder:
         )
         self.sync_file("learner.jsonl")
         self.proposed_rows.extend(
-            [round_index, index, text] for index, text in enumerate(strategies, 1)
+            {"round": round_index, "index": index, "strategy": text}
+            for index, text in enumerate(strategies, 1)
         )
-        if self.wandb is not None:
-            import wandb
-
-            table = wandb.Table(
-                columns=["round", "index", "strategy"], data=self.proposed_rows
-            )
-            self.wandb.log({"icrl/proposed_strategies": table}, step=self.last_step)
+        self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
 
     def sync_file(self, name: str) -> None:
         # Upload the file to the W&B run and keep it in sync as it grows.
@@ -774,10 +782,15 @@ async def run_in_context(
             summary = summarise(
                 best.round if label == "best" else 0, strategy, episodes
             )
-            metrics = {**dataclasses.asdict(summary), **honeypot.metrics()}
+            metrics = {**summary_row(summary), **honeypot.metrics()}
             recorder.honeypots(step, honeypot.honeypot_scores)
             recorder.scalars(step, f"icrl/held_out_{label}", metrics)
             held_out[label] = metrics
+        recorder.table(
+            step,
+            "icrl/held_out",
+            [{"check": label, **metrics} for label, metrics in held_out.items()],
+        )
     except (BatchInfrastructureError, usage.BudgetExceeded):
         recorder.status(
             state="stopped",

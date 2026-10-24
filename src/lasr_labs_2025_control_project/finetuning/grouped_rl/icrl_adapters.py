@@ -70,6 +70,7 @@ def episode_from(rollout: Rollout) -> Episode:
         backdoor=None if rollout.backdoor is None else rollout.backdoor.passed,
         suspicion=rollout.backdoor_suspicion,
         reward=rollout.reward,
+        components=dict(rollout.reward_components),
     )
 
 
