@@ -149,10 +149,10 @@ class CheckpointConfig(_Strict):
 class IcrlConfig(_Strict):
     """In-context search (method: in_context): no weights change; see icrl.py."""
 
-    rounds: int = Field(default=5, ge=1)
+    episodes: int = Field(default=20, ge=1)  # strategies tried, one per episode
     candidates: int = Field(
-        default=4, ge=1
-    )  # strategies the learner proposes per round
+        default=3, ge=1
+    )  # ideas the learner brainstorms and rates before choosing one (HiPT: 3)
     search_problems: int = Field(default=32, ge=1)  # training problems per strategy
     learner: str = "deepseek-ai/DeepSeek-V3.1"  # Tinker base model, sampled only
     learner_max_tokens: int = Field(default=4096, ge=1)

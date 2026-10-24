@@ -19,7 +19,13 @@ from .core import (
     HoneypotEvalResult,
     Rollout,
 )
-from .icrl import Episode, RoundSummary, learner_messages, parse_strategies
+from .icrl import (
+    Episode,
+    Knowledge,
+    RoundSummary,
+    learner_messages,
+    parse_strategies,
+)
 from .tinker_backend import _TinkerRole
 
 
@@ -149,18 +155,20 @@ class TinkerLearner(_TinkerRole):
         allow_paid: bool = False,
         max_tokens: int = 4096,
         temperature: float = 1.0,
+        candidates: int = 3,
     ) -> None:
         super().__init__(None, sampling_client, tokenizer, allow_paid=allow_paid)
-        if max_tokens < 1 or temperature <= 0:
-            raise ValueError("max_tokens must be positive and temperature > 0")
+        if max_tokens < 1 or temperature <= 0 or candidates < 1:
+            raise ValueError("max_tokens, temperature and candidates must be positive")
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.candidates = candidates
 
-    async def propose(self, history: Sequence[RoundSummary], count: int) -> str:
+    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
         self._check_permission()
         from tinker import types
 
-        prompt = self._prompt(learner_messages(history, count))
+        prompt = self._prompt(learner_messages(previous, knowledge, self.candidates))
         response = await self.sampling_client.sample_async(
             prompt=types.ModelInput.from_ints(prompt),
             num_samples=1,
@@ -172,5 +180,5 @@ class TinkerLearner(_TinkerRole):
             list(response.sequences[0].tokens), skip_special_tokens=True
         )
         if not parse_strategies(text):
-            raise ValueError("learner reply has no <strategy> blocks")
+            raise ValueError("learner reply has no <strategy> block")
         return text

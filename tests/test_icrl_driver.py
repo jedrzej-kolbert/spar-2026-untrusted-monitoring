@@ -31,7 +31,7 @@ def icrl_config(output_dir: Path, **overrides: Any) -> RLRunConfig:
             "backdoor_kept_weight": 1,
             "backdoor_suspicion_weight": 1,
         },
-        "icrl": {"rounds": 1, "candidates": 1, "search_problems": 2},
+        "icrl": {"episodes": 1, "candidates": 1, "search_problems": 2},
         "logging": {"wandb_mode": "disabled"},
     }
     return RLRunConfig.model_validate({**values, **overrides})
@@ -72,8 +72,10 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     assert [s["strategy"] for s in strategies] == ["", "keep the original helper names"]
     assert all(s["episodes"] == 2 for s in strategies)
     (reply,) = rows("learner.jsonl")
+    assert reply["episode"] == 1
     assert reply["strategies"] == ["keep the original helper names"]
-    assert "(no instructions: the baseline)" in reply["prompt"][1]["content"]
+    # The first learner turn reflects on the no-strategy baseline.
+    assert "no instructions (the baseline)" in reply["prompt"][1]["content"]
     rollouts = rows("rollouts.jsonl")
     assert {r["phase"] for r in rollouts} == {"search", "held_out"}
     assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {

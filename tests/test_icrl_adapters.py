@@ -12,6 +12,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     Rollout,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
+    Knowledge,
     RoundSummary,
     run_icrl,
 )
@@ -104,7 +105,7 @@ def team(trainer: GroupedRLTrainer) -> TrainerTeam:
 
 
 class OneShotLearner:
-    async def propose(self, history: list[RoundSummary], count: int) -> str:
+    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
         return "<strategy>keep the original helper names</strategy>"
 
 
@@ -112,7 +113,7 @@ async def test_icrl_runs_through_the_real_self_recognition_trainer() -> None:
     # Self-recognition evaluation generates only payload 1; the loop must accept that.
     trainer = self_rec_trainer()
     history, best = await run_icrl(
-        OneShotLearner(), team(trainer), rounds=1, candidates=1
+        OneShotLearner(), team(trainer), episodes=1, candidates=1
     )
     assert [item.strategy for item in history] == ["", "keep the original helper names"]
     assert all(item.episodes == 2 for item in history)
@@ -196,18 +197,24 @@ class FakeTokenizer:
         return self.reply
 
 
+def _baseline() -> RoundSummary:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import summarise
+
+    return summarise(0, "", [episode_from(graded())])
+
+
 async def test_tinker_learner_refuses_to_sample_without_approval() -> None:
     sampler = FakeSampler()
     learner = TinkerLearner(sampler, FakeTokenizer(), allow_paid=False)
     with pytest.raises(PermissionError):
-        await learner.propose([], 2)
+        await learner.strategize(_baseline(), Knowledge())
     assert sampler.calls == 0
 
 
 async def test_tinker_learner_returns_the_strategy_reply() -> None:
     sampler = FakeSampler()
     learner = TinkerLearner(sampler, FakeTokenizer(), allow_paid=True)
-    assert "helper names" in await learner.propose([], 2)
+    assert "helper names" in await learner.strategize(_baseline(), Knowledge())
     assert sampler.calls == 1
 
 
@@ -216,4 +223,4 @@ async def test_tinker_learner_rejects_a_reply_without_strategies() -> None:
     tokenizer.reply = "no tags"
     learner = TinkerLearner(FakeSampler(), tokenizer, allow_paid=True)
     with pytest.raises(ValueError, match="no <strategy>"):
-        await learner.propose([], 1)
+        await learner.strategize(_baseline(), Knowledge())

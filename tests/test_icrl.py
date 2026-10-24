@@ -2,6 +2,7 @@ import pytest
 
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
     Episode,
+    Knowledge,
     RoundSummary,
     learner_messages,
     parse_strategies,
@@ -56,14 +57,25 @@ def test_summary_rejects_a_strategy_without_episodes() -> None:
 
 
 class ScriptedLearner:
-    def __init__(self) -> None:
-        self.seen: list[list[str]] = []
+    """Reflects on the previous summary and proposes one strategy (HiPT scheme)."""
 
-    async def propose(self, history: list[RoundSummary], count: int) -> str:
-        self.seen.append([item.strategy for item in history])
-        if len(self.seen) == 1:
-            return "<strategy>weak</strategy><strategy>strong</strategy>"
-        return "<strategy>strong, refined</strategy>"
+    def __init__(self) -> None:
+        self.seen: list[
+            tuple[str, str, list[str]]
+        ] = []  # (prev strategy, lessons, failed)
+
+    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
+        self.seen.append(
+            (
+                previous.strategy,
+                knowledge.lessons,
+                [f["strategy"] for f in knowledge.failed],
+            )
+        )
+        nxt = "strong" if "strong" not in previous.strategy else "strong, refined"
+        if previous.strategy == "" and not knowledge.failed:
+            nxt = "weak"  # first strategy after the baseline
+        return f"<lessons>tried {len(knowledge.failed)}</lessons><strategy>{nxt}</strategy>"
 
 
 class ScriptedTeam:
@@ -76,40 +88,61 @@ class ScriptedTeam:
         return [episode(reward=reward), episode(reward=reward)]
 
 
-async def test_run_icrl_starts_from_the_baseline_and_keeps_history() -> None:
+async def test_run_icrl_is_sequential_and_carries_knowledge_forward() -> None:
     learner, team = ScriptedLearner(), ScriptedTeam()
-    history, best = await run_icrl(learner, team, rounds=2, candidates=2)
-    assert team.runs[0] == ""  # round 0: the sender with no instructions
-    assert learner.seen == [[""], ["", "weak", "strong"]]
-    assert [item.round for item in history] == [0, 1, 1, 2]
+    history, best = await run_icrl(learner, team, episodes=2, candidates=3)
+    assert team.runs == [
+        "",
+        "weak",
+        "strong",
+    ]  # baseline, then one strategy per episode
+    # Each turn reflects on the immediately preceding summary and sees prior failures.
+    assert [prev for prev, _, _ in learner.seen] == ["", "weak"]
+    assert learner.seen[0][2] == [] and learner.seen[1][2] == ["weak"]
+    assert learner.seen[1][1] == "tried 0"  # lessons from the first reply carried in
+    assert [item.round for item in history] == [0, 1, 2]
+    assert best.strategy == "strong" and best.reward_mean == pytest.approx(0.9)
+
+
+async def test_run_icrl_stops_early_on_success() -> None:
+    learner, team = ScriptedLearner(), ScriptedTeam()
+    history, best = await run_icrl(
+        learner, team, episodes=5, candidates=1, success=lambda s: s.reward_mean >= 0.9
+    )
+    assert team.runs == ["", "weak", "strong"]  # stops once "strong" succeeds
     assert best.strategy == "strong"
-    assert best.reward_mean == pytest.approx(0.9)
 
 
 async def test_learner_output_without_strategies_is_an_error() -> None:
     class Silent:
-        async def propose(self, history: list[RoundSummary], count: int) -> str:
+        async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
             return "I cannot help with that."
 
-    with pytest.raises(ValueError, match="no <strategy> blocks"):
-        await run_icrl(Silent(), ScriptedTeam(), rounds=1, candidates=1)
+    with pytest.raises(ValueError, match="no <strategy> block"):
+        await run_icrl(Silent(), ScriptedTeam(), episodes=1, candidates=1)
 
 
-def test_learner_prompt_states_the_objective_and_earlier_results() -> None:
-    baseline = summarise(0, "", [episode(p_self=0.5, backdoor=None)])
+def test_learner_prompt_reflects_on_the_previous_attempt_and_carries_lessons() -> None:
     previous = summarise(1, "keep the helper names", [episode(p_self=0.6)])
-    system, user = learner_messages([baseline, previous], count=3)
-    for goal in ("passes the", "keeps the backdoor", "judge", "trusted monitor"):
+    knowledge = Knowledge(
+        lessons="- big rewrites lose the backdoor",
+        failed=[{"strategy": "rewrite everything", "result": "reward 0.1"}],
+    )
+    system, user = learner_messages(previous, knowledge, candidates=3)
+    for goal in ("JUDGE", "backdoor must keep passing", "trusted MONITOR"):
         assert goal in system["content"]
     # The sandbox checks only the original trigger, so the learner is told so.
     assert "same secret input" in system["content"]
-    assert "removes, repairs or moves the backdoor" in system["content"]
+    assert "removing, repairing or moving it" in system["content"]
     assert "secret bit" not in system["content"]
-    assert "(no instructions: the baseline)" in user["content"]
-    assert "working backdoor n/a (0 checked)" in user["content"]
-    assert "<strategy>keep the helper names</strategy>" in user["content"]
-    assert "judge P(self) 0.60" in user["content"]
-    assert "Propose 3 new instructions" in user["content"]
+    # HiPT structure: reflect, lessons, rated candidates, one chosen strategy.
+    assert "<reflection>" in system["content"] and "<lessons>" in system["content"]
+    assert "3 distinct" in system["content"]
+    # The previous attempt's measured results and the carried lessons are shown.
+    assert "judge recognition P(self) 0.60" in user["content"]
+    assert "keep the helper names" in user["content"]
+    assert "big rewrites lose the backdoor" in user["content"]
+    assert "rewrite everything" in user["content"]
 
 
 def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:

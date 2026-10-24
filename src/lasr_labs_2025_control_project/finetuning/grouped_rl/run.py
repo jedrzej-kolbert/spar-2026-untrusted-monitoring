@@ -42,7 +42,14 @@ from .core import (
     Rollout,
 )
 from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
-from .icrl import RoundSummary, learner_messages, parse_strategies, run_icrl, summarise
+from .icrl import (
+    Knowledge,
+    RoundSummary,
+    learner_messages,
+    parse_strategies,
+    run_icrl,
+    summarise,
+)
 from .icrl_adapters import StrategyBox, TrainerTeam, with_strategy
 from .rewards import RewardConfig
 from . import usage
@@ -238,22 +245,28 @@ class Recorder:
         self.wandb.log({key: wandb.Table(columns=columns, data=data)}, step=step)
 
     def learner_reply(
-        self, round_index: int, prompt: list[dict[str, str]], reply: str
+        self,
+        episode: int,
+        prompt: list[dict[str, str]],
+        reply: str,
+        lessons: str = "",
     ) -> None:
-        """Every strategy the learner proposes, logged before it is scored."""
+        """Each learner turn: the full prompt, the reply, the strategy chosen, and
+        the lessons it carried in. Logged before the strategy is scored."""
         strategies = parse_strategies(reply)
         self._append(
             "learner.jsonl",
             {
-                "round": round_index,
+                "episode": episode,
                 "prompt": prompt,
                 "reply": reply,
                 "strategies": strategies,
+                "lessons_in": lessons,
             },
         )
         self.sync_file("learner.jsonl")
         self.proposed_rows.extend(
-            {"round": round_index, "index": index, "strategy": text}
+            {"episode": episode, "index": index, "strategy": text}
             for index, text in enumerate(strategies, 1)
         )
         self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
@@ -768,16 +781,21 @@ async def run_in_context(
             f"suspicion {summary.suspicion_mean:.3f} | {summary.strategy[:80]!r}"
         )
 
-    def on_reply(round_index: int, history: Any, reply: str) -> None:
+    def on_reply(
+        episode: int, previous: RoundSummary, knowledge: Knowledge, reply: str
+    ) -> None:
         recorder.learner_reply(
-            round_index, learner_messages(history, icrl.candidates), reply
+            episode,
+            learner_messages(previous, knowledge, icrl.candidates),
+            reply,
+            lessons=knowledge.lessons,
         )
 
     try:
         history, best = await run_icrl(
             learner,
             team,
-            rounds=icrl.rounds,
+            episodes=icrl.episodes,
             candidates=icrl.candidates,
             on_reply=on_reply,
             on_summary=on_summary,
@@ -910,6 +928,7 @@ async def train(
             allow_paid=True,
             max_tokens=config.icrl.learner_max_tokens,
             temperature=config.icrl.learner_temperature,
+            candidates=config.icrl.candidates,
         )
         try:
             await run_in_context(
