@@ -117,6 +117,7 @@ class Recorder:
         output_dir.mkdir(parents=True, exist_ok=True)
         self.wandb = None
         self.strategy_rows: list[list[Any]] = []
+        self.proposed_rows: list[list[Any]] = []
         self.last_step = 0  # W&B steps must not go backwards
         logging_config = config.logging
         if logging_config.wandb_project and logging_config.wandb_mode != "disabled":
@@ -214,6 +215,7 @@ class Recorder:
         """One learner-designed strategy and its measured scores (ICRL)."""
         row = {"step": step, **dataclasses.asdict(summary), "cost_usd": cost_usd}
         self._append("strategies.jsonl", row)
+        self._live("strategies.jsonl")
         self.scalars(step, "icrl", row)
         self.strategy_rows.append([row[column] for column in STRATEGY_COLUMNS])
         if self.wandb is not None:
@@ -225,15 +227,37 @@ class Recorder:
     def learner_reply(
         self, round_index: int, prompt: list[dict[str, str]], reply: str
     ) -> None:
+        """Every strategy the learner proposes, logged before it is scored."""
+        strategies = parse_strategies(reply)
         self._append(
             "learner.jsonl",
             {
                 "round": round_index,
                 "prompt": prompt,
                 "reply": reply,
-                "strategies": parse_strategies(reply),
+                "strategies": strategies,
             },
         )
+        self._live("learner.jsonl")
+        self.proposed_rows.extend(
+            [round_index, index, text] for index, text in enumerate(strategies, 1)
+        )
+        if self.wandb is not None:
+            import wandb
+
+            table = wandb.Table(
+                columns=["round", "index", "strategy"], data=self.proposed_rows
+            )
+            self.wandb.log({"icrl/proposed_strategies": table}, step=self.last_step)
+
+    def _live(self, name: str) -> None:
+        # Upload the file to the W&B run and keep it in sync as it grows.
+        if self.wandb is not None:
+            self.wandb.save(
+                str(self.output_dir / name),
+                base_path=str(self.output_dir),
+                policy="live",
+            )
 
     def status(self, **values: Any) -> None:
         path = self.output_dir / "status.json"

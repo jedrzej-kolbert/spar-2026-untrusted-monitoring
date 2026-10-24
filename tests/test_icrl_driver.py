@@ -86,3 +86,56 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished"
     assert len(status["search_problem_ids"]) == 2
+
+
+class FakeRun:
+    url = None
+
+    def __init__(self) -> None:
+        self.logged: list[tuple[int | None, dict[str, Any]]] = []
+        self.saved: list[tuple[str, str | None]] = []
+        self.summary: dict[str, Any] = {}
+
+    def log(self, values: dict[str, Any], step: int | None = None) -> None:
+        self.logged.append((step, values))
+
+    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
+        self.saved.append((Path(path).name, policy))
+
+    def finish(self) -> None:
+        pass
+
+
+async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
+    tmp_path: Path,
+) -> None:
+    config = icrl_config(tmp_path)
+    recorder = Recorder(config, tmp_path)
+    run = FakeRun()
+    recorder.wandb = run
+    held_out = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        self_rec_trainer(),
+        StrategyBox(),
+        OneShotLearner(),
+        recorder,
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15")],
+        [held_out],
+        [(held_out, "# another model\nprint(7)")],
+    )
+
+    def last_table(key: str) -> list[list[Any]]:
+        return [values[key] for _, values in run.logged if key in values][-1].data
+
+    # Proposed strategies reach W&B before they are scored.
+    assert last_table("icrl/proposed_strategies") == [
+        [1, 1, "keep the original helper names"]
+    ]
+    scored = last_table("icrl/strategies")
+    assert [row[2] for row in scored] == ["", "keep the original helper names"]
+    assert ("learner.jsonl", "live") in run.saved
+    assert ("strategies.jsonl", "live") in run.saved
+    steps = [step for step, _ in run.logged if step is not None]
+    assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
