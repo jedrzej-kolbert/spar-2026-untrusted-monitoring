@@ -137,5 +137,7 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
     assert [row[2] for row in scored] == ["", "keep the original helper names"]
     assert ("learner.jsonl", "live") in run.saved
     assert ("strategies.jsonl", "live") in run.saved
+    assert ("rollouts.jsonl", "live") in run.saved
+    assert ("icrl_result.json", "live") in run.saved
     steps = [step for step, _ in run.logged if step is not None]
     assert steps == sorted(steps)  # W&B drops rows whose step goes backwards

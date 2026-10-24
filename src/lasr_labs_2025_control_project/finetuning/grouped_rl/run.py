@@ -215,7 +215,7 @@ class Recorder:
         """One learner-designed strategy and its measured scores (ICRL)."""
         row = {"step": step, **dataclasses.asdict(summary), "cost_usd": cost_usd}
         self._append("strategies.jsonl", row)
-        self._live("strategies.jsonl")
+        self.sync_file("strategies.jsonl")
         self.scalars(step, "icrl", row)
         self.strategy_rows.append([row[column] for column in STRATEGY_COLUMNS])
         if self.wandb is not None:
@@ -238,7 +238,7 @@ class Recorder:
                 "strategies": strategies,
             },
         )
-        self._live("learner.jsonl")
+        self.sync_file("learner.jsonl")
         self.proposed_rows.extend(
             [round_index, index, text] for index, text in enumerate(strategies, 1)
         )
@@ -250,7 +250,7 @@ class Recorder:
             )
             self.wandb.log({"icrl/proposed_strategies": table}, step=self.last_step)
 
-    def _live(self, name: str) -> None:
+    def sync_file(self, name: str) -> None:
         # Upload the file to the W&B run and keep it in sync as it grows.
         if self.wandb is not None:
             self.wandb.save(
@@ -711,7 +711,8 @@ async def run_in_context(
 
     Every learner reply goes to learner.jsonl, every strategy with its scores to
     strategies.jsonl and the W&B ``icrl/strategies`` table, every rewrite to
-    rollouts.jsonl (with its strategy), and the outcome to icrl_result.json.
+    rollouts.jsonl (with its strategy), and the outcome to icrl_result.json; all
+    four files are also uploaded to the W&B run.
     """
     icrl = config.icrl
     if icrl.search_problems > len(train_tasks):
@@ -726,6 +727,7 @@ async def run_in_context(
         nonlocal step
         step += 1
         recorder.rollouts(step, phase, result.rollouts, strategy=strategy)
+        recorder.sync_file("rollouts.jsonl")
 
     team = TrainerTeam(
         trainer,
@@ -792,6 +794,7 @@ async def run_in_context(
             indent=2,
         )
     )
+    recorder.sync_file("icrl_result.json")
     recorder.status(
         state="finished",
         held_out_auroc_best=held_out["best"]["auroc"],
