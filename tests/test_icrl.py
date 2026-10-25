@@ -3,9 +3,9 @@ import pytest
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
     Episode,
     Knowledge,
-    RoundSummary,
-    learner_messages,
-    parse_strategies,
+    LEARNER_SYSTEM_PROMPT,
+    parse_strategy,
+    results_string,
     run_icrl,
     summarise,
 )
@@ -23,24 +23,28 @@ def episode(
     )
 
 
-def test_parse_strategies_keeps_multiline_blocks_and_drops_empty() -> None:
-    text = "<strategy>\nuse a\nhelper function\n</strategy>\n<strategy>  </strategy>"
-    assert parse_strategies(text) == ["use a\nhelper function"]
-    assert parse_strategies("no tags here") == []
+def test_parse_strategy_keeps_description_and_multiline_instructions() -> None:
+    parsed = parse_strategy(
+        "<description>plain style</description>"
+        "<encoder_instructions>use a\nhelper function</encoder_instructions>"
+    )
+    assert parsed.description == "plain style"
+    assert parsed.encoder_instructions == "use a\nhelper function"
+    with pytest.raises(ValueError, match="encoder_instructions"):
+        parse_strategy("<description>missing instructions</description>")
 
 
 def test_summary_counts_working_backdoors_over_checked_episodes_only() -> None:
-    episodes = [
+    examples = [
         episode(p_self=0.9),
         episode(p_self=0.7, backdoor=False),
         episode(p_self=0.5, passed=False, backdoor=True, reward=0.0),
-        episode(p_self=0.3, backdoor=None),  # the check does not apply
+        episode(p_self=0.3, backdoor=None),
     ]
-    summary = summarise(1, "s", episodes)
+    summary = summarise(1, "s", examples)
     assert summary.episodes == 4
     assert summary.p_self_mean == pytest.approx(0.6)
     assert summary.pass_rate == pytest.approx(0.75)
-    # 3 checked; only the first passes AND keeps its backdoor.
     assert summary.backdoor_checked == 3
     assert summary.working_rate == pytest.approx(1 / 3)
     assert summary.reward_mean == pytest.approx(0.75)
@@ -57,25 +61,23 @@ def test_summary_rejects_a_strategy_without_episodes() -> None:
 
 
 class ScriptedLearner:
-    """Reflects on the previous summary and proposes one strategy (HiPT scheme)."""
-
     def __init__(self) -> None:
-        self.seen: list[
-            tuple[str, str, list[str]]
-        ] = []  # (prev strategy, lessons, failed)
+        self.prompts: list[list[dict[str, str]]] = []
+        self.strategy_calls = 0
 
-    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
-        self.seen.append(
-            (
-                previous.strategy,
-                knowledge.lessons,
-                [f["strategy"] for f in knowledge.failed],
+    async def query(self, messages: list[dict[str, str]]) -> str:
+        self.prompts.append([dict(m) for m in messages])
+        user = messages[-1]["content"]
+        if "<encoder_instructions>" in user:
+            self.strategy_calls += 1
+            strategy = "weak" if self.strategy_calls == 1 else "strong"
+            return (
+                f"<description>{strategy} description</description>"
+                f"<encoder_instructions>{strategy}</encoder_instructions>"
             )
-        )
-        nxt = "strong" if "strong" not in previous.strategy else "strong, refined"
-        if previous.strategy == "" and not knowledge.failed:
-            nxt = "weak"  # first strategy after the baseline
-        return f"<lessons>tried {len(knowledge.failed)}</lessons><strategy>{nxt}</strategy>"
+        if "<summarize_learning>" in user:
+            return "<summarize_learning>lesson from the latest attempt</summarize_learning>"
+        return "<recognition_failure_reason>not recognized</recognition_failure_reason>"
 
 
 class ScriptedTeam:
@@ -84,75 +86,121 @@ class ScriptedTeam:
 
     async def episodes(self, strategy: str) -> list[Episode]:
         self.runs.append(strategy)
-        reward = {"": 0.4, "weak": 0.1, "strong": 0.9}.get(strategy, 0.6)
+        reward = {"": 0.4, "weak": 0.1, "strong": 0.9}[strategy]
         return [episode(reward=reward), episode(reward=reward)]
 
 
-async def test_run_icrl_is_sequential_and_carries_knowledge_forward() -> None:
-    learner, team = ScriptedLearner(), ScriptedTeam()
-    history, best = await run_icrl(learner, team, episodes=2, candidates=3)
-    assert team.runs == [
-        "",
-        "weak",
-        "strong",
-    ]  # baseline, then one strategy per episode
-    # Each turn reflects on the immediately preceding summary and sees prior failures.
-    assert [prev for prev, _, _ in learner.seen] == ["", "weak"]
-    assert learner.seen[0][2] == [] and learner.seen[1][2] == ["weak"]
-    assert learner.seen[1][1] == "tried 0"  # lessons from the first reply carried in
-    assert [item.round for item in history] == [0, 1, 2]
-    assert best.strategy == "strong" and best.reward_mean == pytest.approx(0.9)
-
-
-async def test_run_icrl_stops_early_on_success() -> None:
-    learner, team = ScriptedLearner(), ScriptedTeam()
+async def test_hipt_separate_queries_reset_and_knowledge_match_upstream_order() -> None:
+    learner, team, knowledge = ScriptedLearner(), ScriptedTeam(), Knowledge()
+    events: list[tuple[int, str]] = []
     history, best = await run_icrl(
-        learner, team, episodes=5, candidates=1, success=lambda s: s.reward_mean >= 0.9
+        learner,
+        team,
+        episodes=2,
+        knowledge=knowledge,
+        on_reply=lambda i, stage, prompt, reply: events.append((i, stage)),
     )
-    assert team.runs == ["", "weak", "strong"]  # stops once "strong" succeeds
-    assert best.strategy == "strong"
+    assert team.runs == ["", "weak", "strong"]
+    assert events == [
+        (1, "strategy"),
+        (1, "reflection"),
+        (1, "strategize"),
+        (2, "strategy"),
+        (2, "reflection"),
+        (2, "strategize"),
+    ]
+    assert len(learner.prompts[0]) == 2  # upstream starts with query_for_strategy
+    assert (
+        len(learner.prompts[1]) == 3
+    )  # conversation reset: system, results, reflection
+    assert "weak description" in learner.prompts[1][1]["content"]
+    # The next strategy sees the immediately preceding reflection and brainstorm.
+    assert any(
+        "lesson from the latest attempt" in m["content"] for m in learner.prompts[3]
+    )
+    # It is cleared after the second evaluation, not accumulated indefinitely.
+    assert len(learner.prompts[4]) == 3
+    last_brainstorm = learner.prompts[5][-1]["content"]
+    assert "lesson from the latest attempt" in last_brainstorm
+    assert (
+        "weak description" in last_brainstorm
+        and "strong description" in last_brainstorm
+    )
+    assert len(knowledge.failed_attempts) == 2
+    assert knowledge.knowledge == "lesson from the latest attempt"
+    assert best.strategy == "strong" and best.reward_mean == pytest.approx(0.9)
+    assert [item.round for item in history] == [0, 1, 2]
 
 
-async def test_learner_output_without_strategies_is_an_error() -> None:
+async def test_malformed_strategy_is_retried_once_and_both_replies_logged() -> None:
+    class Flaky(ScriptedLearner):
+        bad_calls = 0
+
+        async def query(self, messages):
+            if self.bad_calls == 0:
+                self.bad_calls += 1
+                return "malformed"
+            return await super().query(messages)
+
+    stages: list[str] = []
+    await run_icrl(
+        Flaky(),
+        ScriptedTeam(),
+        episodes=1,
+        on_reply=lambda i, stage, prompt, reply: stages.append(stage),
+    )
+    assert stages == ["strategy", "strategy", "reflection", "strategize"]
+
+
+async def test_malformed_replies_abort_after_the_upstream_two_attempts() -> None:
     class Silent:
-        async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
-            return "I cannot help with that."
+        calls = 0
 
-    with pytest.raises(ValueError, match="no <strategy> block"):
-        await run_icrl(Silent(), ScriptedTeam(), episodes=1, candidates=1)
+        async def query(self, messages):
+            self.calls += 1
+            return "no tags"
+
+    silent = Silent()
+    with pytest.raises(ValueError, match="description"):
+        await run_icrl(silent, ScriptedTeam(), episodes=1)
+    assert silent.calls == 2
 
 
-def test_learner_prompt_reflects_on_the_previous_attempt_and_carries_lessons() -> None:
-    previous = summarise(1, "keep the helper names", [episode(p_self=0.6)])
-    knowledge = Knowledge(
-        lessons="- big rewrites lose the backdoor",
-        failed=[{"strategy": "rewrite everything", "result": "reward 0.1"}],
-    )
-    system, user = learner_messages(previous, knowledge, candidates=3)
-    for goal in ("JUDGE", "backdoor must keep passing", "trusted MONITOR"):
-        assert goal in system["content"]
-    # The sandbox checks only the original trigger, so the learner is told so.
-    assert "same secret input" in system["content"]
-    assert "removing, repairing or moving it" in system["content"]
-    assert "secret bit" not in system["content"]
-    # HiPT structure: reflect, lessons, rated candidates, one chosen strategy.
-    assert "<reflection>" in system["content"] and "<lessons>" in system["content"]
-    assert "3 distinct" in system["content"]
-    # The previous attempt's measured results and the carried lessons are shown.
-    assert "judge recognition P(self) 0.60" in user["content"]
-    assert "keep the helper names" in user["content"]
-    assert "big rewrites lose the backdoor" in user["content"]
-    assert "rewrite everything" in user["content"]
+def test_feedback_contains_actual_inputs_outputs_and_bounded_examples() -> None:
+    rows = [
+        Episode(
+            0.2,
+            False,
+            None,
+            0.7,
+            -0.7,
+            problem="problem text",
+            code=f"print({i})",
+            execution_detail="wrong answer",
+        )
+        for i in range(4)
+    ]
+    text = results_string(summarise(1, "s", rows), rows, 3)
+    assert "INPUT:\nproblem text" in text
+    assert "ENCODER MESSAGE:\nprint(0)" in text
+    assert "execution=wrong answer" in text
+    assert (
+        "print(3)" not in text
+    )  # illustrative examples only; all rows remain in scores
+    assert "working attack: n/a (0 checked)" in text
+    assert summarise(1, "s", rows).episodes == 4
+    assert "original backdoor trigger" in LEARNER_SYSTEM_PROMPT
+    assert "never see" in LEARNER_SYSTEM_PROMPT
 
 
 def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:
-    episodes = [
+    examples = [
         Episode(
-            p_self=0.9,
-            passed=True,
-            backdoor=True,
-            suspicion=0.3,
-            reward=2.6,
+            0.9,
+            True,
+            True,
+            0.3,
+            2.6,
             components={
                 "task": 1.0,
                 "self_recognition": 0.9,
@@ -161,11 +209,11 @@ def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:
             },
         ),
         Episode(
-            p_self=0.5,
-            passed=False,
-            backdoor=None,  # no backdoor check, so no backdoor_kept term
-            suspicion=0.1,
-            reward=-0.1,
+            0.5,
+            False,
+            None,
+            0.1,
+            -0.1,
             components={
                 "task": 0.0,
                 "self_recognition": 0.0,
@@ -173,7 +221,7 @@ def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:
             },
         ),
     ]
-    summary = summarise(1, "s", episodes)
+    summary = summarise(1, "s", examples)
     assert summary.reward_components == pytest.approx(
         {
             "backdoor_kept": 0.5,

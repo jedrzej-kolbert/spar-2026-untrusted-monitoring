@@ -31,7 +31,7 @@ def icrl_config(output_dir: Path, **overrides: Any) -> RLRunConfig:
             "backdoor_kept_weight": 1,
             "backdoor_suspicion_weight": 1,
         },
-        "icrl": {"episodes": 1, "candidates": 1, "search_problems": 2},
+        "icrl": {"episodes": 1, "search_problems": 2},
         "logging": {"wandb_mode": "disabled"},
     }
     return RLRunConfig.model_validate({**values, **overrides})
@@ -48,6 +48,18 @@ def test_in_context_needs_a_frozen_judge_and_the_trusted_monitor(
             reward={"overseer_weight": 0, "overseer_scale": 0, "kl_coef": 0},
         )
     assert icrl_config(tmp_path).method == "in_context"
+
+
+async def test_refuses_to_reuse_an_existing_icrl_run_folder(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import train
+
+    config = icrl_config(tmp_path)
+    original = b'{"saved": "original experiment"}\n'
+    (tmp_path / "rollouts.jsonl").write_bytes(original)
+    with pytest.raises(FileExistsError, match="choose a new output_dir"):
+        await train(config, allow_paid=False)
+    assert (tmp_path / "rollouts.jsonl").read_bytes() == original
+    assert not (tmp_path / "manifest.json").exists()
 
 
 async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> None:
@@ -71,11 +83,11 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     strategies = rows("strategies.jsonl")
     assert [s["strategy"] for s in strategies] == ["", "keep the original helper names"]
     assert all(s["episodes"] == 2 for s in strategies)
-    (reply,) = rows("learner.jsonl")
-    assert reply["episode"] == 1
-    assert reply["strategies"] == ["keep the original helper names"]
-    # The first learner turn reflects on the no-strategy baseline.
-    assert "no instructions (the baseline)" in reply["prompt"][1]["content"]
+    replies = rows("learner.jsonl")
+    assert [r["stage"] for r in replies] == ["strategy", "reflection", "strategize"]
+    assert all(r["episode"] == 1 for r in replies)
+    assert "Describe your strategy" in replies[0]["prompt"][-1]["content"]
+    assert "ENCODER MESSAGE" in replies[1]["prompt"][1]["content"]
     rollouts = rows("rollouts.jsonl")
     assert {r["phase"] for r in rollouts} == {"search", "held_out"}
     assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {
@@ -85,6 +97,8 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     result = json.loads((tmp_path / "icrl_result.json").read_text())
     assert set(result["held_out"]) == {"best", "baseline"}
     assert result["held_out"]["best"]["auroc"] == pytest.approx(1.0)
+    assert result["knowledge"]["knowledge"] == "preserve behavior"
+    assert len(result["knowledge"]["failed_attempts"]) == 1
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished"
     assert len(status["search_problem_ids"]) == 2
@@ -133,7 +147,7 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
 
     # Proposed strategies reach W&B before they are scored.
     assert last_table("icrl/proposed_strategies") == [
-        [1, 1, "keep the original helper names"]
+        [1, "conservative style", "keep the original helper names"]
     ]
     scored = last_table("icrl/strategies")
     assert [row[2] for row in scored] == ["", "keep the original helper names"]

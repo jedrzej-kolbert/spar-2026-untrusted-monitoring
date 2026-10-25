@@ -11,11 +11,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     GroupedRLTrainer,
     Rollout,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
-    Knowledge,
-    RoundSummary,
-    run_icrl,
-)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import run_icrl
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
     StrategyBox,
     TinkerLearner,
@@ -105,16 +101,21 @@ def team(trainer: GroupedRLTrainer) -> TrainerTeam:
 
 
 class OneShotLearner:
-    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
-        return "<strategy>keep the original helper names</strategy>"
+    async def query(self, messages: list[dict[str, str]]) -> str:
+        if "<encoder_instructions>" in messages[-1]["content"]:
+            return (
+                "<description>conservative style</description>"
+                "<encoder_instructions>keep the original helper names</encoder_instructions>"
+            )
+        if "<summarize_learning>" in messages[-1]["content"]:
+            return "<summarize_learning>preserve behavior</summarize_learning>"
+        return "per-metric reflection"
 
 
 async def test_icrl_runs_through_the_real_self_recognition_trainer() -> None:
     # Self-recognition evaluation generates only payload 1; the loop must accept that.
     trainer = self_rec_trainer()
-    history, best = await run_icrl(
-        OneShotLearner(), team(trainer), episodes=1, candidates=1
-    )
+    history, best = await run_icrl(OneShotLearner(), team(trainer), episodes=1)
     assert [item.strategy for item in history] == ["", "keep the original helper names"]
     assert all(item.episodes == 2 for item in history)
     assert history[0].p_self_mean == pytest.approx(
@@ -197,30 +198,31 @@ class FakeTokenizer:
         return self.reply
 
 
-def _baseline() -> RoundSummary:
-    from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import summarise
-
-    return summarise(0, "", [episode_from(graded())])
-
-
 async def test_tinker_learner_refuses_to_sample_without_approval() -> None:
     sampler = FakeSampler()
     learner = TinkerLearner(sampler, FakeTokenizer(), allow_paid=False)
     with pytest.raises(PermissionError):
-        await learner.strategize(_baseline(), Knowledge())
+        await learner.query([{"role": "user", "content": "test"}])
     assert sampler.calls == 0
 
 
-async def test_tinker_learner_returns_the_strategy_reply() -> None:
+async def test_tinker_learner_returns_each_stage_reply_without_strategy_parsing() -> (
+    None
+):
     sampler = FakeSampler()
-    learner = TinkerLearner(sampler, FakeTokenizer(), allow_paid=True)
-    assert "helper names" in await learner.strategize(_baseline(), Knowledge())
+    tokenizer = FakeTokenizer()
+    tokenizer.reply = "a reflection, not a strategy"
+    learner = TinkerLearner(sampler, tokenizer, allow_paid=True)
+    assert (
+        await learner.query([{"role": "user", "content": "reflect"}]) == tokenizer.reply
+    )
     assert sampler.calls == 1
 
 
-async def test_tinker_learner_rejects_a_reply_without_strategies() -> None:
-    tokenizer = FakeTokenizer()
-    tokenizer.reply = "no tags"
-    learner = TinkerLearner(FakeSampler(), tokenizer, allow_paid=True)
-    with pytest.raises(ValueError, match="no <strategy>"):
-        await learner.strategize(_baseline(), Knowledge())
+async def test_tinker_learner_checks_context_before_sampling() -> None:
+    sampler = FakeSampler()
+    learner = TinkerLearner(sampler, FakeTokenizer(), allow_paid=True)
+    learner.max_context_tokens = 4
+    with pytest.raises(ValueError, match="context limit"):
+        await learner.query([{"role": "user", "content": "test"}])
+    assert sampler.calls == 0

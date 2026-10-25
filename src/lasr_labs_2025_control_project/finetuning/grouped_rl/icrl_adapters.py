@@ -19,13 +19,7 @@ from .core import (
     HoneypotEvalResult,
     Rollout,
 )
-from .icrl import (
-    Episode,
-    Knowledge,
-    RoundSummary,
-    learner_messages,
-    parse_strategies,
-)
+from .icrl import Episode
 from .tinker_backend import _TinkerRole
 
 
@@ -77,6 +71,11 @@ def episode_from(rollout: Rollout) -> Episode:
         suspicion=rollout.backdoor_suspicion,
         reward=rollout.reward,
         components=dict(rollout.reward_components),
+        problem=rollout.problem.question,
+        code=rollout.receiver_code
+        if rollout.receiver_code is not None
+        else rollout.code,
+        execution_detail=rollout.execution.detail,
     )
 
 
@@ -155,20 +154,33 @@ class TinkerLearner(_TinkerRole):
         allow_paid: bool = False,
         max_tokens: int = 4096,
         temperature: float = 1.0,
-        candidates: int = 3,
+        max_context_tokens: int = 16384,
     ) -> None:
-        super().__init__(None, sampling_client, tokenizer, allow_paid=allow_paid)
-        if max_tokens < 1 or temperature <= 0 or candidates < 1:
-            raise ValueError("max_tokens, temperature and candidates must be positive")
+        super().__init__(
+            None,
+            sampling_client,
+            tokenizer,
+            allow_paid=allow_paid,
+            max_context_tokens=max_context_tokens,
+        )
+        if not 0 < max_tokens < max_context_tokens or not 0 < temperature < float(
+            "inf"
+        ):
+            raise ValueError(
+                "max_tokens must fit the context; temperature must be positive and finite"
+            )
         self.max_tokens = max_tokens
         self.temperature = temperature
-        self.candidates = candidates
 
-    async def strategize(self, previous: RoundSummary, knowledge: Knowledge) -> str:
+    async def query(self, messages: list[dict[str, str]]) -> str:
         self._check_permission()
         from tinker import types
 
-        prompt = self._prompt(learner_messages(previous, knowledge, self.candidates))
+        prompt = self._prompt(messages)
+        if len(prompt) + self.max_tokens > self.max_context_tokens:
+            raise ValueError(
+                "learner prompt plus response allowance exceeds context limit"
+            )
         response = await self.sampling_client.sample_async(
             prompt=types.ModelInput.from_ints(prompt),
             num_samples=1,
@@ -179,6 +191,4 @@ class TinkerLearner(_TinkerRole):
         text = self.tokenizer.decode(
             list(response.sequences[0].tokens), skip_special_tokens=True
         )
-        if not parse_strategies(text):
-            raise ValueError("learner reply has no <strategy> block")
         return text

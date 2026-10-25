@@ -45,8 +45,7 @@ from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .icrl import (
     Knowledge,
     RoundSummary,
-    learner_messages,
-    parse_strategies,
+    parse_strategy,
     run_icrl,
     summarise,
 )
@@ -247,29 +246,29 @@ class Recorder:
     def learner_reply(
         self,
         episode: int,
+        stage: str,
         prompt: list[dict[str, str]],
         reply: str,
-        lessons: str = "",
     ) -> None:
-        """Each learner turn: the full prompt, the reply, the strategy chosen, and
-        the lessons it carried in. Logged before the strategy is scored."""
-        strategies = parse_strategies(reply)
+        """Save every exact learner request/reply, including malformed replies."""
         self._append(
             "learner.jsonl",
-            {
-                "episode": episode,
-                "prompt": prompt,
-                "reply": reply,
-                "strategies": strategies,
-                "lessons_in": lessons,
-            },
+            {"episode": episode, "stage": stage, "prompt": prompt, "reply": reply},
         )
         self.sync_file("learner.jsonl")
-        self.proposed_rows.extend(
-            {"episode": episode, "index": index, "strategy": text}
-            for index, text in enumerate(strategies, 1)
-        )
-        self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
+        if stage == "strategy":
+            try:
+                chosen = parse_strategy(reply)
+            except ValueError:
+                return  # the learner loop logs and retries malformed strategy replies
+            self.proposed_rows.append(
+                {
+                    "episode": episode,
+                    "description": chosen.description,
+                    "strategy": chosen.encoder_instructions,
+                }
+            )
+            self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
 
     def batch_errors(
         self, step: int, phase: str, strategy: str, errors: list[str]
@@ -781,22 +780,20 @@ async def run_in_context(
             f"suspicion {summary.suspicion_mean:.3f} | {summary.strategy[:80]!r}"
         )
 
+    knowledge = Knowledge()
+
     def on_reply(
-        episode: int, previous: RoundSummary, knowledge: Knowledge, reply: str
+        episode: int, stage: str, prompt: list[dict[str, str]], reply: str
     ) -> None:
-        recorder.learner_reply(
-            episode,
-            learner_messages(previous, knowledge, icrl.candidates),
-            reply,
-            lessons=knowledge.lessons,
-        )
+        recorder.learner_reply(episode, stage, prompt, reply)
 
     try:
         history, best = await run_icrl(
             learner,
             team,
             episodes=icrl.episodes,
-            candidates=icrl.candidates,
+            n_result_examples=icrl.n_result_examples,
+            knowledge=knowledge,
             on_reply=on_reply,
             on_summary=on_summary,
         )
@@ -834,6 +831,7 @@ async def run_in_context(
                 "best": dataclasses.asdict(best),
                 "strategies": [dataclasses.asdict(item) for item in history],
                 "held_out": held_out,
+                "knowledge": dataclasses.asdict(knowledge),
             },
             indent=2,
         )
@@ -862,6 +860,13 @@ async def train(
             "--resume-state restores only the sender; joint training must start fresh"
         )
     output_dir = config.output_dir
+    if config.method == "in_context" and any(
+        (output_dir / name).exists()
+        for name in ("rollouts.jsonl", "learner.jsonl", "icrl_result.json")
+    ):
+        raise FileExistsError(
+            "ICRL output directory already contains a run; choose a new output_dir"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     train_tasks, validation, train_honeypots, honeypots, dropped = load_tasks(config)
     manifest = {
@@ -928,7 +933,7 @@ async def train(
             allow_paid=True,
             max_tokens=config.icrl.learner_max_tokens,
             temperature=config.icrl.learner_temperature,
-            candidates=config.icrl.candidates,
+            max_context_tokens=config.training.max_context_tokens,
         )
         try:
             await run_in_context(

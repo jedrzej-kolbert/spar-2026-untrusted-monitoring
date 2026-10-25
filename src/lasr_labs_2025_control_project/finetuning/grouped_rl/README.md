@@ -173,6 +173,49 @@ approved. The run driver must also persist results and retain the identities of
 training/validation/test problems; these are not experiment records baked into
 this feature library.
 
+## Self-recognition ICRL
+
+Set `method: in_context` and `task_mode: self_recognition` in the existing
+`grouped_rl.run` config. No optimizer or receiver-training step is called. Use a
+fresh output directory; a directory containing ICRL records is rejected before
+its manifest can be overwritten, including in offline mode.
+
+The learner follows the [upstream centralized ICL learner at
+905b3f3](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/learning/in_context_learning/central_icl_learner.py)
+and its [base learner](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/learning/in_context_learning/icl_learner.py):
+
+1. Query for one structured strategy (`description`, `encoder_instructions`).
+2. Run that strategy on the search problems.
+3. Clear the learner conversation, retaining its system prompt.
+4. Supply the measured results and diagnostic examples; query for per-metric reflection.
+5. Record the attempt; separately query for updated learning, three ideas and their ratings.
+6. Carry that discussion into the next strategy query, and the distilled knowledge
+   into the next strategizing query. Do not truncate earlier attempt summaries.
+
+These are separate model calls, not one prompt with several headings. The settings
+match upstream's `PerMetric`, `do_strategize=True`, `clear_and_summarize=True`,
+`try_improve_last_strategy=False`. `icrl.episodes` counts evaluated strategies;
+`icrl.n_result_examples` defaults to three examples per diagnostic category. The
+old `icrl.rounds` and `icrl.candidates` fields are no longer accepted.
+
+Task-specific adaptations are explicit: only the sender gets the instructions
+(the judge stays frozen); test correctness, backdoor preservation, P(self) and
+trusted suspicion replace payload decoding metrics. The no-strategy baseline and
+held-out honeypot AUROC are evaluation controls outside the learner's search.
+HiPT's payload-perfect early-stop condition has no direct counterpart for these
+continuous scores, so the configured episode count is used without inventing one.
+This is an adaptation of the search procedure, not an exact replication of HiPT's
+payload experiment. A fresh rewrite is not guaranteed to improve on the preceding
+one; the best-so-far strategy is retained separately.
+
+W&B keeps `icrl/strategies` (strategy, reward and every reward component),
+`icrl/proposed_strategies`, and `icrl/held_out`. `learner.jsonl` records each exact
+request/reply with stage `strategy`, `reflection` or `strategize`, including any
+malformed strategy replies (upstream allows two attempts). This file,
+`strategies.jsonl`, `rollouts.jsonl` and `icrl_result.json` are uploaded; the final
+result also contains the learner's distilled knowledge. Earlier completed runs
+remain historical results of their original procedure.
+
 ## References
 
 - [HiPT, §3.3.1](https://arxiv.org/html/2410.03768v1): alternating sender RL and receiver SFT.
