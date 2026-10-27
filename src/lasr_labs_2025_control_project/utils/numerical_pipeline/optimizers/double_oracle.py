@@ -356,6 +356,7 @@ def double_oracle(
     param_data: ParamConfig,
     function: ObjectiveFn,
     max_iterations: int,
+    seed: Optional[int] = None,
 ) -> Dict[
     str,
     Union[
@@ -386,6 +387,8 @@ def double_oracle(
             and returns a tuple ``(blue_win_rate, outcome_dict)``. Blue wants to maximize,
             red wants to minimize.
         max_iterations: Maximum number of outer Double Oracle iterations.
+        seed: Seeds the random initial strategies and differential evolution, so
+            a rerun lands on the same equilibrium (ties included). None: unseeded.
 
     Returns:
         Dictionary containing:
@@ -399,7 +402,7 @@ def double_oracle(
     """
 
     epsilon = 1e-3  # Convergence tolerance for gap between upper/lower bounds
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
     # Separate parameters by player (blue vs red)
     blue_param_names = [name for name in param_data.keys() if name.startswith("blue_")]

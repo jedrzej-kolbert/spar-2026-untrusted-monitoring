@@ -197,8 +197,15 @@ def use_project_tinker_provider() -> None:
 
 
 def generate(
-    config_path: Path, output: Path, concurrency: int, allow_paid: bool
+    config_path: Path,
+    output: Path,
+    concurrency: int,
+    allow_paid: bool,
+    metadata: dict | None = None,
+    seed: int | None = None,
 ) -> dict:
+    """Run each config run; `metadata` goes into every log's header (the main
+    project's pipeline passes its W&B lineage and node key), `seed` to Inspect."""
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
     if output.exists():
@@ -254,6 +261,8 @@ def generate(
             fail_on_error=False,  # one broken container must not end the run
             limit=run.limit,
             log_dir=str(output / "native_logs"),
+            metadata=metadata,
+            seed=seed,
         )[0]
         annotated = add_trajectory_views(log.location, run)
         write_eval_log(annotated, str(output / run.path))
@@ -278,8 +287,22 @@ def main() -> None:
         action="store_true",
         help="Build sandboxes and call models; without it only the plan is printed",
     )
+    parser.add_argument(
+        "--metadata-json",
+        type=json.loads,
+        default=None,
+        help="JSON object to store in each log's header",
+    )
+    parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
-    result = generate(args.config, args.output, args.concurrency, args.allow_paid)
+    result = generate(
+        args.config,
+        args.output,
+        args.concurrency,
+        args.allow_paid,
+        metadata=args.metadata_json,
+        seed=args.seed,
+    )
     print(json.dumps(result, sort_keys=True))
 
 
