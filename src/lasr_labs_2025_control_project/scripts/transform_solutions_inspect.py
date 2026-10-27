@@ -3,8 +3,10 @@ Runs apps scorers on the solutions from the eval logs without generating new sol
 Make sure AppsSetting is configured to use same data split as in the eval log.
 """
 
+import dataclasses
 import shutil
 from pathlib import Path
+from typing import Any
 
 import click
 import python_minifier
@@ -33,6 +35,17 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     ModelInfo,
     TransformInfo,
     TransformType,
+)
+from lasr_labs_2025_control_project.tracking import (
+    ALLOW_UNLINKED_HELP,
+    StageRun,
+    config_tags,
+    input_counts,
+    input_name,
+    load_raw_config,
+    names,
+    prompt_digest,
+    resolve_input,
 )
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
 from lasr_labs_2025_control_project.utils.config_loader import (
@@ -219,12 +232,23 @@ def transform_solutions(
     )
 
 
+def transform_segment(transform: TransformInfo, raw: dict[str, Any]) -> str:
+    if transform.type == TransformType.MINIFIER:
+        return names.stage_segment("min")
+    model_info = raw["defaults"]["transform"].get("model_info", {})
+    return names.stage_segment(
+        "para", model_info.get("model"), model_info.get("system_prompt")
+    )
+
+
 @click.command()
 @click.option("--config", type=str, required=True)
-def main(config: str):
+@click.option("--allow-unlinked", is_flag=True, help=ALLOW_UNLINKED_HELP)
+def main(config: str, allow_unlinked: bool):
     load_dotenv()
     config_path = Path(config)
     normalized = load_and_normalize_config(config, config_type="transform")
+    raw = load_raw_config(config_path)
     Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
     shutil.copy(
         config_path, normalized.experiment_folder / "configs" / "transform_config.yaml"
@@ -234,18 +258,51 @@ def main(config: str):
         assert isinstance(run, TransformRunConfig), (
             "Run is not a TransformRunConfig, make sure to use the correct config"
         )
-        result = eval(
-            tasks=transform_solutions(run),
-            epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=48,
-            max_sandboxes=48,
-            reasoning_tokens=0,
-            reasoning_effort="minimal",  # openai models
-            limit=run.limit,
+        source = resolve_input(run.eval_path)
+        run = dataclasses.replace(run, eval_path=source.local_path)
+        model_info = run.transform.model_info
+        tracker = StageRun(
+            "transform",
+            names.extend(
+                input_name(source, run.label), transform_segment(run.transform, raw)
+            ),
+            config={
+                "config_file": str(config_path),
+                "yaml": raw,
+                "label": run.label,
+                "transform": run.transform.type,
+                "prompt_digest": (
+                    prompt_digest(model_info.system_prompt) if model_info else None
+                ),
+                "run": run,
+            },
+            tags=["transform", run.label, run.transform.type, *config_tags(raw)],
+            inputs=[source],
+            allow_unlinked=allow_unlinked,
         )
-        run.save_path.parent.mkdir(parents=True, exist_ok=True)
-        run.save_path.touch()
-        shutil.copy(result[0].location, run.save_path)
+        with tracker:
+            result = eval(
+                tasks=transform_solutions(run),
+                epochs=Epochs(1, ["pass_at_1"]),
+                max_connections=48,
+                max_sandboxes=48,
+                reasoning_tokens=0,
+                reasoning_effort="minimal",  # openai models
+                limit=run.limit,
+                metadata=tracker.eval_metadata(),
+            )
+            run.save_path.parent.mkdir(parents=True, exist_ok=True)
+            run.save_path.touch()
+            shutil.copy(result[0].location, run.save_path)
+            tracker.finish_eval(
+                result[0],
+                run.save_path,
+                limit=run.limit,
+                metadata={"label": run.label, "transform": run.transform.type},
+                extra_counts=input_counts(
+                    source.local_path, result[0].eval.dataset.samples or 0
+                ),
+            )
         if result[0].status != "success":
             raise SystemExit(
                 f"{run.label}: eval ended with status {result[0].status!r}, "

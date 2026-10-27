@@ -1,8 +1,9 @@
 """Visualization utilities for numerical pipeline."""
 
 import json
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -209,55 +210,123 @@ def _create_subplot_grid(
     return fig, axes_flat
 
 
+#: text added beneath the legend of every figure saved while it is set
+_CAPTION: ContextVar[Optional[str]] = ContextVar("figure_caption", default=None)
+_PROVIDERS = ("tinker", "openai", "google", "anthropic", "together", "mockllm")
+
+
+def display_model(model: str) -> str:
+    """A model id without its provider prefix (``tinker/Qwen/X`` -> ``Qwen/X``)."""
+    head, _, rest = model.partition("/")
+    return rest if rest and head in _PROVIDERS else model
+
+
+def models_caption(data_dict: Mapping[str, OptimizationResult]) -> Optional[str]:
+    """``U: … · H: … · T: …`` for the conditions in a figure (one line each if
+    they differ), from the models recorded on each result; None if unknown."""
+    lines: dict[str, list[str]] = {}
+    for label, result in data_dict.items():
+        meta = (result.config.monitor_roc_fn_metadata or {}) if result.config else {}
+        models = meta.get("models") or {}
+        if not any(models.values()):
+            continue
+        line = " · ".join(
+            f"{role}: {display_model(models[role]) if models.get(role) else '?'}"
+            for role in ("U", "H", "T")
+        )
+        lines.setdefault(line, []).append(label)
+    if not lines:
+        return None
+    if len(lines) == 1:
+        return next(iter(lines))
+    return "\n".join(f"{', '.join(labels)}: {line}" for line, labels in lines.items())
+
+
+def _save_figure(fig: Figure, path: Any) -> None:
+    """Save a figure, with the current caption in small text under its lowest legend."""
+    caption = _CAPTION.get()
+    if caption:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]
+        legends = [*fig.legends, *(ax.get_legend() for ax in fig.axes)]
+        boxes = [leg.get_window_extent(renderer) for leg in legends if leg is not None]
+        if boxes:
+            lowest = min(boxes, key=lambda box: box.y0)
+            x, y = fig.transFigure.inverted().transform((lowest.x0, lowest.y0))
+            fig.text(
+                x, y - 0.01, caption, ha="left", va="top", fontsize=7, color="0.35"
+            )
+        else:
+            fig.text(0.01, 0.0, caption, ha="left", va="top", fontsize=7, color="0.35")
+    fig.savefig(path, dpi=300, bbox_inches="tight")
+
+
 def plot_data(
     data_dict: dict[str, OptimizationResult],
     destination_folder: str | Path,
+    file_format: str = PLOT_FILE_FORMAT,
 ) -> None:
     """
     Generate and save all plots to the specified destination folder.
 
+    Every figure gets a small "U · H · T" caption under its legend (the models
+    each result records), so a figure says which models produced it.
+
     Args:
         data_dict: dict of OptimizationResult for each experiment.
         destination_folder: Directory where figures will be written.
+        file_format: Image format/extension for the figures.
     """
+    token = _CAPTION.set(models_caption(data_dict))
+    try:
+        _plot_all(data_dict, destination_folder, file_format)
+    finally:
+        _CAPTION.reset(token)
+
+
+def _plot_all(
+    data_dict: dict[str, OptimizationResult],
+    destination_folder: str | Path,
+    file_format: str,
+) -> None:
     dest = Path(destination_folder)
     dest.mkdir(parents=True, exist_ok=True)
 
     # Generate both types of ROC curves
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_monitor_roc_curve.{file_format}"),
         plot_mode="untrusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"trusted_monitor_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"trusted_monitor_roc_curve.{file_format}"),
         plot_mode="trusted",
     )
     plot_roc_curves(
         data_dict,
-        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{PLOT_FILE_FORMAT}"),
+        save_path=str(dest / f"untrusted_suspiciousness_roc_curve.{file_format}"),
         plot_mode="untrusted_suspiciousness",
     )
 
     plot_safety_usefulness_curves(
-        data_dict, save_path=str(dest / f"safety_usefulness_curves.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"safety_usefulness_curves.{file_format}")
     )
     # Save the underlying safety/usefulness points to JSONL for downstream analysis
     save_safety_usefulness_jsonl(
         data_dict, save_path=str(dest / "safety_usefulness.jsonl")
     )
-    plot_histograms(data_dict, save_path=str(dest / f"histograms.{PLOT_FILE_FORMAT}"))
+    plot_histograms(data_dict, save_path=str(dest / f"histograms.{file_format}"))
     plot_attack_score_scatter(
-        data_dict, save_path=str(dest / f"attack_scores_scatter.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"attack_scores_scatter.{file_format}")
     )
     """
     plot_roc_heatmaps(
-        data_dict, save_path=str(dest / f"roc_heatmaps.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"roc_heatmaps.{file_format}")
     )
     """
     plot_outcome_distributions(
-        data_dict, save_path=str(dest / f"outcome_distributions.{PLOT_FILE_FORMAT}")
+        data_dict, save_path=str(dest / f"outcome_distributions.{file_format}")
     )
     return
 
@@ -270,6 +339,7 @@ def plot_histograms(
 
     dest_path = Path(save_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    ext = dest_path.suffix.lstrip(".") or PLOT_FILE_FORMAT
 
     histogram_specs = [
         {
@@ -278,7 +348,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_trusted.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_trusted.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
         {
@@ -287,7 +357,7 @@ def plot_histograms(
             "xlabel": "Collusion Score",
             "class_map": {"positive": "Attack", "negative": "Honeypot"},
             "palette": {"Attack": OI_VERMILION, "Honeypot": OI_YELLOW},
-            "filename": f"histograms_untrusted_collusion.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_collusion.{ext}",
             "bins": {"min": None, "max": None, "width": 2},
         },
         {
@@ -296,7 +366,7 @@ def plot_histograms(
             "xlabel": "Suspicion Score",
             "class_map": {"positive": "Attack", "negative": "Benign"},
             "palette": {"Attack": OI_VERMILION, "Benign": OI_BLUE},
-            "filename": f"histograms_untrusted_suspiciousness.{PLOT_FILE_FORMAT}",
+            "filename": f"histograms_untrusted_suspiciousness.{ext}",
             "bins": {"min": 0, "max": 10, "width": 1},
         },
     ]
@@ -426,7 +496,7 @@ def plot_histograms(
         fig.tight_layout(rect=(0, 0, 1, 0.88))
 
         out_path = dest_path.parent / spec["filename"]
-        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        _save_figure(fig, out_path)
         print(f"Plot saved to: {out_path}")
         plt.close(fig)
 
@@ -516,7 +586,7 @@ def plot_attack_score_scatter(
         _apply_standard_axes_style(ax)
 
     fig.tight_layout()
-    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, dest_path)
     print(f"Plot saved to: {dest_path}")
     plt.close(fig)
 
@@ -617,7 +687,7 @@ def plot_roc_heatmaps(
     _apply_standard_axes_style(ax2)
 
     fig.tight_layout()
-    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, save_path)
     print(f"Plot saved to: {save_path}")
     plt.close()
 
@@ -943,7 +1013,7 @@ def plot_roc_curves(
         ax.legend().remove()  # Remove the original legend
 
     fig.tight_layout(rect=(0, 0.08, 1, 1))  # Make room for legend at the bottom
-    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, save_path)
     print(f"Plot saved to: {save_path}")
     plt.close(fig)
 
@@ -1080,7 +1150,7 @@ def plot_safety_usefulness_curves(
     ax.legend().remove()  # Remove the original legend from ax
 
     fig.tight_layout(rect=(0, 0.08, 1, 1))  # Make room for legend at the bottom
-    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, dest_path)
     print(f"Plot saved to: {dest_path}")
     plt.close(fig)
 
@@ -1255,7 +1325,7 @@ def plot_safety_usefulness_bands(
         ncol=min(len(handles), 3),
     )
     fig.tight_layout(rect=(0, 0.1, 1, 1))
-    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, dest_path)
     print(f"Plot saved to: {dest_path}")
     plt.close(fig)
 
@@ -1321,7 +1391,7 @@ def plot_safety_usefulness_bands_grid(
     if suptitle:
         fig.suptitle(suptitle, y=0.995)
     fig.tight_layout()
-    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, dest_path)
     print(f"Plot saved to: {dest_path}")
     plt.close(fig)
 
@@ -1537,7 +1607,7 @@ def plot_parameter_sensitivity(
 
     out_path = dest / f"parameter_sensitivity.{PLOT_FILE_FORMAT}"
     fig.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, out_path)
     print(f"Sensitivity plot saved to: {out_path}")
     plt.close(fig)
 
@@ -1856,7 +1926,7 @@ def plot_outcome_distributions(
         )
 
     fig.tight_layout()
-    fig.savefig(dest_path, dpi=300, bbox_inches="tight")
+    _save_figure(fig, dest_path)
     print(f"Plot saved to: {dest_path}")
     plt.close(fig)
 

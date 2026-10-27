@@ -32,7 +32,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 STAGE="${1:-all}"
-UV_WITH='--with "control-arena==2.1.3",pandas,numpy,scipy,pyyaml,dacite,click,google-genai,hf_transfer,openai,joblib,matplotlib,seaborn'
+UV_WITH='--with "control-arena==2.1.3",pandas,numpy,scipy,pyyaml,dacite,click,google-genai,hf_transfer,openai,joblib,matplotlib,seaborn,wandb'
 CFG=src/lasr_labs_2025_control_project/configs/apps/causal
 EXP=experiments/closed-source-model/apps/causal_train
 DATA=experiments/closed-source-model/apps/causal_train/sft_data
@@ -119,9 +119,11 @@ stage_score() {
 
 stage_analyse() {
   echo "=== [7/7] point estimates, bootstrap, plots for the two new conditions"
+  # --bootstrap-replicates 0 skips plot_data's own bootstrap; bootstrap.py
+  # below runs the paper's 1000 replicates instead.
   for c in causal_none_train_causal_none_eval causal_minified_train_causal_minified_eval; do
     run_py src/lasr_labs_2025_control_project/scripts/plot_data.py \
-      --config "$CFG/monitors/$c.yaml"
+      --config "$CFG/monitors/$c.yaml" --bootstrap-replicates 0
   done
   run_py src/lasr_labs_2025_control_project/scripts/bootstrap.py \
     --trees apps --replicates 1000 --out-root bootstrap_results/closed-source-model \

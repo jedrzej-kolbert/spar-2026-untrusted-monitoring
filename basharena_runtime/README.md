@@ -6,8 +6,8 @@ the newer version, lives here with its own lockfile.
 
 `generate.py` builds the BashArena agent task and runs it from a generator config.
 It writes ordinary `.eval` logs, which the main project's SFT and monitor steps read
-directly: see the BashArena section of
-`src/lasr_labs_2025_control_project/sft-steps.md`. The main project never imports
+directly: see the BashArena section of the
+root `README.md`. The main project never imports
 this package.
 
 ## Setup
