@@ -20,8 +20,6 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence
 
-import yaml
-
 from lasr_labs_2025_control_project.tracking import names
 
 logger = logging.getLogger(__name__)
@@ -29,6 +27,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROJECT = "untrusted-monitoring"
 REF_PREFIX = "wandb:"
 HEADER_KEY = "tracking"  # key in an .eval log's eval.metadata
+PIPELINE_KEY = "pipeline"  # the producing pipeline node, in the same metadata
 ALLOW_UNLINKED_HELP = (
     "Continue even if links to tracked inputs cannot be recorded in W&B "
     "(W&B unreachable, or an input came from a failed or unsynced run)."
@@ -39,6 +38,10 @@ _INIT_TIMEOUT_SECONDS = 30
 
 class UnlinkedInputError(RuntimeError):
     """Raised when a tracked input cannot be linked and --allow-unlinked is unset."""
+
+
+class StageFailed(RuntimeError):
+    """An Inspect run ended without success; its log is kept where it was saved."""
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +57,11 @@ def mode() -> str:
     if value in ("offline", "dryrun"):
         return "offline"
     return "online"
+
+
+def available() -> bool:
+    """Whether the W&B API is reachable (online, with a key)."""
+    return _api() is not None
 
 
 def is_ref(path: str | Path) -> bool:
@@ -76,20 +84,6 @@ def jsonable(obj: Any) -> Any:
     if callable(item) and not isinstance(obj, type):  # numpy scalar
         return item()
     return obj
-
-
-def load_raw_config(path: str | Path) -> dict[str, Any]:
-    """The YAML exactly as written (prompt *names*, not resolved text)."""
-    with Path(path).open(encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def config_tags(raw: Mapping[str, Any]) -> list[str]:
-    """Tags declared in a config's optional top-level ``wandb:`` block."""
-    block = raw.get("wandb") or {}
-    tags = list(block.get("tags") or [])
-    tags.extend(str(v) for v in (block.get("condition") or {}).values())
-    return tags
 
 
 def prompt_digest(text: str) -> str:
@@ -367,6 +361,56 @@ def input_counts(input_path: Path, dataset_size: int) -> dict[str, int]:
     }
 
 
+def header_complete(header: Any, limit: Optional[int]) -> bool:
+    """``eval_counts``' completeness rule, from an .eval header alone."""
+    results = header.results
+    dataset_samples = header.eval.dataset.samples
+    if header.status != "success" or results is None or dataset_samples is None:
+        return False
+    expected = dataset_samples if limit is None else min(limit, dataset_samples)
+    return results.completed_samples == expected
+
+
+@dataclasses.dataclass
+class PipelineContext:
+    """The pipeline invocation a stage run belongs to.
+
+    Every stage run of one invocation logs the merged config in its run config
+    and uses the same ``config`` artifact (identical files are one version).
+    """
+
+    name: str
+    config: Mapping[str, Any]
+    config_files: Sequence[Path] = ()
+    tags: Sequence[str] = ()
+
+
+def find_pipeline_run(node_hash: str, key: Mapping[str, Any]) -> Any:
+    """A complete W&B run that produced the pipeline node with this hash, or None.
+
+    The run's stored key must equal ``key`` exactly; a mismatch is a hash
+    collision and raises rather than reusing the wrong output.
+    """
+    api = _api()
+    if api is None:
+        raise RuntimeError("reuse=wandb needs W&B access (WANDB_MODE online and a key)")
+    runs = api.runs(
+        f"{_entity(api)}/{_project()}",
+        filters={"config.pipeline_hash": node_hash, "summary_metrics.complete": True},
+        order="-created_at",  # a forced rerun replaces earlier runs of the node
+        lazy=False,  # lazy runs (wandb >= 0.22) carry their config as a raw JSON string
+    )
+    for run in runs:
+        stored = (run.config.get("pipeline_node") or {}).get("key")
+        if jsonable(stored) != jsonable(key):
+            raise RuntimeError(
+                f"W&B run {run.path} has pipeline hash {node_hash} but a different "
+                "key: a hash collision. Rename or delete one of them."
+            )
+        return run
+    return None
+
+
 # ---------------------------------------------------------------------------
 # the run
 # ---------------------------------------------------------------------------
@@ -399,10 +443,20 @@ class StageRun:
         inputs: Sequence[ResolvedInput] = (),
         models: Iterable[str] = (),
         allow_unlinked: bool = False,
+        pipeline: Optional[PipelineContext] = None,
+        node: Optional[Mapping[str, Any]] = None,
     ):
         self.stage = stage
         self.name = name
         self.config = dict(config)
+        self.pipeline = pipeline
+        self.node = dict(node) if node else None
+        if pipeline is not None:
+            self.config["pipeline"] = pipeline.config
+            tags = [*tags, *pipeline.tags]
+        if self.node is not None:
+            self.config["pipeline_node"] = self.node
+            self.config["pipeline_hash"] = self.node["hash"]
         self.tags = list(dict.fromkeys(t for t in tags if t))
         self.inputs = list(inputs)
         self.models = list(models)
@@ -495,6 +549,19 @@ class StageRun:
             if artifact is not None:
                 self.run.use_artifact(artifact)
             models_linked[model] = artifact.qualified_name if artifact else None
+        if (
+            self.pipeline is not None
+            and self.pipeline.config_files
+            and not self.offline
+        ):
+            import wandb
+
+            config = wandb.Artifact(
+                names.fit(f"config-{names.clean(self.pipeline.name)}"), type="config"
+            )
+            for path in self.pipeline.config_files:
+                config.add_file(str(path))
+            self.run.use_artifact(config)
         self.run.config.update(
             {
                 "inputs": [i.record() for i in self.inputs],
@@ -509,7 +576,7 @@ class StageRun:
 
     def eval_metadata(self) -> dict[str, Any]:
         run = self.run
-        return {
+        metadata: dict[str, Any] = {
             HEADER_KEY: {
                 "name": self.name,
                 "stage": self.stage,
@@ -518,6 +585,9 @@ class StageRun:
                 "entity": (run.entity or None) if run else None,
             }
         }
+        if self.node is not None:
+            metadata[PIPELINE_KEY] = self.node
+        return metadata
 
     def log(self, data: Mapping[str, Any]) -> None:
         if self.run is not None:
@@ -552,10 +622,13 @@ class StageRun:
         import wandb
 
         artifact_name = names.fit(name or self.name)
+        pipeline_hash = {"pipeline_hash": self.node["hash"]} if self.node else {}
         artifact = wandb.Artifact(
             artifact_name,
             type=type,
-            metadata=jsonable({"name": artifact_name, **(metadata or {})}),
+            metadata=jsonable(
+                {"name": artifact_name, **pipeline_hash, **(metadata or {})}
+            ),
         )
         for file in [path] if isinstance(path, (str, Path)) else path:
             artifact.add_file(str(file))
@@ -602,7 +675,7 @@ class StageRun:
     def log_model_ref(
         self, model_id: str, metadata: Optional[Mapping[str, Any]] = None
     ) -> None:
-        """Record a fine-tuned model id (as written in monitor configs)."""
+        """Record a fine-tuned model id (as monitors and the pipeline use it)."""
         if self.run is None:
             return
         import json
@@ -631,7 +704,10 @@ class StageRun:
         metadata: Optional[Mapping[str, Any]] = None,
         extra_counts: Optional[Mapping[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Record the count trail; log the output .eval only if the run is complete."""
+        """Record the count trail; log the output .eval only if the run is complete.
+
+        Raises StageFailed (after recording) if Inspect reports no success.
+        """
         counts = {**eval_counts(log, limit), **(extra_counts or {})}
         rates = {f"scores/{k}": v for k, v in _score_rates(log.samples or []).items()}
         self.summary({**counts, **rates})
@@ -647,6 +723,11 @@ class StageRun:
                 complete=False,
                 reason=f"status={counts['status']}, "
                 f"{counts['samples']}/{counts['expected_samples']} samples",
+            )
+        if log.status != "success":
+            raise StageFailed(
+                f"{self.name}: eval ended with status {log.status!r}; "
+                f"log saved to {save_path}"
             )
         return counts
 

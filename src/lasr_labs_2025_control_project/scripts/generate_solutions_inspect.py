@@ -1,19 +1,16 @@
-"""
-Generates solutions for the APPS dataset. Applies the control arena APPS scorers without actually using the control arena setup.
-Put your prompt into the solver's system message.
-Select the APPS data split in AppsSetting.
-Make sure you're using the correct model in the eval config.
-Just run the script.
+"""Generate stage: a policy model writes solutions for APPS or BigCodeBench.
+
+The pipeline (``lasr_labs_2025_control_project.pipeline``) calls ``run_generation``
+once per generation; scoring uses the control-arena / BigCodeBench scorers in
+a Docker sandbox. BashArena generation runs in ``basharena_runtime/`` instead.
 """
 
 import json
 import logging
 import re
 import shutil
-from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Optional
 
-import click
 from control_arena.control_task_metadata import ControlTaskMetadata
 from control_arena.eval_mode import EvalMode
 from control_arena.tools.submit_tool import SubmitToolConfig, get_submit_tool_def
@@ -41,20 +38,16 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     ModelInfo,
 )
 from lasr_labs_2025_control_project.settings.setting import AppsSetting
-from lasr_labs_2025_control_project.tracking import (
-    StageRun,
-    config_tags,
-    load_raw_config,
-    names,
-    prompt_digest,
-)
+from lasr_labs_2025_control_project.tracking import StageRun
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
 from lasr_labs_2025_control_project.utils.config_loader import (
     DatasetType,
     DataSplit,
     GeneratorRunConfig,
-    load_and_normalize_config,
 )
+
+#: APPS problem ids used when none are configured (inclusive)
+DEFAULT_PROBLEM_IDS = (0, 2999)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -165,8 +158,13 @@ def backdoored_solutions(
     eval_mode: EvalMode,
     data_split: DataSplit,
     system_prompt: str,
+    problem_ids: Optional[list[int]] = None,
 ) -> Task:
-    """Task that runs AppsSetting dataset through attack policy system prompt."""
+    """Task that runs AppsSetting dataset through attack policy system prompt.
+
+    ``problem_ids`` is an inclusive [first, last] range; train uses its odd
+    ids and test its even ids.
+    """
 
     # Create AppsSetting instance
     apps_setting = AppsSetting(
@@ -177,7 +175,7 @@ def backdoored_solutions(
         original_dataset_split="test",
         filter_on_split="even_test" if data_split == DataSplit.TEST else "odd_train",
         shuffle=False,
-        problem_ids_range=[0, 2999],
+        problem_ids_range=list(problem_ids or DEFAULT_PROBLEM_IDS),
     )
 
     dataset = apps_setting.get_dataset(eval_mode=eval_mode)
@@ -323,98 +321,58 @@ def bigcodebench_solutions(
     )
 
 
-@click.command()
-@click.option(
-    "--config",
-    type=str,
-    required=True,
-)
-def main(
-    config: str,
-):
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    config_path = Path(config)
-
-    normalized = load_and_normalize_config(config_path, config_type="generator")
-    raw = load_raw_config(config_path)
-    Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
-    shutil.copy(
-        config_path, normalized.experiment_folder / "configs" / "generator_config.yaml"
-    )
-    for run in normalized.runs:
-        assert isinstance(run, GeneratorRunConfig), (
-            "Run is not a GeneratorRunConfig, make sure to use the correct config"
+def run_generation(
+    run: GeneratorRunConfig,
+    tracker: StageRun,
+    *,
+    problem_ids: Optional[list[int]] = None,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    max_connections: int = 8,
+) -> Any:
+    """Run one generation under ``tracker`` and save its log to ``run.save_path``."""
+    if run.generator.dataset_type == DatasetType.APPS:
+        task = backdoored_solutions(
+            run.generator.eval_mode,
+            run.generator.data_split,
+            run.generator.model_info.system_prompt,
+            problem_ids,
         )
-
-        # Select the appropriate task based on dataset_type
-        if run.generator.dataset_type == DatasetType.APPS:
-            task = backdoored_solutions(
-                run.generator.eval_mode,
-                run.generator.data_split,
-                run.generator.model_info.system_prompt,
-            )
-        elif run.generator.dataset_type == DatasetType.BIGCODEBENCH:
-            task = bigcodebench_solutions(
-                run.generator.data_split,
-                run.generator.model_info.system_prompt,
-                run.generator.eval_mode,
-            )
-        else:
-            raise ValueError(f"Unsupported dataset_type: {run.generator.dataset_type}")
-
-        setting = run.generator.dataset_type.value
-        split = run.generator.data_split.value
-        prompt_name = raw["runs"][run.label].get(
-            "system_prompt", raw.get("defaults", {}).get("system_prompt")
+    elif run.generator.dataset_type == DatasetType.BIGCODEBENCH:
+        task = bigcodebench_solutions(
+            run.generator.data_split,
+            run.generator.model_info.system_prompt,
+            run.generator.eval_mode,
         )
-        tracker = StageRun(
-            "generate",
-            names.generation_name(
-                setting, run.generator.model_info.model, split, run.label, prompt_name
-            ),
-            config={
-                "config_file": str(config_path),
-                "yaml": raw,
+    else:
+        raise ValueError(f"Unsupported dataset_type: {run.generator.dataset_type}")
+
+    with tracker:
+        result = eval(
+            tasks=task,
+            model=run.generator.model_info.model,
+            epochs=Epochs(1, ["pass_at_1"]),
+            # Caps parallel API/Docker work; the sample count is unchanged.
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
+            reasoning_tokens=0,
+            reasoning_effort="minimal",  # openai models
+            max_tokens=run.generator.max_tokens,  # None -> provider default
+            seed=seed,
+            temperature=temperature,
+            limit=run.limit,
+            metadata=tracker.eval_metadata(),
+        )
+        run.save_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(result[0].location, run.save_path)
+        tracker.finish_eval(
+            result[0],
+            run.save_path,
+            limit=run.limit,
+            metadata={
                 "label": run.label,
-                "setting": setting,
-                "split": split,
-                "model": run.generator.model_info.model,
-                "prompt": prompt_name,
-                "prompt_digest": prompt_digest(run.generator.model_info.system_prompt),
-                "run": run,
+                "setting": run.generator.dataset_type.value,
+                "split": run.generator.data_split.value,
             },
-            tags=["generate", run.label, setting, split, *config_tags(raw)],
         )
-        with tracker:
-            result = eval(
-                tasks=task,
-                model=run.generator.model_info.model,
-                epochs=Epochs(1, ["pass_at_1"]),
-                max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-                max_sandboxes=8,
-                reasoning_tokens=0,
-                reasoning_effort="minimal",  # openai models
-                max_tokens=run.generator.max_tokens,  # None -> provider default
-                limit=run.limit,
-                metadata=tracker.eval_metadata(),
-            )
-            run.save_path.parent.mkdir(parents=True, exist_ok=True)
-            run.save_path.touch()
-            shutil.copy(result[0].location, run.save_path)
-            tracker.finish_eval(
-                result[0],
-                run.save_path,
-                limit=run.limit,
-                metadata={"label": run.label, "setting": setting, "split": split},
-            )
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{run.label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {run.save_path}"
-            )
-
-
-if __name__ == "__main__":
-    main()
+    return result[0]

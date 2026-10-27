@@ -13,13 +13,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from lasr_labs_2025_control_project.scripts.plot_data import (  # noqa: E402
-    Game,
-    analysis_name,
-    analysis_run_name,
-    analysis_variants,
+    VARIANT_FLAGS,
     log_payload_overview,
     log_strategies,
 )
+from lasr_labs_2025_control_project.tracking import names  # noqa: E402
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (  # noqa: E402
     OptimizationResult,
     bootstrap_band,
@@ -36,29 +34,20 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.visualization impor
 )
 
 
-def test_variants_follow_config_and_flags():
-    assert [v[0] for v in analysis_variants({})] == ["all_monitors", "um_only"]
-    assert analysis_variants({"disable_trusted_monitor": True}) == [
-        ("um_only", True, False)
-    ]
-    assert analysis_variants({"disable_untrusted_monitor": True}) == [
-        ("tm_only", False, True)
-    ]
-
-
-def test_analysis_name_prefers_condition():
-    normalized = SimpleNamespace(experiment_name="Causal Minified")
-    condition = {
-        "setting": "apps",
-        "collusion_strategy": "causal",
-        "transform": "minified",
-        "monitor_arm": "base",
+def test_variants_disable_the_other_monitor():
+    # (disable_trusted_monitor, disable_untrusted_monitor)
+    assert VARIANT_FLAGS == {
+        "all_monitors": (False, False),
+        "um_only": (True, False),
+        "tm_only": (False, True),
     }
+
+
+def test_condition_name():
     assert (
-        analysis_name(normalized, {"wandb": {"condition": condition}})
+        names.condition_name("apps", "causal", "minified", "base")
         == "apps.causal.minified.base"
     )
-    assert analysis_name(normalized, {}) == "causal_minified"
 
 
 def test_bootstrap_band_skips_failed_replicates():
@@ -153,21 +142,6 @@ def test_strategy_figure_includes_new_variables(tmp_path: Path) -> None:
     replicates = [{"sweep": [_sweep_entry(1.0, 0.3)]}, {"error": "boom"}]
     plot_strategies({"cond": result}, str(path), bootstrap={"cond": replicates})
     assert path.stat().st_size > 0
-
-
-def _game(name: str) -> Game:
-    return Game(name, SimpleNamespace(), {})  # type: ignore[arg-type]
-
-
-def test_analysis_run_is_named_after_its_conditions():
-    games = {
-        n: _game(n) for n in ("apps.self_rec.none.base", "apps.self_rec.minified.sft")
-    }
-    assert analysis_run_name(games, None) == "analysis.apps.self_rec"
-    assert analysis_run_name(games, "no_mitigation") == "analysis.no_mitigation"
-    assert analysis_run_name({"a": _game("apps.causal.none.base")}, None) == (
-        "analysis.apps.causal.none.base"
-    )
 
 
 class _RocTracker:

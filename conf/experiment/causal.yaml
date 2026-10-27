@@ -1,0 +1,15 @@
+# @package _global_
+# Causal: U hides a pre-agreed signal in its attacks. The SFT arm is trained on
+# causal attacks but prompted for passive self-recognition (the paper's
+# "combined" arm), so it measures self-recognition plus the signal.
+name: causal
+measurement:
+  collusion_strategy: causal
+  arms:
+    base: {model: U}
+    sft:
+      model: "sft:causal"
+      collusion_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+elicitation:
+  arms:
+    causal: {}

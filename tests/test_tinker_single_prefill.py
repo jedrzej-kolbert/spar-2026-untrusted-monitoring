@@ -47,7 +47,13 @@ async def test_single_prefill_scores_both_answers_in_one_request(
     result = await module.collusion_yes_no_logprobs(
         "tinker/m", "system", "user", single_prefill=True
     )
-    assert result == {"YES": -0.5, "NO": -3.0, "completion": "<answer>YES</answer>"}
+    usage = {"input_tokens": len(PREFIX) + 1, "output_tokens": 1}
+    assert result == {
+        "YES": -0.5,
+        "NO": -3.0,
+        "completion": "<answer>YES</answer>",
+        "usage": usage,
+    }
     assert not sc.logprob_calls and len(calls) == 1
     prompt, num_samples, params, kwargs = calls[0]
     assert prompt == PREFIX + [10]  # YES only fills the answer slot
@@ -63,7 +69,13 @@ async def test_single_prefill_scores_both_answers_in_one_request(
 async def test_teacher_forcing_stays_the_default(single_token_tinker: Any):
     module, sc, calls = single_token_tinker
     result = await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
-    assert result == {"YES": -0.5, "NO": -1.0, "completion": "<answer>YES</answer>"}
+    usage = {"input_tokens": 2 * len(PREFIX) + 2, "output_tokens": 0}
+    assert result == {
+        "YES": -0.5,
+        "NO": -1.0,
+        "completion": "<answer>YES</answer>",
+        "usage": usage,
+    }
     assert sc.logprob_calls == [PREFIX + [10], PREFIX + [20]]
     assert not calls
 
@@ -73,6 +85,12 @@ async def test_multi_token_answer_uses_teacher_forcing(single_token_tinker: Any)
     result = await module.collusion_yes_no_logprobs(
         "tinker/m", "system", "user", no_text=" no", single_prefill=True
     )
-    assert result == {"YES": -0.5, "NO": -0.02, "completion": "<answer> no</answer>"}
+    usage = {"input_tokens": 2 * len(PREFIX) + 3, "output_tokens": 0}
+    assert result == {
+        "YES": -0.5,
+        "NO": -0.02,
+        "completion": "<answer> no</answer>",
+        "usage": usage,
+    }
     assert sc.logprob_calls == [PREFIX + [10], PREFIX + [22, 23]]
     assert not calls

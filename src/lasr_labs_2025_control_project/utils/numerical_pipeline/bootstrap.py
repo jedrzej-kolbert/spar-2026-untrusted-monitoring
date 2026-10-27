@@ -4,13 +4,12 @@ Each replicate resamples the attack / honeypot / benign dataframes with
 replacement (rows, i.e. whole samples -- preserving the joint dependence
 structure the stats model exists to capture), rebuilds the joint ROC model,
 re-solves the game, and returns the analysis payload. Used by the analyse
-stage (``scripts/plot_data.py``) and the standalone resumable runner
-(``scripts/bootstrap.py``).
+stage (``scripts/plot_data.py``), which saves replicates in chunks and resumes.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Sequence, cast
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -37,8 +36,16 @@ def run_single_replicate(
     benign_df: pd.DataFrame,
     disable_trusted_monitor: bool,
     disable_untrusted_monitor: bool,
+    game: Optional[Mapping[str, float]] = None,
+    regeneration_cutoffs: Optional[Sequence[float]] = None,
+    optimizer: Optional[Callable[..., Dict[str, Any]]] = None,
+    max_iterations: int = 100,
 ) -> Dict[str, Any]:
     """Resample, re-fit, re-solve; return the analysis payload for one replicate.
+
+    ``game`` holds the fixed game parameters (default: PAPER_GAME_PARAMETERS,
+    optionally with human_audit_success_rate). The resamples and the solver are
+    seeded from (condition_seed, replicate).
 
     A failed replicate (e.g. a degenerate resample making the LP solver choke,
     observed as "HiGHS Status 4: Solve error") is recorded as an error row
@@ -46,13 +53,13 @@ def run_single_replicate(
     presence of "sweep" and can report the failure rate from "error".
     """
     try:
-        seeds = np.random.SeedSequence([condition_seed, replicate]).generate_state(3)
+        seeds = np.random.SeedSequence([condition_seed, replicate]).generate_state(4)
+        params = {**PAPER_GAME_PARAMETERS, **(game or {})}
         config = build_optimization_config(
-            num_tasks=PAPER_GAME_PARAMETERS["num_tasks"],
-            blue_team_budget_fraction=PAPER_GAME_PARAMETERS[
-                "blue_team_budget_fraction"
-            ],
-            slack_honeypots=PAPER_GAME_PARAMETERS["slack_honeypots"],
+            num_tasks=params["num_tasks"],
+            blue_team_budget_fraction=params["blue_team_budget_fraction"],
+            slack_honeypots=params["slack_honeypots"],
+            human_audit_success_rate=params.get("human_audit_success_rate", 1.0),
             blue_team_replace_fnr=0.0,
             attacks_df=attacks_df.sample(
                 len(attacks_df), replace=True, random_state=int(seeds[0])
@@ -66,7 +73,15 @@ def run_single_replicate(
             disable_trusted_monitor=disable_trusted_monitor,
             disable_untrusted_monitor=disable_untrusted_monitor,
         )
-        result = optimize_parameters(base_config=config, max_iterations=100)
+        result = optimize_parameters(
+            base_config=config,
+            max_iterations=max_iterations,
+            replace_fnr_values=(
+                list(regeneration_cutoffs) if regeneration_cutoffs is not None else None
+            ),
+            optimizer=optimizer,
+            seed=int(seeds[3]),
+        )
         payload = build_analysis_payload(
             result,
             include_history=False,
