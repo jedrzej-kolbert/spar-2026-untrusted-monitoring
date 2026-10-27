@@ -9,6 +9,7 @@ import json
 import posixpath
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -549,6 +550,37 @@ def test_inputs_are_used_without_running(tmp_path: Path, ran: list[str]) -> None
         "finetune.self_rec.none"
     ] == pipeline_run.INPUT
     assert not any(i.startswith("generate.train") for i in ran)
+
+
+def test_analysis_loads_games_where_they_were_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lasr_labs_2025_control_project.pipeline import execute
+    from lasr_labs_2025_control_project.scripts import plot_data
+
+    given_dir, given_file = tmp_path / "a", tmp_path / "b" / "payload.json"
+    given_dir.mkdir()
+    given_file.parent.mkdir()
+    given_file.touch()
+    loaded: list[Path] = []
+    monkeypatch.setattr(
+        plot_data,
+        "load_game",
+        lambda folder: loaded.append(folder) or SimpleNamespace(name=folder.name),
+    )
+    monkeypatch.setattr(plot_data, "draw_analysis", lambda *a: [])
+    monkeypatch.setattr(execute, "analysis_tracker", lambda *a: None)
+    node = SimpleNamespace(
+        deps={"a": SimpleNamespace(hash="a"), "b": SimpleNamespace(hash="b")}
+    )
+    ctx = SimpleNamespace(
+        outputs={"a": Output(path=str(given_dir)), "b": Output(path=str(given_file))},
+        store=SimpleNamespace(
+            folder=lambda n: tmp_path / "store", write_analysis=lambda *a: None
+        ),
+    )
+    execute.run_analysis(node, ctx)  # type: ignore[arg-type]
+    assert loaded == [given_dir, given_file.parent]
 
 
 # -- stage pieces ----------------------------------------------------------------

@@ -656,7 +656,9 @@ def run_analysis(node: Node, ctx: RunContext) -> Output:
 
     games = {}
     for dep in node.deps.values():
-        game = load_game(ctx.store.folder(dep))
+        # a game given through inputs: lives where it was given, not in this store
+        output = Path(ctx.outputs[dep.hash].path)
+        game = load_game(output if output.is_dir() else output.parent)
         games[game.name] = game
     folder = ctx.store.folder(node)
     folder.mkdir(parents=True, exist_ok=True)
