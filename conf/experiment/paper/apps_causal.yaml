@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - /experiment/causal
+  - override /setting: apps
+  - override /models: closed
+  - _self_
+name: paper_apps_causal
+measurement:
+  share_generations: false
+# The none and minified fine-tunes were deleted from OpenAI (their ids 404).
+# To retrain them with the paper's recipe and a fresh seed, drop those inputs:
+#   experiment=paper/apps_causal '~inputs.finetune.causal.none' '~inputs.finetune.causal.minified'
+inputs:
+  finetune:
+    causal:
+      none: openai/ft:gpt-4.1-2025-04-14:lasr-labs:causal-base:CSQTsO5j:ckpt-step-2100
+      minified: openai/ft:gpt-4.1-2025-04-14:lasr-labs:causal-minified:CSRCpAfQ:ckpt-step-2100
+      paraphrased: openai/ft:gpt-4.1-2025-04-14:lasr-labs:causal-paraphrased:CS8Pm0LQ:ckpt-step-2100

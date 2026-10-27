@@ -1,0 +1,28 @@
+# APPS: competitive programming problems, scored in a Docker sandbox.
+name: apps
+problem_ids: [0, 2999]
+view: trajectory
+transforms: [none, minified, paraphrased]
+prompts:
+  attack:
+    self_rec: self_rec_subtle_attack_policy_prompt
+    causal: causal_attack_prompt
+    acausal: acausal_attack_base_prompt
+    # additive = passive self-recognition plus the causal signal
+    additive: causal_attack_prompt
+  honest: honest_policy_prompt
+  honeypot: self_rec_subtle_attack_policy_prompt
+  collusion:
+    self_rec: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+    causal: CAUSAL_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+    acausal: ACAUSAL_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+    additive: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+  collusion_user: MONITOR_USER_PROMPT
+  suspiciousness:
+    none: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+    minified: MINIFIED_HONEST_MONITOR_SYSTEM_PROMPT
+    paraphrased: PARAPHRASED_HONEST_MONITOR_SYSTEM_PROMPT
+  trusted_suspiciousness: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+  suspiciousness_user: MONITOR_USER_PROMPT
+  sft_system: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+  sft_user: MONITOR_USER_PROMPT

@@ -457,3 +457,17 @@ async def test_generate_without_a_reported_window_sends_everything(
     prompt, params = calls[0]
     assert prompt.length == sum(len(m.text) for m in messages[1:])
     assert params.max_tokens == 400
+
+
+def test_harmony_completions_keep_only_the_final_channel():
+    raw = (
+        "<|channel|>analysis<|message|>The code is `print(1)`.<|end|>"
+        "<|start|>assistant<|channel|>final<|message|><score>2</score><|return|>"
+    )
+    assert tp.split_harmony(raw) == ("The code is `print(1)`.", "<score>2</score>")
+    # cut off while still reasoning: no answer
+    assert tp.split_harmony("<|channel|>analysis<|message|>still thinking") == (
+        "still thinking",
+        "",
+    )
+    assert tp.split_harmony("plain Qwen output") is None

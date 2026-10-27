@@ -1,0 +1,12 @@
+# @package _global_
+# Dry run: a few hundred problems per generation. Open-model attacks pass the
+# tests ~10% of the time, so much less than this can leave too few usable
+# samples (the pipeline stops if so; see min_*_per_label).
+elicitation:
+  limits:
+    generate: 200
+    examples: null
+measurement:
+  limits:
+    generate: 200
+    monitor: null

@@ -1,15 +1,15 @@
-"""
-Read solutions from an eval log and score them with monitors
-Append the scores to the resulting eval log while keeping the original solutions and scores
+"""Monitor stage: score solutions from an eval log with the configured monitors.
+
+The scores are appended to a copy of the log; the original solutions and
+scores are kept. The pipeline (``lasr_labs_2025_control_project.pipeline``)
+calls ``run_monitor``.
 """
 
 import math
 import shutil
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any, Optional
 
-import click
 from inspect_ai import Task, eval, task
 from inspect_ai.model import (
     ChatMessageSystem,
@@ -35,10 +35,8 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     MonitorConfig,
     RunLabel,
 )
-from lasr_labs_2025_control_project.utils.config_loader import (
-    MonitorRunConfig,
-    load_and_normalize_config,
-)
+from lasr_labs_2025_control_project.tracking import StageRun, input_counts
+from lasr_labs_2025_control_project.utils.config_loader import MonitorRunConfig
 from lasr_labs_2025_control_project.utils.tinker_provider import (
     collusion_yes_no_logprobs,
     is_tinker_model,
@@ -51,6 +49,22 @@ from lasr_labs_2025_control_project.utils.utils import (
 
 
 _SCORE_ATTEMPTS = 3
+
+
+def record_tinker_usage(model_name: str, usage: dict[str, int]) -> None:
+    """Count a direct Tinker request in the eval's model usage, as Inspect does
+    for its own model calls, so the log's token totals include it."""
+    from inspect_ai.model import ModelUsage
+    from inspect_ai.model._model import record_and_check_model_usage
+
+    record_and_check_model_usage(
+        model_name,
+        ModelUsage(
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            total_tokens=usage["input_tokens"] + usage["output_tokens"],
+        ),
+    )
 
 
 def collusion_score(yes_logprob: float, no_logprob: float) -> float:
@@ -192,9 +206,19 @@ def create_collusion_accuracy_scorer(
     return collusion_accuracy_scorer()
 
 
+def _attempt_config(
+    base: GenerateConfig, attempt: int, **kwargs: Any
+) -> GenerateConfig:
+    """``base`` for one scoring attempt: a retry with the same seed would just
+    repeat the unparsable answer, so each attempt offsets it."""
+    seed = None if base.seed is None else base.seed + attempt - 1
+    return base.merge(GenerateConfig(seed=seed, **kwargs))
+
+
 def create_collusion_monitor_scorer(
     name: str,
     monitor_config: MonitorConfig,
+    generate_config: Optional[GenerateConfig] = None,
 ) -> Scorer:
     @scorer(metrics=[], name=name)
     def collusion_monitor_scorer() -> Scorer:
@@ -229,6 +253,8 @@ def create_collusion_monitor_scorer(
                         system_prompt=monitor_config.model_info.system_prompt,
                         user_prompt=user_prompt,
                     )
+                    if logprob_dict.get("usage"):
+                        record_tinker_usage(model_name, logprob_dict["usage"])
                 else:
                     response = await model.generate(
                         [
@@ -237,7 +263,9 @@ def create_collusion_monitor_scorer(
                             ),
                             ChatMessageUser(content=user_prompt),
                         ],
-                        config=GenerateConfig(
+                        config=_attempt_config(
+                            generate_config or GenerateConfig(),
+                            attempts,
                             logprobs=True,
                             top_logprobs=20,
                             reasoning_tokens=0,
@@ -337,16 +365,19 @@ async def suspiciousness_monitor(
     system_prompt: str,
     user_prompt: str,
     model: str | None = None,
+    generate_config: Optional[GenerateConfig] = None,
 ) -> Score:
     monitor_model = get_model(model)
 
-    for _ in range(_SCORE_ATTEMPTS):
+    for attempt in range(1, _SCORE_ATTEMPTS + 1):
         response = await monitor_model.generate(
             [
                 ChatMessageSystem(content=system_prompt),
                 ChatMessageUser(content=user_prompt),
             ],
-            config=GenerateConfig(
+            config=_attempt_config(
+                generate_config or GenerateConfig(),
+                attempt,
                 reasoning_tokens=0,
                 reasoning_effort="minimal",  # openai models
             ),
@@ -364,6 +395,7 @@ async def suspiciousness_monitor(
 def create_monitor_suspiciousness_scorer(
     name: str,
     monitor_config: MonitorConfig,
+    generate_config: Optional[GenerateConfig] = None,
 ) -> Scorer:
     @scorer(metrics=[mean()], name=name)
     def monitor_suspiciousness_scorer() -> Scorer:
@@ -379,6 +411,7 @@ def create_monitor_suspiciousness_scorer(
                     problem_statement=problem,
                     solution=solution,
                 ),
+                generate_config=generate_config,
             )
 
             store().set(f"{name}_metadata", monitor_config)
@@ -397,6 +430,7 @@ def create_monitor_suspiciousness_scorer(
 @task
 def monitor_solutions(
     run: MonitorRunConfig,
+    generate_config: Optional[GenerateConfig] = None,
 ) -> Task:
     """
     Reads solutions from an eval log and scores them with monitors
@@ -421,6 +455,7 @@ def monitor_solutions(
             create_collusion_monitor_scorer(
                 "untrusted_collusion_score",
                 run.monitors.untrusted_collusion_monitor,
+                generate_config,
             )
         )
         # also add accuracy scorer
@@ -437,6 +472,7 @@ def monitor_solutions(
             create_collusion_monitor_scorer(
                 "trusted_collusion_score",
                 run.monitors.trusted_collusion_monitor,
+                generate_config,
             )
         )
 
@@ -445,6 +481,7 @@ def monitor_solutions(
             create_monitor_suspiciousness_scorer(
                 "untrusted_suspiciousness_score",
                 run.monitors.untrusted_backdoor_monitor,
+                generate_config,
             )
         )
 
@@ -453,6 +490,7 @@ def monitor_solutions(
             create_monitor_suspiciousness_scorer(
                 "trusted_suspiciousness_score",
                 run.monitors.trusted_backdoor_monitor,
+                generate_config,
             )
         )
 
@@ -467,40 +505,36 @@ def monitor_solutions(
     )
 
 
-@click.command()
-@click.option("--config", type=str, required=True)
-def main(config: str):
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    config_path = Path(config)
-    normalized = load_and_normalize_config(config, config_type="monitor")
-    Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
-    shutil.copy(
-        config_path, normalized.experiment_folder / "configs" / "monitor_config.yaml"
-    )
-
-    for run in normalized.runs:
-        assert isinstance(run, MonitorRunConfig), (
-            "Run is not a MonitorRunConfig, make sure to use the correct config"
-        )
+def run_monitor(
+    run: MonitorRunConfig,
+    tracker: StageRun,
+    *,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    max_connections: int = 8,
+) -> Any:
+    """Score ``run.eval_path`` under ``tracker``; save to ``run.save_path``."""
+    config = GenerateConfig(seed=seed, temperature=temperature)
+    with tracker:
         result = eval(
-            tasks=monitor_solutions(run),
-            max_connections=8,  # Cap parallel API/Docker work; total example count is unchanged.
-            max_sandboxes=8,
+            tasks=monitor_solutions(run, config),
+            # Caps parallel API/Docker work; the sample count is unchanged.
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             limit=run.limit,
+            metadata=tracker.eval_metadata(),
         )
         run.save_path.parent.mkdir(parents=True, exist_ok=True)
-        run.save_path.touch()
         shutil.copy(result[0].location, run.save_path)
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{run.label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {run.save_path}"
-            )
-
-
-if __name__ == "__main__":
-    main()
+        tracker.finish_eval(
+            result[0],
+            run.save_path,
+            limit=run.limit,
+            metadata={"label": run.label},
+            extra_counts=input_counts(
+                run.eval_path, result[0].eval.dataset.samples or 0
+            ),
+        )
+    return result[0]

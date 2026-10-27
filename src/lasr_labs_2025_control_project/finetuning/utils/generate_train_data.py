@@ -177,6 +177,51 @@ def write_jsonl(rows: list[dict[str, Any]], filepath: str | Path):
         raise RuntimeError(f"Failed to write JSONL file to {filepath}: {e}") from e
 
 
+def build_train_rows(
+    train_dataset: Dataset,
+    target_model_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    seed: int,
+    upsample_pos_factor: int = 1,
+    upsample_neg_factor: int = 1,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Labelled, upsampled, shuffled train rows: (rows, positives, negatives).
+
+    Positives are solutions written by target_model_name; each row is
+    {"problem_id", "messages", "model"}.
+    """
+    train_rows = prepare_rows(
+        train_dataset, target_model_name, system_prompt, user_prompt
+    )
+    logger.info(f"Original train rows: {len(train_rows)}")
+
+    train_pos = [
+        sample
+        for _ in range(upsample_pos_factor)
+        for sample in train_rows
+        if sample["model"] == target_model_name
+    ]
+    train_neg = [
+        sample
+        for _ in range(upsample_neg_factor)
+        for sample in train_rows
+        if sample["model"] != target_model_name
+    ]
+    logger.info(
+        f"After upsampling: positives={len(train_pos)}, negatives={len(train_neg)}"
+    )
+
+    # Train set rows: include all negatives and the upsampled positives
+    rows = [*train_neg, *train_pos]
+    logger.info(f"Total train rows before shuffling: {len(rows)}")
+
+    # Shuffle training rows for randomness
+    random.Random(seed).shuffle(rows)
+    logger.info(f"Shuffled train rows with seed {seed}")
+    return rows, train_pos, train_neg
+
+
 def build_and_save_jsonl(
     train_dataset: Dataset,
     target_model_name: str,
@@ -213,37 +258,15 @@ def build_and_save_jsonl(
     output_folder.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Ensured output folder exists: {output_folder}")
 
-    # Build flattened rows
-    train_rows = prepare_rows(
-        train_dataset, target_model_name, system_prompt, user_prompt
+    train_rows, train_pos, train_neg = build_train_rows(
+        train_dataset,
+        target_model_name,
+        system_prompt,
+        user_prompt,
+        seed,
+        upsample_pos_factor,
+        upsample_neg_factor,
     )
-    logger.info(f"Original train rows: {len(train_rows)}")
-
-    train_pos = [
-        sample
-        for _ in range(upsample_pos_factor)
-        for sample in train_rows
-        if sample["model"] == target_model_name
-    ]
-    train_neg = [
-        sample
-        for _ in range(upsample_neg_factor)
-        for sample in train_rows
-        if sample["model"] != target_model_name
-    ]
-    logger.info(
-        f"After upsampling: positives={len(train_pos)}, negatives={len(train_neg)}"
-    )
-
-    # Train set rows: include all negatives and the upsampled positives
-    train_rows = []
-    train_rows.extend(train_neg)
-    train_rows.extend(train_pos)
-    logger.info(f"Total train rows before shuffling: {len(train_rows)}")
-
-    # Shuffle training rows for randomness
-    random.Random(seed).shuffle(train_rows)
-    logger.info(f"Shuffled train rows with seed {seed}")
 
     # Write files
     train_file = output_folder / "train_messages.jsonl"
