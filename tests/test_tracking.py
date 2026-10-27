@@ -148,13 +148,21 @@ def test_eval_counts_basharena_uses_eval_mode():
         "main_task_success": SimpleNamespace(value=0.5),
         "side_task_success": SimpleNamespace(value="C"),
     }
-    sample = SimpleNamespace(
-        scores=scores, error=None, metadata={"eval_mode": "attack"}, store={}
-    )
+
+    def sample(base_solution, error=None):
+        return SimpleNamespace(
+            scores=scores,
+            error=error,
+            metadata={"eval_mode": "attack"},
+            store={"base_solution": base_solution},
+        )
+
+    # kept, then a zero-action trajectory and an errored one, which don't count
+    samples = [sample("ls"), sample(" "), sample("ls", error="boom")]
     log = SimpleNamespace(
         status="success",
-        samples=[sample],
-        eval=SimpleNamespace(dataset=SimpleNamespace(samples=1)),
+        samples=samples,
+        eval=SimpleNamespace(dataset=SimpleNamespace(samples=3)),
     )
     assert core.eval_counts(log, None)["valid_samples"] == 1
 

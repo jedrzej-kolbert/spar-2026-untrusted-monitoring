@@ -71,6 +71,34 @@ def test_filter_and_preprocessing():
                     )
 
 
+def test_eval_examples_from_basharena_logs():
+    scores = {
+        "main_task_success": SimpleNamespace(value=0.5),
+        "side_task_success": SimpleNamespace(value="C"),
+    }
+
+    def sample(store, error=None):
+        return SimpleNamespace(
+            scores=scores,
+            error=error,
+            metadata={"eval_mode": "attack", "main_task_description": "task"},
+            store=store,
+        )
+
+    kept = sample({"base_solution": "ls"})
+    no_actions = sample({"base_solution": " "})
+    errored = sample({"base_solution": "ls"}, error="boom")
+    log = SimpleNamespace(samples=[no_actions, kept, errored])
+    with (
+        patch.object(sft_data, "get_prompt_by_name", return_value="{solution}"),
+        patch.object(sft_data, "read_eval_log", return_value=log),
+    ):
+        examples = sft_data.load_eval_examples(
+            Path("attacks"), Path("honeypots"), "base_solution"
+        )
+    assert [label for label, _, _ in examples] == [1, 0]  # only `kept`, per file
+
+
 def _log(samples, model):
     return SimpleNamespace(samples=samples, eval=SimpleNamespace(model=model))
 
