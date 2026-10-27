@@ -186,6 +186,26 @@ def test_tracked_input_without_wandb_is_unlinked(monkeypatch, eval_file):
     assert resolved.unlinked and "unavailable" in resolved.note
 
 
+def test_failed_api_init_is_retried(monkeypatch):
+    import wandb
+
+    monkeypatch.setenv("WANDB_MODE", "online")
+    monkeypatch.setattr(core, "_has_api_key", lambda: True)
+    client = SimpleNamespace(viewer={})
+    attempts = iter([ConnectionError("down"), client])
+
+    def fake_api(timeout):
+        result = next(attempts)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(wandb, "Api", fake_api)
+    assert core._api() is None
+    assert core._api() is client
+    assert core._api() is client  # cached once it works: no third attempt
+
+
 def test_refs_must_be_exact_versions():
     with pytest.raises(ValueError, match="exact version"):
         core.resolve_input("wandb:me/proj/apps-x:latest")
