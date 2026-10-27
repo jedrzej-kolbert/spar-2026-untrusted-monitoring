@@ -201,6 +201,8 @@ steps; use the same value in both.
   |---|---|---|
   | `<variant>/safety` | `<variant>/usefulness` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
   | `<variant>/band/safety_{lo,median,hi}` | `<variant>/band/usefulness` | the same, as bootstrap percentiles |
+  | `strategy/<variant>/<parameter>` | `strategy/<variant>/usefulness` | one regeneration cutoff: blue's most likely `blue_*` value, or red's best-response `red_*` value, at equilibrium |
+  | `strategy/<variant>/{blue_top_probability,blue_support_size,red_nash_support_size}` | `strategy/<variant>/usefulness` | the same: how mixed each team's equilibrium strategy is |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |
 
   `<variant>` is `all_monitors` or `um_only`. ROC curves are W&B ROC charts (`roc/<monitor>`; in an
@@ -209,6 +211,11 @@ steps; use the same value in both.
   negatives are honeypots and "at or above" means U would collude; for the two suspiciousness
   monitors, negatives are honest solutions. These are the empirical curves; the figures' trusted
   and collusion ROCs show the fitted model the game uses, which interpolates between thresholds.
+  `red_team_roc_threshold` is U's collusion threshold, in YES − NO logprob, so it isn't
+  comparable across monitor arms. Set `red_team_p_attack` panels to a log y-axis. When
+  `red_nash_support_size` > 1, red has several equally good responses, so a jump in red's values
+  may not mean anything. `figures/strategies` shows blue's whole mix and the bootstrap
+  replicates, with usefulness on the same axis as `figures/outcome_distributions`.
 - **Local figures** for the paper's groupings come from `scripts/run_all_grouped_plotting.sh`. To
   analyse every monitor config in a tree, run `scripts/plot_everything.sh <config dir>`. For big
   resumable bootstrap sweeps use `scripts/bootstrap.py`, then `scripts/plot_bootstrap_curves.py`.

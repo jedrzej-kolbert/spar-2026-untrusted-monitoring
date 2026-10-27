@@ -10,7 +10,9 @@ folder. With several configs, the local figures compare them on shared axes.
 Each condition is one W&B run. Curves are logged as raw numbers for W&B's own
 panels: each point is logged with its x-axis as a second metric
 (`StageRun.define_curve`; metric meanings are in the README's Results
-section). The per-condition figures are also logged as images, for plots W&B
+section). Equilibrium strategies go in their own `strategy/` panel section,
+one metric per strategy variable, so new variables appear without code
+changes. The per-condition figures are also logged as images, for plots W&B
 doesn't draw by default. The analysis files are logged as an artifact.
 """
 
@@ -20,7 +22,7 @@ import json
 import logging
 import tempfile
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -123,6 +125,7 @@ def main() -> None:
             allow_unlinked=args.allow_unlinked,
         )
     aggregated = {label: game.result for label, game in games.items()}
+    bootstraps = {label: game.replicates for label, game in games.items()}
 
     dest_folder = (
         normalized.results_folder or "src/lasr_labs_2025_control_project/results"
@@ -139,20 +142,22 @@ def main() -> None:
                 / f"results/grouped/all_monitors/{args.grouped_path}"
             )
     logger.info("Generating visualizations across %d experiments", len(aggregated))
-    plot_data(aggregated, destination_folder=dest_folder)
+    plot_data(aggregated, destination_folder=dest_folder, bootstrap=bootstraps)
     logger.info("Visualizations saved to %s", dest_folder)
     log_analysis(games, args.grouped_path, allow_unlinked=args.allow_unlinked)
 
 
 @dataclass
 class Game:
-    """One condition's solved game: its primary result and payload, and the
-    ``game`` artifact its run logged (None when W&B is off)."""
+    """One condition's solved game: its primary result and payload, the
+    ``game`` artifact its run logged (None when W&B is off), and its bootstrap
+    replicates (drawn in the strategies figure)."""
 
     name: str
     result: OptimizationResult
     payload: dict[str, Any]
     artifact: Any = None
+    replicates: list[dict[str, Any]] = field(default_factory=list)
 
 
 def analysis_run_name(games: Mapping[str, Game], grouped_path: Optional[str]) -> str:
@@ -210,6 +215,7 @@ def log_analysis(
             {label: game.result for label, game in games.items()},
             figures,
             file_format="png",
+            bootstrap={label: game.replicates for label, game in games.items()},
         )
         images = sorted(figures.glob("*.png"))
         for image in images:
@@ -282,6 +288,7 @@ def analyse_condition(
         allow_unlinked=allow_unlinked,
     )
     primary: OptimizationResult | None = None
+    primary_reps: list[dict[str, Any]] = []
     primary_payload: dict[str, Any] = {}
     with tracker, tempfile.TemporaryDirectory() as tmp:
         files: list[Path] = []
@@ -322,8 +329,9 @@ def analyse_condition(
                     f.writelines(json.dumps(r) + "\n" for r in reps)
                 files.append(path)
             log_variant(tracker, variant, payload, reps, ci)
+            log_strategies(tracker, variant, payload)
             if index == 0:
-                primary, primary_payload = result, payload
+                primary, primary_reps, primary_payload = result, reps, payload
                 log_payload_overview(tracker, payload)
 
         assert primary is not None
@@ -337,7 +345,7 @@ def analyse_condition(
             wait=True,
         )
     primary_payload["tags"] = config_tags(raw)
-    return Game(name, primary, primary_payload, artifact)
+    return Game(name, primary, primary_payload, artifact, primary_reps)
 
 
 def condition_models(
@@ -396,6 +404,41 @@ def log_variant(
         summary[f"{variant}/bootstrap_failed"] = sum("error" in r for r in replicates)
     summary[f"{variant}/converged"] = payload.get("converged")
     tracker.summary(summary)
+
+
+def log_strategies(tracker: StageRun, variant: str, payload: dict[str, Any]) -> None:
+    """Equilibrium strategies across the sweep, in the `strategy/` panel section.
+
+    Each strategy variable is logged under its game-parameter name, taken
+    from `best_parameters`: blue's most likely pure strategy and red's best
+    response to blue's mix (what safety is computed against). Alongside them,
+    how mixed each team's Nash strategy is.
+    """
+    prefix = f"strategy/{variant}"
+    x = f"{prefix}/usefulness"
+    points = []
+    for entry in sorted(payload["sweep"], key=lambda e: e["usefulness"]):
+        blue_mix = entry.get("blue_mixed_strategy") or []
+        point = {
+            **{
+                f"{prefix}/{name}": value
+                for name, value in (entry.get("best_parameters") or {}).items()
+            },
+            f"{prefix}/blue_top_probability": max(
+                (prob for _, prob in blue_mix), default=None
+            ),
+            f"{prefix}/blue_support_size": len(blue_mix),
+            f"{prefix}/red_nash_support_size": len(
+                entry.get("red_mixed_strategy") or []
+            ),
+        }
+        points.append(
+            (entry["usefulness"], {k: v for k, v in point.items() if v is not None})
+        )
+    for key in dict.fromkeys(k for _, point in points for k in point):
+        tracker.define_curve(key, x)
+    for usefulness, point in points:
+        tracker.log({x: usefulness, **point})
 
 
 def log_payload_overview(tracker: StageRun, payload: dict[str, Any]) -> None:
