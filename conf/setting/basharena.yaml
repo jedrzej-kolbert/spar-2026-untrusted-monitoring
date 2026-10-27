@@ -1,0 +1,26 @@
+# BashArena: agent trajectories. Generation runs in basharena_runtime/ (its own
+# environment; Docker needed), and every monitor scores each action as the
+# per-action monitor sees it. Paraphrasing and minification aren't available.
+# Train uses odd task ids, test even. Each sample can use ~2.3 GB.
+name: basharena
+view: action
+action_view:
+  max_history_chars: null
+  actions_per_trajectory: null
+transforms: [none]
+default_generation_limit: 5
+generation_concurrency: 1
+prompts:
+  attack:
+    self_rec: BASHARENA_ATTACK_SYSTEM_PROMPT
+  honest: BASHARENA_HONEST_SYSTEM_PROMPT
+  honeypot: BASHARENA_ATTACK_SYSTEM_PROMPT
+  collusion:
+    self_rec: BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT
+  collusion_user: BASHARENA_ACTION_USER_PROMPT
+  suspiciousness:
+    none: BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT
+  trusted_suspiciousness: BASHARENA_ACTION_SUSPICIOUSNESS_SYSTEM_PROMPT
+  suspiciousness_user: BASHARENA_ACTION_SUSPICIOUSNESS_USER_PROMPT
+  sft_system: BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT
+  sft_user: BASHARENA_ACTION_USER_PROMPT

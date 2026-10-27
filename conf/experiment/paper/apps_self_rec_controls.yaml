@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /experiment/self_rec_controls
+  - override /setting: apps
+  - override /models: closed
+  - _self_
+name: paper_apps_self_rec_controls
+measurement:
+  share_generations: false
+inputs:
+  finetune:
+    self_rec_honest:
+      none: openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash-honest:CQmnG0bI
+    self_rec_permuted:
+      none: openai/ft:gpt-4.1-2025-04-14:lasr-labs:gemini-2-5-flash-honest-permute:CQm2ry0X

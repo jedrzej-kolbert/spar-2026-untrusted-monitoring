@@ -1,0 +1,15 @@
+# @package _global_
+# BigCodeBench had no causal SFT arm.
+defaults:
+  - /experiment/causal
+  - override /setting: bigcodebench
+  - override /models: closed
+  - _self_
+name: paper_bigcodebench_causal
+measurement:
+  share_generations: false
+  arms:
+    sft: null
+elicitation:
+  arms:
+    causal: null
