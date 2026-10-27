@@ -35,11 +35,14 @@ from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
+
 from inspect_ai.model import (
     ChatCompletionChoice,
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageUser,
+    ContentReasoning,
+    ContentText,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
@@ -437,6 +440,31 @@ def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
 # inspect-ai provider: handles plain sampling (generation / text monitors /
 # paraphrasing). Collusion logprobs go through collusion_yes_no_logprobs below.
 # --------------------------------------------------------------------------- #
+# Harmony (gpt-oss) completions write their reasoning to an "analysis" channel
+# and the answer to a "final" one. Decoding without special tokens runs the two
+# together ("analysis...assistantfinal..."), so a paraphrase or monitor answer
+# would carry the reasoning, which may quote the original code verbatim.
+_HARMONY_FINAL = "<|channel|>final<|message|>"
+_HARMONY_ANALYSIS = "<|channel|>analysis<|message|>"
+_HARMONY_SPECIAL = ("<|end|>", "<|return|>", "<|start|>assistant", "<|call|>")
+
+
+def split_harmony(raw: str) -> tuple[str, str] | None:
+    """(reasoning, answer) of a harmony completion decoded with special tokens;
+    None if it isn't one. A completion cut off before its final channel has an
+    empty answer."""
+    if _HARMONY_ANALYSIS not in raw and _HARMONY_FINAL not in raw:
+        return None
+    head, final_marker, answer = raw.partition(_HARMONY_FINAL)
+    if not final_marker:
+        head, answer = raw, ""
+    reasoning = head.replace(_HARMONY_ANALYSIS, "")
+    for token in _HARMONY_SPECIAL:
+        reasoning = reasoning.replace(token, "")
+        answer = answer.replace(token, "")
+    return reasoning.strip(), answer.strip()
+
+
 @_modelapi(name="tinker")
 def tinker() -> type[ModelAPI]:
     return TinkerAPI
@@ -538,12 +566,25 @@ class TinkerAPI(ModelAPI):
             total_tokens=prompt.length + len(seq.tokens),
         )
         if not tools:
-            text = _tokenizer(self.base_model).decode(
-                list(seq.tokens), skip_special_tokens=True
+            tokenizer = _tokenizer(self.base_model)
+            harmony = split_harmony(
+                tokenizer.decode(list(seq.tokens), skip_special_tokens=False)
             )
-            output = ModelOutput.from_content(
-                model=self.model_name, content=text, stop_reason=stop_reason
-            )
+            if harmony is None:
+                text = tokenizer.decode(list(seq.tokens), skip_special_tokens=True)
+                output = ModelOutput.from_content(
+                    model=self.model_name, content=text, stop_reason=stop_reason
+                )
+            else:
+                reasoning, answer = harmony
+                output = ModelOutput.from_content(
+                    model=self.model_name,
+                    content=[
+                        ContentReasoning(reasoning=reasoning),
+                        ContentText(text=answer),
+                    ],
+                    stop_reason=stop_reason,
+                )
             output.usage = usage
             return output
 
@@ -592,7 +633,8 @@ async def collusion_yes_no_logprobs(
     ``YES`` and ``NO`` continuations, reading each one's summed token logprob
     (handles multi-token YES/NO). Returns ``{"YES", "NO", "completion"}`` in the
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
-    scorer treats it identically.
+    scorer treats it identically, plus ``"usage"``: the request's billed
+    ``input_tokens`` (prefill) and ``output_tokens``, for cost accounting.
 
     ``single_prefill=True`` reads both logprobs from one request instead of two
     when YES and NO are single tokens (needs ``tinker>=0.30``).
@@ -631,7 +673,9 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
+    usage = {"input_tokens": 0, "output_tokens": 0}
     if single_prefill and len(yes_ids) == len(no_ids) == 1:
+        usage = {"input_tokens": len(prefix_ids) + 1, "output_tokens": 1}
         import torch
 
         # Target row i scores prompt position i + 1, so the answer slot needs a
@@ -655,6 +699,7 @@ async def collusion_yes_no_logprobs(
     else:
         yes_lp = await _candidate_logprob(yes_ids)
         no_lp = await _candidate_logprob(no_ids)
+        usage["input_tokens"] = 2 * len(prefix_ids) + len(yes_ids) + len(no_ids)
 
     if yes_lp is not None and no_lp is not None:
         answer = yes_text if yes_lp >= no_lp else no_text
@@ -666,4 +711,4 @@ async def collusion_yes_no_logprobs(
         answer = ""
     completion = f"{answer_open}{answer}</answer>" if answer else ""
 
-    return {"YES": yes_lp, "NO": no_lp, "completion": completion}
+    return {"YES": yes_lp, "NO": no_lp, "completion": completion, "usage": usage}

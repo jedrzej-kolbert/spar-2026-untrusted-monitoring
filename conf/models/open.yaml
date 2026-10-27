@@ -1,0 +1,9 @@
+# Open-weights models on Tinker. Check a model is sampleable on your account
+# before a run: the Tinker catalogue changes, and "listed" does not imply
+# "sampleable" (see docs/open_models.md).
+U: tinker/Qwen/Qwen3-30B-A3B-Instruct-2507
+T: tinker/Qwen/Qwen3.5-4B
+H: tinker/openai/gpt-oss-120b
+# The open generators reason before <final_code> and were silently truncated
+# at 4096 tokens (about two thirds of a pilot came back empty).
+generation_max_tokens: 16384

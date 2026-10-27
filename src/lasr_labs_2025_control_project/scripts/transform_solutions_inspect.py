@@ -1,19 +1,20 @@
-"""
-Runs apps scorers on the solutions from the eval logs without generating new solutions.
-Make sure AppsSetting is configured to use same data split as in the eval log.
+"""Transform stage: signal jamming (minifier or LLM paraphraser) over solutions.
+
+Reads a generation's .eval log and keeps each sample's original scores, so the
+transformed log can be monitored like the original. The pipeline
+(``lasr_labs_2025_control_project.pipeline``) calls ``run_transform``.
 """
 
 import shutil
-from pathlib import Path
+from typing import Any, Optional
 
-import click
 import python_minifier
-from dotenv import load_dotenv
 from inspect_ai import Epochs, Task, eval, task
 from inspect_ai.model import (
     ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageUser,
+    GenerateConfig,
     ModelOutput,
     get_model,
 )
@@ -34,11 +35,9 @@ from lasr_labs_2025_control_project.scripts.helpers.metadata_dataclasses import 
     TransformInfo,
     TransformType,
 )
+from lasr_labs_2025_control_project.tracking import StageRun, input_counts
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
-from lasr_labs_2025_control_project.utils.config_loader import (
-    TransformRunConfig,
-    load_and_normalize_config,
-)
+from lasr_labs_2025_control_project.utils.config_loader import TransformRunConfig
 from lasr_labs_2025_control_project.utils.utils import (
     is_python_solution,
     remove_comments,
@@ -90,13 +89,15 @@ def minify_solution() -> Solver:
 def summarize_solution(
     model_info: ModelInfo,
     remove_comments_from_solution: bool = False,
+    config: Optional[GenerateConfig] = None,
 ):
     """
     Summarizes the solution using the summarizer model.
 
     Args:
-        summarizer_system_prompt: System prompt to use for summarizing.
-        summarizer_base_prompt: Base (user) prompt to use for summarizing. Expected to contain `{solution}` placeholder.
+        model_info: The summarizer model and prompts; the base (user) prompt
+            contains a `{solution}` placeholder.
+        config: Sampling settings (seed, temperature) for the summarizer.
     """
     model = get_model(model_info.model)
 
@@ -121,7 +122,8 @@ def summarize_solution(
                         else code
                     )
                 ),
-            ]
+            ],
+            config=config or GenerateConfig(),
         )
 
         state.messages.append(state.output.message)
@@ -164,6 +166,7 @@ def create_named_scorer(scorer_name: str) -> Scorer:
 @task
 def transform_solutions(
     run: TransformRunConfig,
+    config: Optional[GenerateConfig] = None,
 ) -> Task:
     """
     Applies paraphrasing (summarisation) or minification to solutions in the eval log.
@@ -199,6 +202,7 @@ def transform_solutions(
         solver = summarize_solution(
             run.transform.model_info,
             run.transform.remove_comments,
+            config,
         )
     elif run.transform.type == TransformType.MINIFIER:
         solver = minify_solution()
@@ -219,39 +223,36 @@ def transform_solutions(
     )
 
 
-@click.command()
-@click.option("--config", type=str, required=True)
-def main(config: str):
-    load_dotenv()
-    config_path = Path(config)
-    normalized = load_and_normalize_config(config, config_type="transform")
-    Path(normalized.experiment_folder / "configs").mkdir(parents=True, exist_ok=True)
-    shutil.copy(
-        config_path, normalized.experiment_folder / "configs" / "transform_config.yaml"
-    )
-
-    for run in normalized.runs:
-        assert isinstance(run, TransformRunConfig), (
-            "Run is not a TransformRunConfig, make sure to use the correct config"
-        )
+def run_transform(
+    run: TransformRunConfig,
+    tracker: StageRun,
+    *,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    max_connections: int = 48,
+) -> Any:
+    """Transform ``run.eval_path`` under ``tracker``; save to ``run.save_path``."""
+    config = GenerateConfig(seed=seed, temperature=temperature)
+    with tracker:
         result = eval(
-            tasks=transform_solutions(run),
+            tasks=transform_solutions(run, config),
             epochs=Epochs(1, ["pass_at_1"]),
-            max_connections=48,
-            max_sandboxes=48,
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
             reasoning_tokens=0,
             reasoning_effort="minimal",  # openai models
             limit=run.limit,
+            metadata=tracker.eval_metadata(),
         )
         run.save_path.parent.mkdir(parents=True, exist_ok=True)
-        run.save_path.touch()
         shutil.copy(result[0].location, run.save_path)
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{run.label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {run.save_path}"
-            )
-
-
-if __name__ == "__main__":
-    main()
+        tracker.finish_eval(
+            result[0],
+            run.save_path,
+            limit=run.limit,
+            metadata={"label": run.label, "transform": run.transform.type},
+            extra_counts=input_counts(
+                run.eval_path, result[0].eval.dataset.samples or 0
+            ),
+        )
+    return result[0]
