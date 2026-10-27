@@ -32,6 +32,7 @@ import argparse
 import gzip
 import json
 import logging
+import zlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -119,7 +120,8 @@ def read_replicates(path: Path) -> list[dict[str, Any]]:
     try:
         with gzip.open(path, "rt", encoding="utf-8") as f:
             rows.extend(json.loads(line) for line in f if line.strip())
-    except (OSError, EOFError, json.JSONDecodeError):
+    # zlib.error: a chunk cut mid-stream with another appended after it
+    except (OSError, EOFError, zlib.error, json.JSONDecodeError):
         logger.warning("%s: interrupted write, kept %d replicates", path, len(rows))
     return rows
 
