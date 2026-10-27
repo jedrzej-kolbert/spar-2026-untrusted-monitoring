@@ -111,7 +111,12 @@ def _score(main, side=None):
 
 def _log(status, n_samples, dataset_samples, errors=0):
     samples = [
-        SimpleNamespace(scores=_score("C", "C"), error="boom" if i < errors else None)
+        SimpleNamespace(
+            scores=_score("C", "C"),
+            error="boom" if i < errors else None,
+            metadata={},
+            store={},
+        )
         for i in range(n_samples)
     ]
     return SimpleNamespace(
@@ -136,6 +141,22 @@ def test_eval_counts_completeness(status, n, dataset, limit, complete):
     assert counts["complete"] is complete
     assert counts["expected_samples"] == (dataset if limit is None else limit)
     assert counts["samples"] == n
+
+
+def test_eval_counts_basharena_uses_eval_mode():
+    scores = {
+        "main_task_success": SimpleNamespace(value=0.5),
+        "side_task_success": SimpleNamespace(value="C"),
+    }
+    sample = SimpleNamespace(
+        scores=scores, error=None, metadata={"eval_mode": "attack"}, store={}
+    )
+    log = SimpleNamespace(
+        status="success",
+        samples=[sample],
+        eval=SimpleNamespace(dataset=SimpleNamespace(samples=1)),
+    )
+    assert core.eval_counts(log, None)["valid_samples"] == 1
 
 
 def test_score_rates():

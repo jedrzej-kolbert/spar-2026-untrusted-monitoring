@@ -343,7 +343,16 @@ def eval_counts(log: Any, limit: Optional[int]) -> dict[str, Any]:
         "expected_samples": expected,
         "samples": len(samples),
         "errored_samples": sum(1 for s in samples if getattr(s, "error", None)),
-        "valid_samples": sum(1 for s in samples if check_sample_is_valid(s.scores)),
+        "valid_samples": sum(
+            1
+            for s in samples
+            if check_sample_is_valid(
+                s.scores,
+                s.metadata.get("eval_mode"),
+                base_solution={**s.metadata, **s.store}.get("base_solution"),
+                errored=s.error is not None,
+            )
+        ),
     }
     counts["complete"] = log.status == "success" and len(samples) == expected
     return counts
