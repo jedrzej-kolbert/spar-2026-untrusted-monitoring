@@ -106,7 +106,7 @@ of each group, or override any value as `key=value`:
 | Group | Options |
 |---|---|
 | `experiment` | `self_rec`, `causal`, `acausal`, `additive`, `self_rec_controls` (label controls), `acausal_optimized`, and the paper's closed-model conditions under `paper/` |
-| `setting` | `apps`, `bigcodebench`, `basharena` (needs `measurement.transforms=[none]`) |
+| `setting` | `apps`, `bigcodebench`, `basharena` (transforms default to the setting's own: `none` only) |
 | `models` | `open` (Tinker), `closed` (OpenAI/Gemini); or set `models.U`, `models.T`, `models.H` |
 | `limits` | `full`, `dry` |
 

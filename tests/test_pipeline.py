@@ -86,8 +86,13 @@ def test_unknown_keys_and_bad_values_are_rejected() -> None:
             "optimization.variants=[tm_only]",
             "measurement.monitors=[untrusted_collusion]",
         )
+    assert graph("experiment=self_rec", "setting=basharena").targets
     with pytest.raises(ConfigError, match="doesn't support transform 'minified'"):
-        graph("experiment=self_rec", "setting=basharena")
+        graph(
+            "experiment=self_rec",
+            "setting=basharena",
+            "measurement.transforms=[minified]",
+        )
     with pytest.raises(ConfigError, match="no honest-mode honeypots"):
         graph(
             "experiment=self_rec_controls",
