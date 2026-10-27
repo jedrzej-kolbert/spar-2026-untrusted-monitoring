@@ -693,3 +693,7 @@ def test_analysis_loads_games_where_they_were_given(
     )
     execute.run_analysis(node, ctx)  # type: ignore[arg-type]
     assert loaded == [given_dir, given_file.parent]
+    node.deps = {"c": SimpleNamespace(hash="c", id="game.none.sft")}
+    ctx.outputs["c"] = Output(path="wandb:e/p/game:v0")
+    with pytest.raises(FileNotFoundError, match="game.none.sft: no game at wandb:"):
+        execute.run_analysis(node, ctx)  # type: ignore[arg-type]
