@@ -3,8 +3,8 @@
 Each replicate resamples the attack / honeypot / benign dataframes with
 replacement (rows, i.e. whole samples -- preserving the joint dependence
 structure the stats model exists to capture), rebuilds the joint ROC model,
-re-solves the game, and returns the analysis payload. Used by the analyse
-stage (``scripts/plot_data.py``), which saves replicates in chunks and resumes.
+and re-solves the game. The compact sweep payload is used by the analyse stage
+(``scripts/plot_data.py``), which saves replicates in chunks and resumes.
 """
 
 from __future__ import annotations
@@ -19,12 +19,6 @@ from .optimization import (
     build_optimization_config,
     optimize_parameters,
 )
-from .results_io import build_analysis_payload
-
-# Per-replicate payload size knobs: no optimizer history, coarser surface grid
-# than the point estimate (31x21 instead of 61x41).
-SURFACE_T_POINTS = 31
-SURFACE_F_POINTS = 21
 
 
 def run_single_replicate(
@@ -82,18 +76,25 @@ def run_single_replicate(
             optimizer=optimizer,
             seed=int(seeds[3]),
         )
-        payload = build_analysis_payload(
-            result,
-            include_history=False,
-            joint_t_points=SURFACE_T_POINTS,
-            joint_f_points=SURFACE_F_POINTS,
-        )
+        payload = {
+            "bootstrap_replicate": replicate,
+            "sweep": [
+                {
+                    "safety": (
+                        float(entry["safety"])
+                        if entry["safety"] is not None and np.isfinite(entry["safety"])
+                        else None
+                    ),
+                    "usefulness": float(entry["usefulness"]),
+                }
+                for entry in result.results
+            ],
+        }
     except Exception as exc:
         return {
             "bootstrap_replicate": replicate,
             "error": f"{type(exc).__name__}: {exc}",
         }
-    payload["bootstrap_replicate"] = replicate
     return payload
 
 

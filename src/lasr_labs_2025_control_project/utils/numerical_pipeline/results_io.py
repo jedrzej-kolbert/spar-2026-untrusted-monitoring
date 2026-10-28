@@ -11,9 +11,10 @@ the paper's figures (and run diagnostics) without re-running the optimizer:
 * the honest-UM operating point (FPR/FNR, threshold, binary-or-numeric) and
   the game parameters.
 
-The same payload builder is reused by the bootstrap runner, which stores one
-payload per resample (with `include_history=False` and no per-sample score
-lists, so a 15-condition x 1000-replicate run stays a few GB).
+The point-estimate payload is intentionally richer than bootstrap records: each
+replicate stores only the safety/usefulness sweep needed for confidence bands.
+This keeps diagnostic ROC curves and the sampled joint surface out of the
+repeated bootstrap path.
 """
 
 import gzip
