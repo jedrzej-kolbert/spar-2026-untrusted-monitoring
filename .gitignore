@@ -32,6 +32,8 @@ results/
 !/tests/data/sft_steps/apps_train.json
 # Every config the retired make_configs.py emitted (tests/test_pipeline.py).
 !/tests/data/make_configs_snapshot.json
+# Needed to build the BigCodeBench sandbox image (bigcodebench/Dockerfile).
+!/src/lasr_labs_2025_control_project/bigcodebench/docker-requirements.txt
 
 notebooks/
 # Pipeline outputs and run folders (experiments_dir), and any local copies of
