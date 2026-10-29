@@ -37,27 +37,11 @@ transforms:
     base_prompt: LLM_SUMMARIZE_BASE_PROMPT
     remove_comments: true
 
-elicitation:
-  arms: {}
-  training:
-    rank: 32
-    lr: 1.0e-4
-    epochs: 3
-    batch_size: 64
-    val_frac: 0.05
-    checkpoint_every_steps: 0
-    checkpoint_auc: false
-    upsample_pos_factor: 1
-    upsample_neg_factor: 1
-    keep_comments: false
-    openai_n_epochs: null
-  min_examples_per_label: 10
-
 measurement:
   collusion_strategy: self_rec
   attack_prompt: null
   honeypot_prompt: null
-  transforms: [none, minified, paraphrased]
+  transforms: ${setting.transforms}
   arms: {}
   monitors: [untrusted_collusion, trusted_suspiciousness, untrusted_suspiciousness]
   share_generations: true
