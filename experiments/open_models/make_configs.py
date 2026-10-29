@@ -147,9 +147,9 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
         "H": "google/gemini-2.5-flash",
     },
     "open": {
-        "U": "tinker/deepseek-ai/DeepSeek-V3.1",
+        "U": "tinker/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144",
         "T": "tinker/Qwen/Qwen3.5-4B",
-        "H": "tinker/openai/gpt-oss-120b",
+        "H": "tinker/Qwen/Qwen3.5-397B-A17B",
     },
 }
 
