@@ -104,6 +104,7 @@ class GenerationConfig:
     #: None keeps each provider's default
     temperature: Optional[float] = None
     max_connections: int = 8
+    monitor_max_connections: int = 16
     transform_max_connections: int = 48
 
 

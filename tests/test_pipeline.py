@@ -75,6 +75,12 @@ def test_every_experiment_composes_and_builds(experiment: str) -> None:
     assert graph(f"experiment={experiment}").targets
 
 
+def test_monitor_connections_default_does_not_change_generation() -> None:
+    cfg = config()
+    assert cfg.generation.monitor_max_connections == 16
+    assert cfg.generation.max_connections == 8
+
+
 def test_unknown_keys_and_bad_values_are_rejected() -> None:
     with pytest.raises(Exception, match="nonexistent"):
         config("experiment=self_rec", "measurement.nonexistent=1")

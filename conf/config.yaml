@@ -24,6 +24,7 @@ wandb_tags: []
 generation:
   temperature: null
   max_connections: 8
+  monitor_max_connections: 16
   transform_max_connections: 48
 
 transforms:
