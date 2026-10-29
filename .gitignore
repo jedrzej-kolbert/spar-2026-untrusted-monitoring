@@ -58,4 +58,4 @@ src/lasr_labs_2025_control_project/configs/bigcodebench_open/**/*.yaml
 src/lasr_labs_2025_control_project/configs/bigcodebench_open/plot_everything.sh
 
 # Committed RL task data (small, filtered exports; raw .eval logs stay local)
-!/data/hipt_rl/**/*.jsonl
+!/data/hipt_rl/
