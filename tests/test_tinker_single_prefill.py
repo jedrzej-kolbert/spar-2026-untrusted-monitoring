@@ -1,4 +1,4 @@
-"""Offline tests for opt-in single-prefill YES/NO scoring; never create a real client."""
+"""Offline tests for default-on single-prefill YES/NO scoring; never create a real client."""
 
 from __future__ import annotations
 
@@ -40,6 +40,13 @@ def single_token_tinker(stub_tinker: Any, monkeypatch: pytest.MonkeyPatch):
     return module, sc, calls
 
 
+async def test_single_prefill_is_the_default(single_token_tinker: Any):
+    module, sc, calls = single_token_tinker
+    result = await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
+    assert result["YES"] == -0.5 and result["NO"] == -3.0
+    assert not sc.logprob_calls and len(calls) == 1
+
+
 async def test_single_prefill_scores_both_answers_in_one_request(
     single_token_tinker: Any,
 ):
@@ -66,9 +73,11 @@ async def test_single_prefill_scores_both_answers_in_one_request(
     assert torch.equal(targets.to_torch(pad_value=-1), expected)
 
 
-async def test_teacher_forcing_stays_the_default(single_token_tinker: Any):
+async def test_teacher_forcing_when_single_prefill_is_off(single_token_tinker: Any):
     module, sc, calls = single_token_tinker
-    result = await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
+    result = await module.collusion_yes_no_logprobs(
+        "tinker/m", "system", "user", single_prefill=False
+    )
     usage = {"input_tokens": 2 * len(PREFIX) + 2, "output_tokens": 0}
     assert result == {
         "YES": -0.5,
