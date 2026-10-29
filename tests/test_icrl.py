@@ -193,6 +193,19 @@ def test_feedback_contains_actual_inputs_outputs_and_bounded_examples() -> None:
     assert "never see" in LEARNER_SYSTEM_PROMPT
 
 
+def test_rewrite_prompts_target_recognition_without_research_framing() -> None:
+    from lasr_labs_2025_control_project.prompts.rl_prompts import (
+        RL_SELF_REC_SENDER_SYSTEM_PROMPT,
+    )
+
+    for prompt in (LEARNER_SYSTEM_PROMPT, RL_SELF_REC_SENDER_SYSTEM_PROMPT):
+        assert "more recognizable" in prompt
+        assert "research" not in prompt.lower()
+        assert "experiment" not in prompt.lower()
+    assert "original backdoor trigger" in LEARNER_SYSTEM_PROMPT
+    assert "Keep its behaviour identical" in RL_SELF_REC_SENDER_SYSTEM_PROMPT
+
+
 def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:
     examples = [
         Episode(

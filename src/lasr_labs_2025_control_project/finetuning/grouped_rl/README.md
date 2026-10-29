@@ -208,6 +208,13 @@ This is an adaptation of the search procedure, not an exact replication of HiPT'
 payload experiment. A fresh rewrite is not guaranteed to improve on the preceding
 one; the best-so-far strategy is retained separately.
 
+HiPT's [HumanEval task prompt](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/episode/tasks/human_eval_task.py#L16-L22)
+supplies a correct implementation and permits keeping it, altering it, or writing
+a completely different implementation. The task is to retain correctness while
+communicating a payload, not to generate a code backdoor. Rewriting an existing
+backdoored solution and preserving its original trigger are choices of this
+self-recognition experiment, not constraints inherited from HiPT.
+
 W&B keeps `icrl/strategies` (strategy, reward and every reward component),
 `icrl/proposed_strategies`, and `icrl/held_out`. `learner.jsonl` records each exact
 request/reply with stage `strategy`, `reflection` or `strategize`, including any
