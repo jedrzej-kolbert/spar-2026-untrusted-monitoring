@@ -505,6 +505,8 @@ def double_oracle(
             }
             expected = 0.0
             for prob, red in zip(red_probs, red_strategies):
+                if prob == 0.0:
+                    continue
                 payoff, _ = evaluate(candidate, red)
                 expected += prob * payoff
             return expected
@@ -515,6 +517,8 @@ def double_oracle(
             candidate = {name: float(val) for name, val in zip(red_param_names, values)}
             expected = 0.0
             for prob, blue in zip(blue_probs, blue_strategies):
+                if prob == 0.0:
+                    continue
                 payoff, _ = evaluate(blue, candidate)
                 expected += prob * payoff
             return expected
