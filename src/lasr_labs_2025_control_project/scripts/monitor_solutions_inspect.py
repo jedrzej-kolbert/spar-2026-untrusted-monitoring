@@ -252,6 +252,7 @@ def create_collusion_monitor_scorer(
                         model_name=model_name,
                         system_prompt=monitor_config.model_info.system_prompt,
                         user_prompt=user_prompt,
+                        single_prefill=True,
                     )
                     if logprob_dict.get("usage"):
                         record_tinker_usage(model_name, logprob_dict["usage"])
