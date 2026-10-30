@@ -1330,7 +1330,29 @@ def test_usage_counts_every_tinker_call_and_prices_tokens(
         asyncio.run(monitor.compute_logprobs_async(prompt))
     assert meter.snapshot() == snapshot  # refused requests were not dispatched
     meter.add("unknown/model", train=1_000_000)
-    assert meter.cost_usd == pytest.approx(expected + 3.718)  # indicative rate
+    assert meter.cost_usd == pytest.approx(expected + 4.98)  # indicative rate
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+    ],
+)
+def test_v41_usage_prices_and_budget(model: str) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 10.0
+    with meter.request(model, prefill=1_000_000, sample=1_000_000, train=1_000_000):
+        assert meter.reserved_usd == pytest.approx(9.18)
+    assert meter.cost_usd == pytest.approx(9.18)
+    assert meter.snapshot()["unpriced_models"] == 0
+    with pytest.raises(usage.BudgetExceeded):
+        with meter.request(model, train=1_000_000):
+            pytest.fail("V4.1 request exceeded the cap")
+    assert meter.cost_usd == pytest.approx(9.18)
 
 
 def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> None:
