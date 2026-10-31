@@ -9,6 +9,7 @@ import json
 import posixpath
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -549,6 +550,20 @@ def test_inputs_are_used_without_running(tmp_path: Path, ran: list[str]) -> None
         "finetune.self_rec.none"
     ] == pipeline_run.INPUT
     assert not any(i.startswith("generate.train") for i in ran)
+
+
+def test_local_reuse_never_looks_up_wandb(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lasr_labs_2025_control_project import tracking
+    from lasr_labs_2025_control_project.pipeline.execute import step_artifact
+
+    monkeypatch.setenv("WANDB_MODE", "online")
+    monkeypatch.setattr(tracking, "available", lambda: True)
+    monkeypatch.setattr(
+        tracking, "find_pipeline_run", lambda *a: pytest.fail("looked up W&B")
+    )
+    node = SimpleNamespace(hash="h", key={}, stage="game")
+    ctx = SimpleNamespace(cfg=SimpleNamespace(reuse="local"), artifacts={})
+    assert step_artifact(node, ctx) is None  # type: ignore[arg-type]
 
 
 # -- stage pieces ----------------------------------------------------------------
