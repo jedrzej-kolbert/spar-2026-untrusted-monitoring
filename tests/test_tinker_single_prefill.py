@@ -1,4 +1,4 @@
-"""Offline tests for opt-in single-prefill YES/NO scoring; never create a real client."""
+"""Offline tests for default-on single-prefill YES/NO scoring; never create a real client."""
 
 from __future__ import annotations
 
@@ -40,6 +40,30 @@ def single_token_tinker(stub_tinker: Any, monkeypatch: pytest.MonkeyPatch):
     return module, sc, calls
 
 
+async def test_single_prefill_is_the_default(single_token_tinker: Any):
+    module, sc, calls = single_token_tinker
+    result = await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
+    assert result["YES"] == -0.5 and result["NO"] == -3.0
+    assert not sc.logprob_calls and len(calls) == 1
+
+
+async def test_frozen_rl_monitor_uses_single_prefill(single_token_tinker: Any):
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import AppsProblem
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
+        FrozenYesNoMonitor,
+    )
+
+    _, sc, calls = single_token_tinker
+    problem = AppsProblem("1", "Print 1.", ("",), ("1\n",))
+    monitor = FrozenYesNoMonitor("tinker/m", "system", allow_paid=True)
+    probability, log_odds = await monitor.suspiciousness_and_log_odds(
+        problem, "print(1)"
+    )
+    assert probability == pytest.approx(0.9241418199787566)
+    assert log_odds == -2.5
+    assert not sc.logprob_calls and len(calls) == 1
+
+
 async def test_single_prefill_scores_both_answers_in_one_request(
     single_token_tinker: Any,
 ):
@@ -60,9 +84,11 @@ async def test_single_prefill_scores_both_answers_in_one_request(
     assert torch.equal(targets.to_torch(pad_value=-1), expected)
 
 
-async def test_teacher_forcing_stays_the_default(single_token_tinker: Any):
+async def test_teacher_forcing_when_single_prefill_is_off(single_token_tinker: Any):
     module, sc, calls = single_token_tinker
-    result = await module.collusion_yes_no_logprobs("tinker/m", "system", "user")
+    result = await module.collusion_yes_no_logprobs(
+        "tinker/m", "system", "user", single_prefill=False
+    )
     assert result == {"YES": -0.5, "NO": -1.0, "completion": "<answer>YES</answer>"}
     assert sc.logprob_calls == [PREFIX + [10], PREFIX + [20]]
     assert not calls

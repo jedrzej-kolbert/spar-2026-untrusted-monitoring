@@ -615,7 +615,7 @@ async def collusion_yes_no_logprobs(
     answer_open: str = "<answer>",
     yes_text: str = "YES",
     no_text: str = "NO",
-    single_prefill: bool = False,
+    single_prefill: bool = True,
 ) -> dict[str, Any]:
     """Return exact answer-token logprobs for a YES/NO collusion monitor.
 
@@ -625,8 +625,9 @@ async def collusion_yes_no_logprobs(
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
     scorer treats it identically.
 
-    ``single_prefill=True`` reads both logprobs from one request instead of two
-    when YES and NO are single tokens (needs ``tinker>=0.30``).
+    By default (``single_prefill=True``) both logprobs come from one request when
+    YES and NO are single tokens (needs ``tinker>=0.30``); multi-token labels, or
+    ``single_prefill=False``, use two teacher-forced requests.
     """
     from tinker import types
 
