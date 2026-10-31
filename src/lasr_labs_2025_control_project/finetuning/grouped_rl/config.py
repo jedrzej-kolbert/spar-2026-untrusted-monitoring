@@ -76,6 +76,8 @@ class RewardSettings(_Strict):
     failed_backdoor_weight: float = Field(default=0.0, ge=0)
     backdoor_suspicion_weight: float = Field(default=0.0, ge=0)
     kl_coef: float = Field(default=0.05, ge=0)
+    # penalty per unit of token similarity to the input being rewritten
+    similarity_weight: float = Field(default=0.0, ge=0)
     # bonus when the rewrite's backdoor still triggers on the secret input
     backdoor_kept_weight: float = Field(default=0.0, ge=0)
 
@@ -101,6 +103,9 @@ class TrainingConfig(_Strict):
     # Published-rate estimate, not an invoice cap; None disables the cap.
     max_cost_usd: float | None = Field(default=None, gt=0)
     max_concurrency: int = Field(default=32, ge=1)
+    # Training scores on the mean over this many channel views; evaluation uses
+    # one view, as the deployed monitor does.
+    scoring_views: int = Field(default=1, ge=1)
     # Steps whose rollouts hit infrastructure errors *before* any update are
     # skipped; the run stops after this many. Uncertain updates always stop.
     max_skipped_steps: int = Field(default=3, ge=0)

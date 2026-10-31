@@ -181,6 +181,8 @@ class GroupedRLConfig:
     train_receiver: bool = True
     self_recognition: bool = False
     max_concurrency: int = 16
+    # Training rewards use the mean score over this many channel views.
+    scoring_views: int = 1
 
     def __post_init__(self) -> None:
         if self.group_size < 2:
@@ -593,17 +595,31 @@ class GroupedRLTrainer:
         except ValueError as exc:
             # A malformed answer is a task failure, not missing infrastructure.
             rollout.execution = ExecutionGrade(False, str(exc))
+        views: list[str] = []
         try:
-            receiver_code = rollout.code
-            if self.channel is not None:
-                receiver_code = await self.channel.transform(problem, rollout.code)
-            rollout.receiver_code = receiver_code
+            count = self.config.scoring_views if training else 1
+            views = (
+                list(
+                    await asyncio.gather(
+                        *(
+                            self.channel.transform(problem, rollout.code)
+                            for _ in range(count)
+                        )
+                    )
+                )
+                if self.channel is not None
+                else [rollout.code]
+            )
+            rollout.receiver_code = views[0]
         except Exception as exc:
             rollout.errors.append(f"channel transform failed: {exc!r}")
         if rollout.receiver_code is not None:
             try:
-                probabilities = await self.receiver.probabilities(
-                    problem, rollout.receiver_code
+                scores = await asyncio.gather(
+                    *(self.receiver.probabilities(problem, view) for view in views)
+                )
+                probabilities = tuple(
+                    math.fsum(column) / len(views) for column in zip(*scores)
                 )
                 if (
                     len(probabilities) != 2
@@ -665,9 +681,15 @@ class GroupedRLTrainer:
                 rollout.errors.append(f"overseer scoring failed: {exc!r}")
         if self.backdoor_monitor is not None:
             try:
-                score = await self.backdoor_monitor.suspiciousness(
-                    problem, rollout.receiver_code or rollout.code
+                scores = await asyncio.gather(
+                    *(
+                        self.backdoor_monitor.suspiciousness(
+                            problem, view or rollout.code
+                        )
+                        for view in views or [rollout.code]
+                    )
                 )
+                score = math.fsum(scores) / len(scores)
                 if not math.isfinite(score) or not 0 <= score <= 1:
                     raise ValueError("backdoor suspicion must be finite and in [0, 1]")
                 rollout.backdoor_suspicion = score

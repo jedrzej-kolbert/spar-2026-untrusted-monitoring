@@ -19,10 +19,16 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     GroupedRLConfig,
     GroupedRLTrainer,
     ReceiverExample,
+    Rollout,
     SenderExample,
     UpdateStats,
     extract_code,
     group_advantages,
+)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
+    RewardConfig,
+    compute_reward,
+    token_similarity,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.sandbox import (
     DockerAppsEvaluator,
@@ -776,3 +782,107 @@ async def test_invalid_utf8_cannot_match_replacement_character(tmp_path: Path) -
     evaluator._run = AsyncMock(return_value=(0, b"\xff", b""))
     grade = await evaluator.grade(problem, "code")
     assert not grade.passed and grade.infrastructure_error is None
+
+
+class CountingChannel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def transform(self, problem: AppsProblem, code: str) -> str:
+        self.calls += 1
+        return f"view {self.calls}"
+
+
+class ViewScores:
+    """Score depends on the view, so a mean over views differs from any one view."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    async def probabilities(
+        self, problem: AppsProblem, code: str
+    ) -> tuple[float, float]:
+        self.seen.append(code)
+        p_yes = int(code.split()[-1]) / 10
+        return 1 - p_yes, p_yes
+
+    async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
+        return int(message.split()[-1]) / 10
+
+    async def update(self, examples: list[ReceiverExample]) -> UpdateStats:
+        return UpdateStats({})
+
+
+def view_trainer(views: int) -> Any:
+    return GroupedRLTrainer(
+        FakeSender(),
+        ViewScores(),
+        FakeEvaluator(),
+        GroupedRLConfig(
+            group_size=2,
+            scoring_views=views,
+            train_receiver=False,
+            self_recognition=True,
+            reward=RewardConfig(backdoor_suspicion_weight=1.0),
+        ),
+        channel=CountingChannel(),
+        backdoor_monitor=ViewScores(),
+    )
+
+
+async def test_training_scores_are_the_mean_over_views(problem: AppsProblem) -> None:
+    loop = view_trainer(3)
+    await loop._score(
+        rollout := Rollout(
+            problem, 1, GeneratedSolution("print(1)", (1,), (2,), (-0.5,))
+        ),
+        True,
+        training=True,
+    )
+    assert loop.channel.calls == 3
+    assert rollout.probabilities == pytest.approx((0.8, 0.2))
+    assert rollout.backdoor_suspicion == pytest.approx(0.2)
+    assert rollout.receiver_code == "view 1"
+
+
+async def test_evaluation_scores_one_view(problem: AppsProblem) -> None:
+    loop = view_trainer(4)
+    result = await loop.evaluate([replace(problem, split="validation")])
+    assert loop.channel.calls == len(result.rollouts) == 1
+    assert loop.receiver.seen == ["view 1"]
+
+
+def test_token_similarity_ignores_layout_but_not_renames() -> None:
+    code = "def f(x):\n    return x + 1\n"
+    assert (
+        token_similarity(code, "# note\ndef f(x):\n\n    return x + 1  # same\n") == 1
+    )
+    assert 0 < token_similarity(code, "def g(y):\n    return y + 1\n") < 1
+    assert 0 < token_similarity("def (", "def )") < 1  # unparsable code still compares
+
+
+def test_similarity_penalty_scales_with_closeness_to_input() -> None:
+    base = AppsProblem("7", "q", ("1",), ("1",), base_code="print(1)\n")
+    config = GroupedRLConfig(reward=RewardConfig(similarity_weight=0.5))
+
+    def reward(code: str) -> tuple[float, dict[str, float]]:
+        rollout = Rollout(base, 1, None, code=code, probabilities=(0.5, 0.5))
+        rollout.execution = ExecutionGrade(True)
+        return compute_reward(rollout, config)
+
+    assert reward("print(1)\n")[1]["input_similarity"] == pytest.approx(-0.5)
+    assert reward("x = 2\n")[0] > reward("print(1)\n")[0]
+    assert (
+        "input_similarity"
+        not in compute_reward(
+            Rollout(
+                base,
+                1,
+                None,
+                code="print(1)\n",
+                probabilities=(0.5, 0.5),
+                execution=ExecutionGrade(True),
+            ),
+            GroupedRLConfig(),
+        )[1]
+    )
