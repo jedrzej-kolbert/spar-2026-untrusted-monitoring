@@ -174,9 +174,14 @@ def load_eval_examples(
             raise ValueError(f"no samples in {path}")
         retained = 0
         for index, sample in enumerate(log.samples):
-            if not check_sample_is_valid(sample.scores):
-                continue
             metadata = {**(sample.metadata or {}), **(sample.store or {})}
+            if not check_sample_is_valid(
+                sample.scores,
+                (sample.metadata or {}).get("eval_mode"),
+                base_solution=metadata.get("base_solution"),
+                errored=sample.error is not None,
+            ):
+                continue
             problem = metadata.get("main_task_description")
             solution = metadata.get(solution_field)
             if (
