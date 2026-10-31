@@ -640,6 +640,52 @@ def test_bootstrap_resumes_from_saved_chunks(
     assert len(plot_data.read_replicates(path)) == 5
 
 
+def test_cut_off_bootstrap_keeps_its_replicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lasr_labs_2025_control_project.scripts import plot_data
+
+    monkeypatch.setattr(
+        plot_data,
+        "run_replicates",
+        lambda indices, **kw: [{"bootstrap_replicate": i} for i in indices],
+    )
+    path = tmp_path / "bootstrap_um_only.jsonl.gz"
+    rows = "".join(json.dumps({"bootstrap_replicate": i}) + "\n" for i in range(3))
+    cut = gzip.compress(b'{"bootstrap_replicate": 3, "x": "')[:-8]
+    path.write_bytes(gzip.compress(rows.encode()) + cut)  # killed mid-chunk
+    assert len(plot_data.read_replicates(path)) == 3 and path.exists()
+    settings = BootstrapSettings(replicates=6, chunk_size=2)
+    bootstrap_variant(path, settings, condition_seed=1)
+    assert [r["bootstrap_replicate"] for r in plot_data.read_replicates(path)] == list(
+        range(6)
+    )
+
+
+def test_damaged_bootstrap_reads_and_complete_files_stay_untouched(
+    tmp_path: Path,
+) -> None:
+    from lasr_labs_2025_control_project.scripts import plot_data
+
+    def chunk(indices: range) -> bytes:
+        rows = (
+            json.dumps({"bootstrap_replicate": i, "pad": "x" * 40}) for i in indices
+        )
+        return gzip.compress("".join(r + "\n" for r in rows).encode())
+
+    path = tmp_path / "bootstrap_um_only.jsonl.gz"
+    cut = chunk(range(3, 28))
+    # cut mid-stream, then appended to: decompressing the next chunk is a zlib.error
+    path.write_bytes(chunk(range(3)) + cut[: len(cut) // 2] + chunk(range(28, 30)))
+    kept = [r["bootstrap_replicate"] for r in plot_data.read_replicates(path)]
+    assert kept[:3] == [0, 1, 2] and kept == list(range(len(kept)))
+    # a complete file with more replicates than requested is neither cut nor rewritten
+    path.write_bytes(chunk(range(10)))
+    before = path.read_bytes()
+    bootstrap_variant(path, BootstrapSettings(replicates=6), condition_seed=1)
+    assert path.read_bytes() == before
+
+
 def test_cost_report_prices_recorded_tokens(tmp_path: Path, ran: list[str]) -> None:
     from lasr_labs_2025_control_project.scripts import cost_report
 

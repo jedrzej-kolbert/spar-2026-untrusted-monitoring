@@ -32,6 +32,7 @@ import argparse
 import gzip
 import json
 import logging
+import zlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -115,13 +116,14 @@ def variant_seeds(seed: int, index: int) -> tuple[int, int]:
 def read_replicates(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
+    rows: list[dict[str, Any]] = []
     try:
         with gzip.open(path, "rt", encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
-    except (OSError, EOFError, json.JSONDecodeError):
-        logger.warning("Could not read %s (interrupted write?); starting it over", path)
-        path.unlink()
-        return []
+            rows.extend(json.loads(line) for line in f if line.strip())
+    # zlib.error: a chunk cut mid-stream with another appended after it
+    except (OSError, EOFError, zlib.error, json.JSONDecodeError):
+        logger.warning("%s: interrupted write, kept %d replicates", path, len(rows))
+    return rows
 
 
 def bootstrap_variant(
@@ -134,8 +136,11 @@ def bootstrap_variant(
     """Run (or resume) a variant's bootstrap, appending replicates in chunks."""
     replicates = read_replicates(path)[: settings.replicates]
     done = len(replicates)
-    if done:
+    if path.exists() and done < settings.replicates:
         logger.info("%s: resuming at replicate %d", path.name, done)
+        # rewrite, so a cut-off tail can't hide the chunks appended after it
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            f.writelines(json.dumps(p) + "\n" for p in replicates)
     for start in range(done, settings.replicates, settings.chunk_size):
         chunk = range(start, min(start + settings.chunk_size, settings.replicates))
         payloads = run_replicates(
