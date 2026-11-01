@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers import (
-    double_oracle,  # noqa: F401
-    stackelberg_equilibrium,  # noqa: F401
+    double_oracle,
+    stackelberg_equilibrium,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline.roc_function_builders import (
     DoubleROCFunctionType,
@@ -17,6 +17,18 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.roc_function_builde
 )
 
 OPTIMIZER = double_oracle
+#: optimization.solver in the pipeline config -> solver
+OPTIMIZERS: Dict[str, Callable[..., Dict[str, Any]]] = {
+    "double_oracle": double_oracle,
+    "stackelberg": stackelberg_equilibrium,
+}
+
+# Fixed game parameters used for every condition in the paper analysis.
+PAPER_GAME_PARAMETERS: Dict[str, float] = {
+    "num_tasks": 5000,
+    "slack_honeypots": 5.0,
+    "blue_team_budget_fraction": 0.02,
+}
 
 
 def construct_parameter_spaces(
@@ -268,6 +280,8 @@ def derive_untrusted_threshold_bounds(
 def _optimize_single_parameter_set(
     config: OptimizationConfig,
     max_iterations: int,
+    optimizer: Optional[Callable[..., Dict[str, Any]]] = None,
+    seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run parameter optimization using the provided configuration.
 
@@ -299,10 +313,11 @@ def _optimize_single_parameter_set(
 
     # Use optimization algorithm to find Nash equilibrium
     # This handles mixed strategies for both blue and red teams
-    results = OPTIMIZER(
+    results = (optimizer or OPTIMIZER)(
         parameter_spaces,
         config.blue_team_win_calculator,
         max_iterations=max_iterations,
+        seed=seed,
     )
 
     return results  # raw dict (backwards compatibility handled by wrapper)
@@ -313,6 +328,8 @@ def optimize_parameters(
     base_config: OptimizationConfig,
     max_iterations: int,
     replace_fnr_values: Optional[List[float]] = None,
+    optimizer: Optional[Callable[..., Dict[str, Any]]] = None,
+    seed: Optional[int] = None,
 ) -> OptimizationResult:
     """Run the parameter optimization for a sweep of fixed blue_team_replace_fnr values.
 
@@ -333,6 +350,8 @@ def optimize_parameters(
         max_iterations: Max iterations for each inner optimization run (double oracle).
         replace_fnr_values: List of blue team replacement FNR values to evaluate.
             Defaults to [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 0.8, 0.95, 0.99].
+        optimizer: The solver (default OPTIMIZER).
+        seed: Seeds the solver; each sweep point gets its own seed derived from it.
 
     Returns:
         OptimizationResult containing results list. Each dict minimally contains:
@@ -351,7 +370,12 @@ def optimize_parameters(
 
     sweep_results: list[dict[str, Any]] = []
 
-    for replace_fnr in replace_fnr_values:
+    for index, replace_fnr in enumerate(replace_fnr_values):
+        point_seed = (
+            None
+            if seed is None
+            else int(np.random.SeedSequence([seed, index]).generate_state(1)[0])
+        )
         # Build a fresh win calculator with the new fixed replace_fnr
         win_calc = build_blue_team_win_calculator(
             num_tasks=base_config.num_tasks,
@@ -397,6 +421,8 @@ def optimize_parameters(
         raw_result = _optimize_single_parameter_set(
             config=config,
             max_iterations=max_iterations,
+            optimizer=optimizer,
+            seed=point_seed,
         )
 
         # Extract the blue mixed strategy

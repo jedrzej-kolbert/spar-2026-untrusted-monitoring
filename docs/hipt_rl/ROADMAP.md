@@ -83,7 +83,7 @@ Qwen3-8B sender and receiver, frozen Qwen3.5-4B overseer, penalty weight 5, 4 tr
 - [x] Offline tests pass
 
 ## Phase 1: configurable core + Option A, sender-only, Tinker
-- [x] YAML config + run driver (`configs/rl/rewrite_signal_pilot.yaml`, `grouped_rl/run.py`); `hf_gpu` rejected with a clear error
+- [x] YAML config + run driver (`finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml`, `grouped_rl/run.py`); `hf_gpu` rejected with a clear error
 - [x] `task_mode` option; `rewrite_signal` implemented. `honest_signal` is still available in the core library but not yet in the driver; `attack_signal` is Phase 3
 - [x] Data from generator `.eval` logs, filtered to passing attacks with working backdoors
 - [x] Backdoor-trigger check in the grader, with control_arena parity

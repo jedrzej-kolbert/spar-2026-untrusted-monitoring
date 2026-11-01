@@ -1,7 +1,7 @@
 """Run HiPT-style collusion-signal RL from a YAML config.
 
     python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \\
-        --config src/lasr_labs_2025_control_project/configs/rl/rewrite_signal_pilot.yaml \\
+        --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml \\
         [--offline | --allow-paid]
 
 ``--offline`` (the default) loads data, writes the manifest, and checks the Docker

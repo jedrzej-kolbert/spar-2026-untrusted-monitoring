@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /experiment/self_rec
+  - override /setting: bigcodebench
+  - override /models: closed
+  - _self_
+name: paper_bigcodebench_self_rec
+measurement:
+  share_generations: false
+inputs:
+  finetune:
+    self_rec:
+      none: openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-none:CRHKEcKW
+      minified: openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-minified:CRHPL9Uc
+      paraphrased: openai/ft:gpt-4.1-2025-04-14:lasr-labs:bigcodebench-paraphrased:CRIEKOFs

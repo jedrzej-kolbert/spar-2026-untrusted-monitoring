@@ -6,11 +6,16 @@
 # The eval_logs_dir must contain train/ and/or test/ subdirectories with .eval files.
 # If either subdirectory is missing or empty, it will be skipped with a warning.
 #
-# Usage: bash transform_logs_to_raw.sh <eval_logs_dir> [raw_dir] [--keep-comments] [--transformed]
+# Usage: bash transform_logs_to_raw.sh <eval_logs_dir> [raw_dir] [--keep-comments] [--transformed] [--action-views]
 # eval_logs_dir is a required argument.
 # If raw_dir is not provided, defaults to <parent of eval_logs_dir>/raw.
 # By default, comments are removed from base solutions. If --keep-comments is given, comments are kept. Ignored if --transformed is given.
 # If --transformed is given as an argument, transformed solutions from .eval files are used.
+# If --action-views is given (BashArena), each trajectory becomes one row per rated action, in
+# the same per-action format the monitor uses (view: action). Optional env vars, which must
+# match the monitor config's defaults.action_view: ACTION_MAX_HISTORY_CHARS,
+# ACTIONS_PER_TRAJECTORY, ACTION_SEED. Then run transform_raw_to_prepared.sh with
+# --system-prompt BASHARENA_SELF_REC_ACTION_SYSTEM_PROMPT --user-prompt BASHARENA_ACTION_USER_PROMPT.
 
 set -euo pipefail
 
@@ -58,6 +63,11 @@ if has_flag "--transformed" "${ARGS[@]}"; then
   TRANSFORMED="--transformed"
   ARGS=($(remove_flag "--transformed" "${ARGS[@]}"))
 fi
+ACTION_VIEWS=""
+if has_flag "--action-views" "${ARGS[@]}"; then
+  ACTION_VIEWS="--action-views"
+  ARGS=($(remove_flag "--action-views" "${ARGS[@]}"))
+fi
 
 # Now parse positional arguments
 RAW_DIR_PROVIDED=false
@@ -71,7 +81,7 @@ elif [ "${#ARGS[@]}" -eq 1 ]; then
   RAW_DIR="$(dirname "$EVAL_LOGS_DIR")/raw"
 else
   echo "Error: eval_logs_dir is required."
-  echo "Usage: bash transform_logs_to_raw.sh <eval_logs_dir> [raw_dir] [--keep-comments] [--transformed]"
+  echo "Usage: bash transform_logs_to_raw.sh <eval_logs_dir> [raw_dir] [--keep-comments] [--transformed] [--action-views]"
   echo "  eval_logs_dir: Directory containing train/ and/or test/ subdirectories with .eval files (required)"
   echo "  raw_dir: Output directory (defaults to <parent of eval_logs_dir>/raw if not specified)"
   echo "  Optionally add --keep-comments and/or --transformed as flags to pass to eval_to_dataset."
@@ -137,6 +147,15 @@ for SPLIT in test train; do
     fi
     if [ -n "$TRANSFORMED" ]; then
       cmd+=(--transformed)
+    fi
+    if [ -n "$ACTION_VIEWS" ]; then
+      cmd+=(--action-views --action-seed "${ACTION_SEED:-0}")
+      if [ -n "${ACTION_MAX_HISTORY_CHARS:-}" ]; then
+        cmd+=(--max-history-chars "$ACTION_MAX_HISTORY_CHARS")
+      fi
+      if [ -n "${ACTIONS_PER_TRAJECTORY:-}" ]; then
+        cmd+=(--actions-per-trajectory "$ACTIONS_PER_TRAJECTORY")
+      fi
     fi
     echo "Running: ${cmd[*]}"
     "${cmd[@]}"

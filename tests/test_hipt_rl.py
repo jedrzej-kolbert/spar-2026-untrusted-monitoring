@@ -51,7 +51,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 
 REPO = Path(__file__).resolve().parents[1]
 PILOT_CONFIG = (
-    REPO / "src/lasr_labs_2025_control_project/configs/rl/rewrite_signal_pilot.yaml"
+    REPO / "src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml"
 )
 
 

@@ -1,0 +1,13 @@
+# @package _global_
+# Additive: passive self-recognition plus the causal signal, i.e. the causal
+# SFT monitor with the self-recognition prompt, on paraphrased causal attacks.
+# Shares its generations and checkpoint with experiment=causal.
+name: additive
+measurement:
+  collusion_strategy: additive
+  transforms: [paraphrased]
+  arms:
+    sft: {model: "sft:causal"}
+elicitation:
+  arms:
+    causal: {}

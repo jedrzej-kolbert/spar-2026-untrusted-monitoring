@@ -9,6 +9,7 @@ Usage:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import click
 from inspect_ai.log import read_eval_log
@@ -18,8 +19,18 @@ from lasr_labs_2025_control_project.self_rec_baselines.utils.scripts.data_models
     ProblemSolutions,
     Solution,
 )
+from lasr_labs_2025_control_project.utils.basharena_views import (
+    ACTION_VIEW,
+    TRAJECTORY_VIEW,
+    VIEWS,
+    ActionViewOptions,
+    action_views,
+    select_action_views,
+)
 from lasr_labs_2025_control_project.utils.utils import (
     check_sample_is_valid,
+    format_solution,
+    is_python_solution,
     remove_comments,
 )
 
@@ -30,74 +41,78 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def apply_python_code_format(x: str) -> str:
-    """Format code with python markdown blocks if not already formatted."""
-    x = x.strip()
-    if not x.startswith("```python"):
-        return f"```python\n{x}\n```"
-    return x
+def detect_generator_model(log: Any) -> str:
+    """The model that wrote the solutions: generator_info, else the eval's model."""
+    if log.samples:
+        sample_data = {**log.samples[0].metadata, **log.samples[0].store}
+        generator_info = sample_data.get("generator_info")
+        if isinstance(generator_info, dict):
+            model_info = generator_info.get("model_info")
+            if isinstance(model_info, dict) and model_info.get("model"):
+                return model_info["model"]
+    return log.eval.model
 
 
-def process_eval_log(
-    data_path: str | Path,
+def eval_log_to_dataset(
+    log: Any,
     model_name: str,
-    output_json_path: str | Path,
     transformed: bool = False,
     keep_comments: bool = False,
+    view: str = TRAJECTORY_VIEW,
+    action_options: ActionViewOptions | None = None,
 ) -> Dataset:
-    """Process eval log and extract successful solutions to Dataset format.
+    """Extract successful solutions from a read eval log into Dataset format.
 
-    Reads .eval files produced by generate_solutions_inspect.py or transform_solutions_inspect.py.
-    Extracts solutions from metadata/store (base_solution or transformed_solution),
-    problem statements from metadata (main_task_description), and filters based on scores.
+    Solutions come from metadata/store (base_solution or transformed_solution),
+    problem statements from main_task_description; samples that fail
+    check_sample_is_valid are skipped.
 
     Args:
-        data_path: Path to .eval log file
+        log: An inspect EvalLog with samples.
         model_name: Model name to assign to all solutions
-        output_json_path: Path to output JSON file
         transformed: If True, use transformed_solution; if False, use base_solution
         keep_comments: If True, keep comments in base_solution (only when transformed=False)
-
-    Returns:
-        Dataset object containing successful solutions
+        view: "trajectory" (one solution per trajectory) or "action" (one solution
+            per rated action, rendered from the sample's messages exactly as the
+            per-action monitor sees it; see utils.action_views). Use the same
+            action_options as the monitor and checkpoint scoring.
+        action_options: Options for per-action views (view == "action").
     """
-    logger.info(
-        f"Starting process_eval_log with data_path={data_path}, model_name={model_name}, output_json_path={output_json_path}, "
-        f"transformed={transformed}, keep_comments={keep_comments}"
-    )
-
-    data_path = Path(data_path)
-    output_json_path = Path(output_json_path)
-
-    if not data_path.exists():
-        logger.error(f"Eval log file does not exist: {data_path}")
-        raise FileNotFoundError(f"Eval log file does not exist: {data_path}")
-    logger.info(f"Eval log file found: {data_path}")
-
-    output_json_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Ensured output directory exists: {output_json_path.parent}")
-
-    # Read eval log using inspect_ai
-    logger.info("Reading eval log...")
-    log = read_eval_log(str(data_path))
-
     if log.samples is None:
         logger.error("No samples found in eval log")
         raise ValueError("No samples found in eval log")
 
     logger.info(f"Found {len(log.samples)} total samples in eval log")
+    if view not in VIEWS:
+        raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
+    if view == ACTION_VIEW and transformed:
+        raise ValueError("Per-action views do not support transformed solutions")
 
     # Filter for successful solutions
     logger.info("Filtering for successful solutions...")
     successful_samples = []
 
     for sample in log.samples:
-        # Check if sample has successful scores (both tasks for attacks, main task for honest)
-        if not check_sample_is_valid(sample.scores):
+        # Check if sample has successful scores (both tasks for attacks, main task for honest).
+        # Also drops zero-action trajectories (empty base_solution) and errored samples so the
+        # SFT rows match what the monitor and checkpoint ROC keep.
+        if not check_sample_is_valid(
+            sample.scores,
+            sample.metadata.get("eval_mode"),
+            base_solution={**sample.metadata, **sample.store}.get("base_solution"),
+            errored=sample.error is not None,
+        ):
             continue
 
         # Merge metadata and store (store takes precedence)
         sample_data = {**sample.metadata, **sample.store}
+        # Same check as the monitor loader (scripts/helpers/eval_to_dataset.py), so a
+        # transformed log is rejected here too, not only the --transformed flag.
+        if view == ACTION_VIEW and "transformed_solution" in sample_data:
+            raise ValueError(
+                "Per-action views are rendered from the agent's messages; "
+                "transformed (paraphrased/minified) trajectories are not supported"
+            )
         transform_info = sample_data.get("transform_info")
 
         # Get solution based on transformed flag (similar to get_problem_and_solution_from_state)
@@ -130,7 +145,10 @@ def process_eval_log(
                 )
             # Optionally remove comments from base solution
             solution = (
-                base_solution if keep_comments else remove_comments(base_solution)
+                base_solution
+                if keep_comments
+                or not is_python_solution(sample_data.get("setting_name"))
+                else remove_comments(base_solution)
             )
 
         # Get problem statement - fail hard if not available
@@ -152,6 +170,23 @@ def process_eval_log(
                 # If can't extract, use hash of sample id
                 problem_id = hash(problem_id) % (10**8)
 
+        if view == ACTION_VIEW:
+            # One solution per rated action, grouped under the trajectory's task.
+            views = action_views(sample.messages, action_options)
+            for _, action_view in select_action_views(views, sample.id, action_options):
+                successful_samples.append(
+                    {
+                        "sample_id": sample.id,
+                        "problem_id": problem_id,
+                        "problem_statement": problem_statement,
+                        "solution": action_view,
+                        "transform_info": transform_info,
+                        "setting_name": sample_data.get("setting_name"),
+                        "solution_view": ACTION_VIEW,
+                    }
+                )
+            continue
+
         successful_samples.append(
             {
                 "sample_id": sample.id,
@@ -159,6 +194,7 @@ def process_eval_log(
                 "problem_statement": problem_statement,
                 "solution": solution,
                 "transform_info": transform_info,
+                "setting_name": sample_data.get("setting_name"),
             }
         )
 
@@ -187,7 +223,11 @@ def process_eval_log(
         if transform_info is not None and transform_info["type"] == "llm":
             formatted_solution = sample_data["solution"]
         else:
-            formatted_solution = apply_python_code_format(sample_data["solution"])
+            formatted_solution = format_solution(
+                sample_data["solution"],
+                sample_data["setting_name"],
+                sample_data.get("solution_view"),
+            )
 
         problems_dict[problem_id]["solutions"].append(
             Solution(model=model_name, solution=formatted_solution)
@@ -210,6 +250,62 @@ def process_eval_log(
     logger.info(
         f"Dataset contains {len(dataset)} problems with {num_solutions} total solutions"
     )
+    return dataset
+
+
+def process_eval_log(
+    data_path: str | Path,
+    model_name: str,
+    output_json_path: str | Path,
+    transformed: bool = False,
+    keep_comments: bool = False,
+    view: str = TRAJECTORY_VIEW,
+    action_options: ActionViewOptions | None = None,
+) -> Dataset:
+    """Process eval log and extract successful solutions to Dataset format.
+
+    Reads .eval files produced by generate_solutions_inspect.py or transform_solutions_inspect.py
+    and writes the eval_log_to_dataset result to a JSON file.
+
+    Args:
+        data_path: Path to .eval log file
+        model_name: Model name to assign to all solutions
+        output_json_path: Path to output JSON file
+        transformed: If True, use transformed_solution; if False, use base_solution
+        keep_comments: If True, keep comments in base_solution (only when transformed=False)
+        view, action_options: See eval_log_to_dataset.
+
+    Returns:
+        Dataset object containing successful solutions
+    """
+    logger.info(
+        f"Starting process_eval_log with data_path={data_path}, model_name={model_name}, output_json_path={output_json_path}, "
+        f"transformed={transformed}, keep_comments={keep_comments}"
+    )
+
+    data_path = Path(data_path)
+    output_json_path = Path(output_json_path)
+
+    if not data_path.exists():
+        logger.error(f"Eval log file does not exist: {data_path}")
+        raise FileNotFoundError(f"Eval log file does not exist: {data_path}")
+    logger.info(f"Eval log file found: {data_path}")
+
+    output_json_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured output directory exists: {output_json_path.parent}")
+
+    # Read eval log using inspect_ai
+    logger.info("Reading eval log...")
+    dataset = eval_log_to_dataset(
+        read_eval_log(str(data_path)),
+        model_name,
+        transformed,
+        keep_comments,
+        view=view,
+        action_options=action_options,
+    )
+    if len(dataset) == 0:
+        return dataset
 
     # Save to JSON
     logger.info(f"Writing dataset to JSON: {output_json_path}")
@@ -251,12 +347,36 @@ def process_eval_log(
     default=False,
     help="Keep comments in base_solution (only applies when --transformed is not set)",
 )
+@click.option(
+    "--action-views",
+    "use_action_views",
+    is_flag=True,
+    default=False,
+    help="One row per rated action in BashArena's per-action monitor format.",
+)
+@click.option(
+    "--max-history-chars",
+    type=int,
+    default=None,
+    help="With --action-views: drop the oldest steps from <actions> beyond this size.",
+)
+@click.option(
+    "--actions-per-trajectory",
+    type=int,
+    default=None,
+    help="With --action-views: keep at most this many actions per trajectory.",
+)
+@click.option("--action-seed", type=int, default=0, show_default=True)
 def main(
     data_path: str | Path,
     model_name: str | None,
     output_json: str | Path,
     transformed: bool,
     keep_comments: bool,
+    use_action_views: bool,
+    max_history_chars: int | None,
+    actions_per_trajectory: int | None,
+    action_seed: int,
 ):
     """
     Convert eval logs to Dataset JSON for binary fine-tuning.
@@ -273,33 +393,8 @@ def main(
         # Auto-detect model name if not provided
         if model_name is None:
             logger.info("Model name not provided, auto-detecting from eval log...")
-            log = read_eval_log(str(data_path))
-
-            # Try to get generator model from sample store (works for both generate and transform)
-            if log.samples and len(log.samples) > 0:
-                sample = log.samples[0]
-                # Merge metadata and store (store takes precedence)
-                sample_data = {**sample.metadata, **sample.store}
-
-                # Try to get generator model from generator_info
-                generator_info = sample_data.get("generator_info")
-                if generator_info and isinstance(generator_info, dict):
-                    model_info = generator_info.get("model_info")
-                    if model_info and isinstance(model_info, dict):
-                        model_name = model_info.get("model")
-                        if model_name:
-                            logger.info(
-                                f"Auto-detected generator model from sample metadata: {model_name}"
-                            )
-
-                # Fallback to eval.model if generator_info not found
-                if not model_name:
-                    model_name = log.eval.model
-                    logger.info(f"Auto-detected model from eval log: {model_name}")
-            else:
-                # No samples, use eval.model as fallback
-                model_name = log.eval.model
-                logger.info(f"Auto-detected model from eval log: {model_name}")
+            model_name = detect_generator_model(read_eval_log(str(data_path)))
+            logger.info(f"Auto-detected generator model: {model_name}")
 
         dataset = process_eval_log(
             data_path,
@@ -307,6 +402,12 @@ def main(
             output_json,
             transformed,
             keep_comments,
+            view=ACTION_VIEW if use_action_views else TRAJECTORY_VIEW,
+            action_options=ActionViewOptions(
+                max_history_chars=max_history_chars,
+                actions_per_trajectory=actions_per_trajectory,
+                seed=action_seed,
+            ),
         )
         num_solutions = sum(len(p.solutions) for p in dataset)
         logger.info(f"Wrote {num_solutions} solutions to {output_json}")

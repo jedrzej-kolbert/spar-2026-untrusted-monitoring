@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - /experiment/additive
+  - override /setting: apps
+  - override /models: closed
+  - _self_
+name: paper_apps_additive
+measurement:
+  share_generations: false
+inputs:
+  finetune:
+    causal:
+      paraphrased: openai/ft:gpt-4.1-2025-04-14:lasr-labs:causal-paraphrased:CS8Pm0LQ:ckpt-step-2100

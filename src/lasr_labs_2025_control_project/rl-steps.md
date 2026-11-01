@@ -30,7 +30,7 @@ Only attacks that pass the tests **and** have a working backdoor are used. On th
 
 ```
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
-  --config src/lasr_labs_2025_control_project/configs/rl/rewrite_signal_pilot.yaml
+  --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml
 ```
 This makes no model calls. It loads and splits the tasks, writes `manifest.json`, and re-grades a sample of the original attacks in the Docker sandbox. Both agreement numbers should be 1.0. If they are not, the sandbox disagrees with the Inspect scorer, so stop and investigate.
 
@@ -39,7 +39,7 @@ This makes no model calls. It loads and splits the tasks, writes `manifest.json`
 Add `--allow-paid`:
 ```
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
-  --config src/lasr_labs_2025_control_project/configs/rl/rewrite_signal_pilot.yaml --allow-paid
+  --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml --allow-paid
 ```
 
 What happens:
@@ -68,7 +68,7 @@ Everything is saved in `output_dir` (default `experiments/open-source-model/apps
 
 ### Changing the experiment
 
-Copy `configs/rl/rewrite_signal_pilot.yaml`, change `run_name`, and edit:
+Copy `finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml`, change `run_name`, and edit:
 - `reward.reward_fn`: `branch` (default) or `hipt`.
 - `reward.failed_backdoor_weight`, `backdoor_suspicion_weight`, `kl_coef`, `overseer_weight`: optional penalties and their strengths. `overseer_ramp_start` and `overseer_ramp_steps` ramp the overseer in gradually.
 - `channel.kind`: `none`, `minify`, or `paraphrase` (signal jamming between sender and receiver).

@@ -105,6 +105,8 @@ def build_analysis_payload(
             )
         },
         "converged": bool(result.converged),
+        # U / H / T as the monitor logs record them (figure captions)
+        "models": _to_jsonable(meta.get("models")),
     }
 
     # --- Marginal ROC curves (raw empirical survival curves) ---
@@ -160,6 +162,7 @@ def build_analysis_payload(
                 "best_parameters",
                 "blue_mixed_strategy",
                 "red_mixed_strategy",
+                "outcome_distribution",
                 "converged",
             )
         }
