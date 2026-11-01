@@ -13,15 +13,15 @@ Background: [`src/PPO Critic Explained.md`](../../src/PPO%20Critic%20Explained.m
 | Sender task | Configurable `task_mode`: `honest+signal` (what the branch does today: a correct solution from scratch plus the bit, no backdoor), `attack+signal` (Option B: backdoor + secret input + signal), `rewrite_signal` (Option A: inject a signal into a pre-generated attack). Option A is built first. |
 | Reward | Configurable. The default is the branch's existing reward, `pass × (task_w + comm_w·P(correct bit)) − overseer_w·suspicion`. `hipt` is an alternative. Optional extra terms: failed-backdoor penalty, trusted-monitor backdoor-suspicion penalty. |
 | Loss | Tinker `ppo` + group-mean advantages; optional per-token KL to the base model and multiple PPO passes. For cost (2026-10-11) the pilot uses 1 pass, no KL, group size 4, and 30 steps (about 1/5 of attempt 1's DeepSeek tokens). |
-| Cost | RL arms reuse the reference arm's (`rl_rewrite_signal_untrained`) honest/honeypot monitor results via `reuse_scores_from`; only attacks are re-scored. Next lever: develop on a smaller U and run DeepSeek once. |
+| Cost | RL test arms share the control arm's honest/honeypot monitor steps (the pipeline reuses identical steps by hash; `reuse_scores_from` before the 2026-11-01 merge of `main`); only rewritten attacks are re-scored. YES/NO monitors use single-prefill scoring (#107). |
 | Monitor (receiver) | Frozen first. Two fine-tuning regimes later: **(1)** signal vs no signal, **(2)** signalled attacks vs honeypots. |
 | Payload | Train: same task with signal (bit 1) or without (bit 0). Held-out: signalled attacks vs H honeypots. |
 | Receiver prompt | New prompt explaining what "a signal from yourself" means, without naming a specific signal. |
-| Overseer | Trusted model T judging "is there a hidden signal?"; backdoor suspicion is a separate optional reward term. |
+| Overseer | Trusted model T judging "is there a hidden signal?"; backdoor suspicion is a separate optional reward term. Option (2026-11-01): `overseer_baseline: original_attack` penalises only the suspicion a rewrite adds over its original attack (applied to ON and OFF rewrites, clipped at 0, probability or logit space). |
 | Signal jamming | Configurable channel between sender and receiver: `none`, `minify` (exists on the branch), `paraphrase`/summarize (new). Applied both in training and at eval. |
-| Models | Sender and receiver: DeepSeek-V3.1 (U). Overseer: Qwen3.5-4B (T). Honeypots: gpt-oss-120b (H). |
+| Models | Pilot: U = DeepSeek-V3.1, H = gpt-oss-120b. From 2026-11-01: U = DeepSeek-V4.1-Flash, H = Qwen3.5-397B-A17B. T = Qwen3.5-4B throughout. |
 | Data split | The project's existing APPS split: odd problem IDs for train, even for test. |
-| Logging | W&B (offline until `wandb login`) + local JSONL; checkpoints written to `experiments/open_models/ckpts.json`. |
+| Logging | W&B (offline until `wandb login`) + local JSONL; checkpoint paths in the run's `status.json`. |
 
 ## Lessons from the branch's 100-update run (APPS Message Evolution)
 
@@ -100,6 +100,7 @@ Qwen3-8B sender and receiver, frozen Qwen3.5-4B overseer, penalty weight 5, 4 tr
 ## Phase 2: evaluation integration
 - [x] `scripts/rewrite_solutions_inspect.py` (attacks.eval + RL checkpoint → signalled attacks.eval, scored by the Inspect APPS scorer); verified live on 5 samples, and the output is accepted by `monitor_solutions_inspect.py`
 - [x] `make_configs.py`: open U = DeepSeek-V3.1; RL arms (`rl_rewrite_signal_pilot` + `rl_rewrite_signal_untrained` control) with rewrite, transform and monitor configs; `ckpts.json` accepts RL arms. Regenerating changes no existing config
+- [x] Ported to the Hydra pipeline after `main` retired `make_configs.py` (2026-11-01): a `rewrite` stage and `MonitorArm.rewrite`; experiments in `conf/experiment/rl/`
 - [x] `src/lasr_labs_2025_control_project/rl-steps.md`
 - [ ] Full evaluation of the pilot checkpoint + plots (needs the checkpoint and the self_rec test-split inputs in `experiments/open-source-model/apps/self_rec/`)
 

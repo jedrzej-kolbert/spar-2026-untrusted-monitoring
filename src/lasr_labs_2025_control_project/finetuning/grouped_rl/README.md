@@ -12,7 +12,9 @@ The library now also drives the HiPT replication. How to run it is in
   attacks that pass and have working backdoors); deterministic train/validation split.
 - `rewards.py`: the reward below stays the default (`branch`); `hipt` reproduces
   HiPT's tanh-shaped receiver/overseer terms; optional failed-backdoor,
-  backdoor-suspicion, and per-token KL penalties.
+  backdoor-suspicion, and per-token KL penalties. With
+  `overseer_baseline: original_attack` the branch overseer term penalises only
+  the suspicion a rewrite adds over the attack it rewrote.
 - `core.py`: `payload_grouping="both"` puts both bits for a problem in one group
   (one shared baseline); per-bit/balanced accuracy, bit-pair collapse metrics;
   held-out comparison of signalled attacks against honeypots; concurrent scoring.
