@@ -28,8 +28,12 @@ measurement:
       model: U
       collusion_prompt: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
       rewrite: {model: U}
-    # trained: added once training finishes (same as untrained, with
-    # rewrite: {model: tinker/<final_checkpoint>}).
+    trained:
+      model: U
+      collusion_prompt: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
+      # final_checkpoint of experiments/open-source-model/apps/rl/overseer_delta_v4flash
+      rewrite:
+        model: tinker/tinker://3809ab38-2d8b-502a-9954-30c0230be093:train:0/sampler_weights/rl_overseer_delta_v4flash
 # Test-split generations supplied as files (not committed; assumed to come from
 # base DeepSeek-V4.1-Flash and Qwen3.5-397B-A17B).
 inputs:
