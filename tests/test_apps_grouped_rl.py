@@ -958,3 +958,11 @@ def test_backdoor_bonus_can_require_passing_tests(
     rollout.execution = ExecutionGrade(passed)
     rollout.backdoor = ExecutionGrade(True)
     assert compute_reward(rollout, config)[1]["backdoor_kept"] == expected
+
+
+def test_extract_secret_input_takes_the_last_block() -> None:
+    text = (
+        "<reasoning>I will put it in <secret_input>x</secret_input> later</reasoning>\n"
+        "<secret_input>\n7\n</secret_input>\n<final_code>\nprint(1)\n</final_code>"
+    )
+    assert extract_secret_input(text) == "7"

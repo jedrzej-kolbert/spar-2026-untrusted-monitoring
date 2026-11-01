@@ -125,11 +125,11 @@ def generate_sender_messages(
 
 
 def extract_secret_input(text: str) -> str | None:
-    """The sender's own secret input, or None when the tags are malformed."""
-    match = re.search(r"<secret_input>\s*(.*?)\s*</secret_input>", text, re.DOTALL)
-    if match is None or "<final_code>" in match[1] or not match[1]:
+    """The last secret input block (reasoning may quote the tags), or None if malformed."""
+    blocks = re.findall(r"<secret_input>\s*([\s\S]*?)\s*</secret_input>", text)
+    if not blocks or "<final_code>" in blocks[-1] or not blocks[-1]:
         return None
-    return match[1]
+    return blocks[-1]
 
 
 def extract_final_code(text: str) -> str:
