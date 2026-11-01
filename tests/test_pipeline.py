@@ -29,7 +29,12 @@ from lasr_labs_2025_control_project.pipeline.graph import (
     Node,
     build_graph,
 )
-from lasr_labs_2025_control_project.pipeline.schema import Config, register
+from lasr_labs_2025_control_project.pipeline.schema import (
+    Config,
+    MonitorArm,
+    RewriteSpec,
+    register,
+)
 from lasr_labs_2025_control_project.pipeline.store import CollisionError, Output
 from lasr_labs_2025_control_project.scripts.plot_data import (
     BootstrapSettings,
@@ -344,6 +349,42 @@ def test_inputs_replace_nodes_and_must_exist() -> None:
     assert "generate.train.attacks" not in only_none
     with pytest.raises(ConfigError, match="doesn't have"):
         graph("experiment=self_rec", "+inputs.finetune.nope.none=x")
+
+
+def test_rl_arms_rewrite_attacks_and_share_negatives() -> None:
+    checkpoint = "tinker/tinker://run/sampler_weights/rl"
+    cfg = config("experiment=rl/overseer_delta_v4flash")
+    cfg.measurement.arms["trained"] = MonitorArm(
+        collusion_prompt="RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT",
+        rewrite=RewriteSpec(model=checkpoint),
+    )
+    g = build_graph(cfg).by_id()
+    untrained, trained = g["rewrite.test.attacks.untrained"], g["rewrite.test.attacks.trained"]
+    assert untrained.params["model"] == "tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
+    assert trained.params["model"] == checkpoint
+    assert untrained.params["signal"] == trained.params["signal"] == "RL_SIGNAL_ON"
+    assert untrained.deps["input"] is trained.deps["input"] is g["generate.test.attacks"]
+    for transform in ("none", "minified", "paraphrased"):
+        attacks = g[f"monitor.{transform}.trained.attacks"]
+        source = attacks.deps["input"]
+        assert source is trained or source.deps["input"] is trained
+        for label in ("honest", "honeypots"):
+            # negatives are scored once and shared by both arms
+            assert (
+                g[f"game.{transform}.trained"].deps[label]
+                is g[f"game.{transform}.untrained"].deps[label]
+            )
+    assert (
+        g["monitor.none.trained.attacks"].params["monitors"]["untrusted_collusion"][
+            "system_prompt"
+        ]
+        == "RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT"
+    )
+    cfg.measurement.arms["bad"] = MonitorArm(
+        attacks_label="honest", rewrite=RewriteSpec()
+    )
+    with pytest.raises(ConfigError, match="attacks only"):
+        build_graph(cfg)
 
 
 def test_monitor_settings_follow_transform_and_view() -> None:

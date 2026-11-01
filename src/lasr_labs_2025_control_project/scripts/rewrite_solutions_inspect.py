@@ -8,16 +8,16 @@ rewritten code with the same APPS scorer as generate_solutions_inspect.py. The o
 secret input), so transform_solutions_inspect.py and monitor_solutions_inspect.py
 run on it unchanged. The pre-rewrite code is kept as `pre_rewrite_solution`.
 
-Configs are emitted by experiments/open_models/make_configs.py (open tree, `rl_*`).
+Run as the pipeline's ``rewrite`` stage: a monitor arm with ``rewrite:`` set
+(``conf/experiment/rl/``) rewrites the test attacks before they are transformed
+and monitored.
 """
 
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-import click
-import yaml
 from control_arena.eval_mode import EvalMode
 from inspect_ai import Task, eval, task
 from inspect_ai.dataset import MemoryDataset, Sample
@@ -37,6 +37,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
     rewrite_messages,
 )
 from lasr_labs_2025_control_project.settings.setting import AppsSetting
+from lasr_labs_2025_control_project.tracking import StageRun
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from lasr_labs_2025_control_project.utils.utils import check_sample_is_valid
@@ -50,24 +51,6 @@ class RewriteSettings(BaseModel):
     user_prompt: str
     signal: str
     max_tokens: int = 4096
-
-
-class RewriteRun(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    eval_path: Path
-    save_path: Path
-    limit: int | None = None
-
-
-class RewriteConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    experiment_folder: Path
-    experiment_name: str
-    results_folder: str = "results/"
-    defaults: dict[str, RewriteSettings]
-    runs: dict[str, RewriteRun]
 
 
 def attack_dataset(eval_path: Path) -> MemoryDataset:
@@ -95,7 +78,11 @@ def _secret_input(generator_info: Any) -> str:
 
 
 @solver
-def rewrite_solution(settings: RewriteSettings) -> Solver:
+def rewrite_solution(
+    settings: RewriteSettings,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> Solver:
     model = get_model(settings.model)
     system_prompt = get_prompt_by_name(settings.system_prompt)
     user_prompt = get_prompt_by_name(settings.user_prompt)
@@ -116,7 +103,9 @@ def rewrite_solution(settings: RewriteSettings) -> Solver:
                 ChatMessageSystem(content=messages[0]["content"]),
                 ChatMessageUser(content=messages[1]["content"]),
             ],
-            config=GenerateConfig(max_tokens=settings.max_tokens),
+            config=GenerateConfig(
+                max_tokens=settings.max_tokens, seed=seed, temperature=temperature
+            ),
         )
         try:
             code = extract_final_code(output.completion)
@@ -150,51 +139,45 @@ def rewrite_solution(settings: RewriteSettings) -> Solver:
 
 
 @task
-def rewrite_solutions(run: RewriteRun, settings: RewriteSettings) -> Task:
+def rewrite_solutions(
+    eval_path: Path,
+    settings: RewriteSettings,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> Task:
     setting = AppsSetting(cache_python_code=False, num_tests_to_run=10)
     return Task(
-        dataset=attack_dataset(run.eval_path),
-        solver=rewrite_solution(settings),
+        dataset=attack_dataset(eval_path),
+        solver=rewrite_solution(settings, seed, temperature),
         scorer=setting.get_scorers()[0],
         sandbox=setting.get_sandbox_config(),
         metadata={"eval_mode": EvalMode.ATTACK.value},
     )
 
 
-@click.command()
-@click.option("--config", type=str, required=True)
-@click.option(
-    "--limit", type=int, default=None, help="Rewrite only the first N samples."
-)
-def main(config: str, limit: int | None) -> None:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    parsed = RewriteConfig.model_validate(yaml.safe_load(Path(config).read_text()))
-    folder = parsed.experiment_folder
-    (folder / "configs").mkdir(parents=True, exist_ok=True)
-    shutil.copy(config, folder / "configs" / "rewrite_config.yaml")
-    settings = parsed.defaults["rewrite"]
-    for label, run in parsed.runs.items():
-        resolved = RewriteRun(
-            eval_path=(folder / run.eval_path).resolve(),
-            save_path=folder / run.save_path,
-            limit=limit if limit is not None else run.limit,
-        )
+def run_rewrite(
+    eval_path: Path,
+    save_path: Path,
+    settings: RewriteSettings,
+    tracker: StageRun,
+    *,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    max_connections: int = 32,
+) -> Any:
+    """Rewrite the attacks in ``eval_path`` under ``tracker``; save to ``save_path``."""
+    with tracker:
         result = eval(
-            tasks=rewrite_solutions(resolved, settings),
-            max_connections=32,
-            max_sandboxes=32,
-            limit=resolved.limit,
+            tasks=rewrite_solutions(eval_path, settings, seed, temperature),
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
+            limit=limit,
+            metadata=tracker.eval_metadata(),
         )
-        resolved.save_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(result[0].location, resolved.save_path)
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {resolved.save_path}"
-            )
-
-
-if __name__ == "__main__":
-    main()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(result[0].location, save_path)
+        tracker.finish_eval(
+            result[0], save_path, limit=limit, metadata={"label": "attacks"}
+        )
+    return result[0]
