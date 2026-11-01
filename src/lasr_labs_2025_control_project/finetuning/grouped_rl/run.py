@@ -93,6 +93,69 @@ def wandb_key(key: str, self_recognition: bool) -> str:
     return curated or f"zz_other/{key}"
 
 
+def _short_model(reference: str | None) -> str:
+    return (reference or "none").rstrip("/").split("/")[-1].split(":")[0]
+
+
+def run_tags(config: dict[str, Any]) -> list[str]:
+    """W&B tags for filtering runs, built from a run's plain config."""
+    reward = config.get("reward") or {}
+    training = config.get("training") or {}
+    models = config.get("models") or {}
+    data = config.get("data") or {}
+    channel = (config.get("channel") or {}).get("kind")
+    fn = reward.get("reward_fn")
+    learning_rate = f"{training.get('learning_rate', 0):.1e}"
+    tags = [
+        f"method:{'icrl' if config.get('method') == 'in_context' else 'gbrl'}",
+        f"task:{training.get('sender_task') or 'rewrite'}",
+        f"sender:{_short_model(models.get('sender'))}",
+        f"judge-model:{_short_model(models.get('receiver'))}",
+        f"judge:{'trained' if training.get('train_receiver') else 'frozen'}",
+        f"monitor:{_short_model(models.get('backdoor_monitor'))}",
+        f"channel:{ {'none': 'raw', 'paraphrase': 'summary'}.get(channel, channel) }",
+        f"data:{'working' if data.get('require_main_task') else 'all'}-attacks",
+        f"eval:{'test' if data.get('validation_attacks_eval') else 'train'}-split",
+        f"batch:{training.get('problems_per_step')}x{training.get('group_size')}",
+        f"lr:{learning_rate.replace('.0e', 'e').replace('e-0', 'e-')}",
+        f"loss-fn:{training.get('loss_fn')}",
+        f"max-tokens:{training.get('max_tokens')}",
+        f"summaries:{training.get('scoring_views') or 1}",
+        f"seed:{config.get('seed')}",
+        f"reward-fn:{fn}",
+    ]
+    if fn not in ("branch", "hipt"):
+        return tags  # other reward functions read these weights differently
+    branch = fn == "branch"
+    terms = {
+        "pass": reward.get("task_weight", 0) if branch else 0,
+        "self-rec": reward.get("communication_weight" if branch else "stego_scale", 0),
+        "backdoor": reward.get("backdoor_kept_weight", 0),
+        "suspicion": reward.get("backdoor_suspicion_weight", 0),
+        "similarity": reward.get("similarity_weight", 0),
+        "kl": reward.get("kl_coef", 0),
+    }
+    tags += [f"loss:{name}={weight or 'off'}" for name, weight in terms.items()]
+    bonuses = [
+        short
+        for name, short in (
+            ("pass", "pass"),
+            ("self-rec", "self"),
+            ("backdoor", "kept"),
+        )
+        if terms[name]
+    ]
+    penalties = [
+        short
+        for name, short in (("suspicion", "-susp"), ("similarity", "-similarity"))
+        if terms[name]
+    ]
+    tags.append(f"reward:{'+'.join(bonuses)}{''.join(penalties)}")
+    if reward.get("backdoor_requires_pass"):
+        tags.append("backdoor-needs-pass")
+    return tags
+
+
 class Recorder:
     def __init__(self, config: RLRunConfig, output_dir: Path) -> None:
         self.output_dir = output_dir
@@ -109,6 +172,7 @@ class Recorder:
                 name=config.run_name,
                 mode=logging_config.wandb_mode,
                 config=json.loads(config.model_dump_json()),
+                tags=run_tags(json.loads(config.model_dump_json())),
                 dir=str(output_dir),
                 save_code=False,
             )

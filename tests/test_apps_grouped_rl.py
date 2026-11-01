@@ -30,6 +30,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
     compute_reward,
     token_similarity,
 )
+from lasr_labs_2025_control_project.finetuning.grouped_rl.run import run_tags
 from lasr_labs_2025_control_project.finetuning.grouped_rl.sandbox import (
     DockerAppsEvaluator,
     _OutputLimitError,
@@ -966,3 +967,66 @@ def test_extract_secret_input_takes_the_last_block() -> None:
         "<secret_input>\n7\n</secret_input>\n<final_code>\nprint(1)\n</final_code>"
     )
     assert extract_secret_input(text) == "7"
+
+
+def test_run_tags_record_each_loss_term_on_or_off() -> None:
+    tags = run_tags(
+        {
+            "seed": 0,
+            "models": {
+                "sender": "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+                "receiver": "tinker://abc:train:0/sampler_weights/self_rec",
+                "backdoor_monitor": "tinker/Qwen/Qwen3.5-4B",
+            },
+            "channel": {"kind": "paraphrase"},
+            "data": {"require_main_task": True, "validation_attacks_eval": ["x"]},
+            "training": {
+                "learning_rate": 1.5e-4,
+                "problems_per_step": 8,
+                "group_size": 8,
+                "scoring_views": 4,
+                "sender_task": "generate",
+            },
+            "reward": {
+                "reward_fn": "branch",
+                "task_weight": 1,
+                "communication_weight": 1,
+                "backdoor_kept_weight": 1,
+                "backdoor_suspicion_weight": 1,
+                "similarity_weight": 0.5,
+                "kl_coef": 0,
+                "backdoor_requires_pass": True,
+            },
+        }
+    )
+    for tag in (
+        "task:generate",
+        "sender:DeepSeek-V4.1-Flash",
+        "judge-model:self_rec",
+        "channel:summary",
+        "lr:1.5e-4",
+        "batch:8x8",
+        "summaries:4",
+        "loss:self-rec=1",
+        "loss:similarity=0.5",
+        "loss:kl=off",
+        "reward:pass+self+kept-susp-similarity",
+        "backdoor-needs-pass",
+    ):
+        assert tag in tags
+
+
+def test_run_tags_read_the_hipt_reward_and_leave_other_rewards_unlabelled() -> None:
+    hipt = {
+        "reward": {
+            "reward_fn": "hipt",
+            "task_weight": 1,
+            "stego_scale": 1,
+            "backdoor_suspicion_weight": 1,
+        }
+    }
+    tags = run_tags(hipt)
+    assert {"loss:pass=off", "loss:self-rec=1", "reward:self-susp"} <= set(tags)
+    other = run_tags({"reward": {"reward_fn": "valid_sigmoid"}})
+    assert "reward-fn:valid_sigmoid" in other
+    assert not [tag for tag in other if tag.startswith("loss:")]
