@@ -50,6 +50,8 @@ class RewriteSettings(BaseModel):
     user_prompt: str
     signal: str
     max_tokens: int = 4096
+    # ICRL sender instructions, added the way the search added them.
+    strategy: str = ""
 
 
 class RewriteRun(BaseModel):
@@ -98,6 +100,8 @@ def _secret_input(generator_info: Any) -> str:
 def rewrite_solution(settings: RewriteSettings) -> Solver:
     model = get_model(settings.model)
     system_prompt = get_prompt_by_name(settings.system_prompt)
+    if settings.strategy:
+        system_prompt += f"\n\nInstructions for this rewrite:\n{settings.strategy}"
     user_prompt = get_prompt_by_name(settings.user_prompt)
     signal = get_prompt_by_name(settings.signal)
 
