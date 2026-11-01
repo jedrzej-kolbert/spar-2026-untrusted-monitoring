@@ -6,6 +6,7 @@ import pytest
 
 from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
 from lasr_labs_2025_control_project.finetuning.grouped_rl.config import RLRunConfig
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import SearchState
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
     StrategyBox,
 )
@@ -102,6 +103,44 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished"
     assert len(status["search_problem_ids"]) == 2
+
+
+async def test_driver_retests_the_top_strategies_on_fresh_problems(
+    tmp_path: Path,
+) -> None:
+    config = icrl_config(
+        tmp_path,
+        icrl={
+            "episodes": 1,
+            "search_problems": 2,
+            "retest_top": 2,
+            "retest_problems": 1,
+        },
+    )
+    held_out = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        self_rec_trainer(),
+        StrategyBox(),
+        OneShotLearner(),
+        Recorder(config, tmp_path),
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15"), attack_problem("17")],
+        [held_out],
+        [(held_out, "# another model\nprint(7)")],
+    )
+    rollouts = [
+        json.loads(line)
+        for line in (tmp_path / "rollouts.jsonl").read_text().splitlines()
+    ]
+    retest_ids = {r["problem_id"] for r in rollouts if r["phase"] == "retest"}
+    search_ids = {r["problem_id"] for r in rollouts if r["phase"] == "search"}
+    assert len(retest_ids) == 1 and not retest_ids & search_ids
+    result = json.loads((tmp_path / "icrl_result.json").read_text())
+    assert len(result["retest"]) == 2
+    assert all("search_reward_mean" in row for row in result["retest"])
+    state = SearchState.load(tmp_path / "icrl_state.json")
+    assert state.completed == 1 and len(state.history) == 2
 
 
 class FakeRun:

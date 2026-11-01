@@ -18,11 +18,13 @@ scores, so run the configured episode count instead of inventing a threshold.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 # The existing evaluator checks only the original secret input. Allowing a new
@@ -117,6 +119,29 @@ class RoundSummary:
 class Knowledge:
     failed_attempts: list[dict[str, str]] = field(default_factory=list)
     knowledge: str | None = None
+
+
+@dataclass
+class SearchState:
+    """The search after ``completed`` episodes; continuing from it matches not stopping."""
+
+    completed: int
+    messages: list[dict[str, str]]
+    history: list[RoundSummary]
+    knowledge: Knowledge
+
+    def save(self, path: Path) -> None:
+        path.write_text(json.dumps(dataclasses.asdict(self), indent=2))
+
+    @classmethod
+    def load(cls, path: Path) -> SearchState:
+        values = json.loads(path.read_text())
+        return cls(
+            values["completed"],
+            values["messages"],
+            [RoundSummary(**row) for row in values["history"]],
+            Knowledge(**values["knowledge"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -237,6 +262,8 @@ async def run_icrl(
     knowledge: Knowledge | None = None,
     on_reply: Callable[[int, str, list[dict[str, str]], str], None] | None = None,
     on_summary: Callable[[RoundSummary], None] | None = None,
+    resume: SearchState | None = None,
+    on_state: Callable[[SearchState], None] | None = None,
 ) -> tuple[list[RoundSummary], RoundSummary]:
     """Upstream query -> evaluate -> clear -> reflect -> strategize, repeated.
 
@@ -245,10 +272,16 @@ async def run_icrl(
     """
     if episodes < 1 or n_result_examples < 0:
         raise ValueError("episodes must be positive and n_result_examples nonnegative")
+    if resume is not None:
+        if knowledge is not None:
+            raise ValueError("resume carries its own knowledge")
+        if episodes <= resume.completed:
+            raise ValueError("episodes must exceed the completed episodes")
+        knowledge = resume.knowledge
     knowledge = knowledge if knowledge is not None else Knowledge()
-    history: list[RoundSummary] = []
+    history = list(resume.history) if resume is not None else []
     system = {"role": "system", "content": LEARNER_SYSTEM_PROMPT}
-    messages = [system]
+    messages = list(resume.messages) if resume is not None else [system]
 
     def record(summary: RoundSummary) -> None:
         history.append(summary)
@@ -263,8 +296,10 @@ async def run_icrl(
         messages.append({"role": "assistant", "content": reply})
         return reply
 
-    record(summarise(0, "", await team.episodes("")))
-    for index in range(1, episodes + 1):
+    if resume is None:
+        record(summarise(0, "", await team.episodes("")))
+    start = resume.completed + 1 if resume is not None else 1
+    for index in range(start, episodes + 1):
         messages.append(
             {
                 "role": "user",
@@ -318,6 +353,15 @@ async def run_icrl(
             }
         )
         messages.append({"role": "user", "content": strategize_prompt(knowledge)})
-        response = await query(index, "strategize")
-        knowledge.knowledge = tagged(response, "summarize_learning")
+        for attempt in range(2):
+            response = await query(index, "strategize")
+            try:
+                knowledge.knowledge = tagged(response, "summarize_learning")
+                break
+            except ValueError:
+                if attempt == 1:
+                    raise
+                messages.pop()  # same retry as a malformed strategy
+        if on_state is not None:
+            on_state(SearchState(index, messages, history, knowledge))
     return history, max(history, key=lambda item: item.reward_mean)

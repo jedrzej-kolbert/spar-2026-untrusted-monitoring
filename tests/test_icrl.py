@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
     Episode,
     Knowledge,
     LEARNER_SYSTEM_PROMPT,
+    SearchState,
     parse_strategy,
     results_string,
     run_icrl,
@@ -88,6 +91,45 @@ class ScriptedTeam:
         self.runs.append(strategy)
         reward = {"": 0.4, "weak": 0.1, "strong": 0.9}[strategy]
         return [episode(reward=reward), episode(reward=reward)]
+
+
+async def test_unclosed_learning_summary_is_retried_once() -> None:
+    class UnclosedOnce(ScriptedLearner):
+        sent_bad_summary = False
+
+        async def query(self, messages: list[dict[str, str]]) -> str:
+            reply = await super().query(messages)
+            if "summarize_learning" in reply and not self.sent_bad_summary:
+                self.sent_bad_summary = True
+                return "<summarize_learning>never closed"
+            return reply
+
+    knowledge = Knowledge()
+    await run_icrl(UnclosedOnce(), ScriptedTeam(), episodes=1, knowledge=knowledge)
+    assert knowledge.knowledge == "lesson from the latest attempt"
+
+
+async def test_resuming_from_a_saved_state_matches_not_stopping(tmp_path: Path) -> None:
+    whole = ScriptedLearner()
+    path = tmp_path / "state.json"
+
+    def save_first(state: SearchState) -> None:
+        if state.completed == 1:
+            state.save(path)
+
+    whole_history, whole_best = await run_icrl(
+        whole, ScriptedTeam(), episodes=3, on_state=save_first
+    )
+    learner, team = ScriptedLearner(), ScriptedTeam()
+    learner.strategy_calls = 1
+    history, best = await run_icrl(
+        learner, team, episodes=3, resume=SearchState.load(path)
+    )
+    assert history == whole_history and best == whole_best
+    assert learner.prompts == whole.prompts[3:]
+    assert team.runs == ["strong", "strong"]
+    with pytest.raises(ValueError, match="exceed"):
+        await run_icrl(learner, team, episodes=1, resume=SearchState.load(path))
 
 
 async def test_hipt_separate_queries_reset_and_knowledge_match_upstream_order() -> None:

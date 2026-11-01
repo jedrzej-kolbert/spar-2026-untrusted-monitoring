@@ -97,17 +97,29 @@ class TrainerTeam:
     honeypots: Sequence[tuple[AppsProblem, str]]
     num_samples: int = 1
     on_result: Callable[[str, BatchResult, str], None] | None = None
+    # Fresh problems that re-score the search's top strategies, to choose among them.
+    retest_problems: Sequence[AppsProblem] = ()
 
     def __post_init__(self) -> None:
         if not self.trainer.config.self_recognition:
             raise ValueError("TrainerTeam needs a self-recognition trainer")
-        search = {p.problem_id for p in self.search_problems}
-        if search & {p.problem_id for p in self.held_out_problems}:
-            raise ValueError("search and held-out problems overlap")
+        sets = [
+            {p.problem_id for p in problems}
+            for problems in (
+                self.search_problems,
+                self.retest_problems,
+                self.held_out_problems,
+            )
+        ]
+        if sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2]:
+            raise ValueError("search, retest and held-out problems overlap")
         # No weights change, so the trainer's train/held-out guard does not apply to
-        # the search problems; the split that matters is search vs held-out, above.
+        # these training problems; what matters is that the sets above do not overlap.
         self.search_problems = [
             replace(p, split="validation") for p in self.search_problems
+        ]
+        self.retest_problems = [
+            replace(p, split="validation") for p in self.retest_problems
         ]
 
     def _report(self, strategy: str, result: BatchResult, phase: str) -> None:
@@ -132,6 +144,10 @@ class TrainerTeam:
 
     async def episodes(self, strategy: str) -> list[Episode]:
         result = await self._run(strategy, self.search_problems, "search")
+        return [episode_from(rollout) for rollout in result.rollouts]
+
+    async def retest(self, strategy: str) -> list[Episode]:
+        result = await self._run(strategy, self.retest_problems, "retest")
         return [episode_from(rollout) for rollout in result.rollouts]
 
     async def held_out(self, strategy: str) -> tuple[list[Episode], HoneypotEvalResult]:

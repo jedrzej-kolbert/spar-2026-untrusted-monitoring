@@ -59,7 +59,9 @@ class ChannelConfig(_Strict):
 
 
 class RewardSettings(_Strict):
-    reward_fn: Literal["branch", "hipt"] = "branch"
+    reward_fn: Literal["branch", "hipt", "valid_sigmoid"] = "branch"
+    suspicion_threshold: float = Field(default=0.7, ge=0, le=1, allow_inf_nan=False)
+    suspicion_steepness: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     # branch reward
     task_weight: float = Field(default=1.0, ge=0)
     communication_weight: float = Field(default=1.0, ge=0)
@@ -130,6 +132,7 @@ class SandboxConfig(_Strict):
     # One container per candidate (fresh process per test) instead of per test.
     batch_tests: bool = True
     max_containers: int = Field(default=8, ge=1)
+    max_output_bytes: int = Field(default=65536, ge=1)
 
 
 class LoggingConfig(_Strict):
@@ -155,6 +158,12 @@ class IcrlConfig(_Strict):
     learner: str = "deepseek-ai/DeepSeek-V3.1"  # Tinker base model, sampled only
     learner_max_tokens: int = Field(default=4096, ge=1)
     learner_temperature: float = Field(default=1.0, gt=0)
+    # A SearchState file to continue from; episodes then counts the earlier ones too.
+    resume_state: Path | None = None
+    # Re-score the top strategies on fresh training problems and take the winner to
+    # the held-out check. 0 keeps the search's best.
+    retest_top: int = Field(default=0, ge=0)
+    retest_problems: int = Field(default=64, ge=1)
 
 
 class RLRunConfig(_Strict):

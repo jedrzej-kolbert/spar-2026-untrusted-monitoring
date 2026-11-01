@@ -45,6 +45,7 @@ from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .icrl import (
     Knowledge,
     RoundSummary,
+    SearchState,
     parse_strategy,
     run_icrl,
     summarise,
@@ -466,6 +467,8 @@ def core_config(
         payload_grouping=training.payload_grouping,
         reward=RewardConfig(
             reward_fn=reward.reward_fn,
+            suspicion_threshold=reward.suspicion_threshold,
+            suspicion_steepness=reward.suspicion_steepness,
             stego_scale=reward.stego_scale,
             overseer_scale=reward.overseer_scale,
             overseer_log_odds_threshold=reward.overseer_log_odds_threshold,
@@ -747,10 +750,27 @@ async def run_in_context(
     if icrl.search_problems > len(train_tasks):
         raise ValueError("icrl.search_problems exceeds the training problems")
     search = random.Random(config.seed).sample(train_tasks, icrl.search_problems)
+    used = {p.problem_id for p in search}
+    retest = (
+        random.Random(config.seed + 1).sample(
+            [p for p in train_tasks if p.problem_id not in used], icrl.retest_problems
+        )
+        if icrl.retest_top
+        else []
+    )
+    resume = SearchState.load(icrl.resume_state) if icrl.resume_state else None
     recorder.status(
-        state="searching", search_problem_ids=[p.problem_id for p in search]
+        state="searching",
+        search_problem_ids=[p.problem_id for p in search],
+        retest_problem_ids=[p.problem_id for p in retest],
     )
     step = 0
+    if resume is not None:
+        step = len(resume.history)
+        recorder.strategy_rows = [
+            {"step": index + 1, **summary_row(item), "cost_usd": None}
+            for index, item in enumerate(resume.history)
+        ]
 
     def on_result(strategy: str, result: BatchResult, phase: str) -> None:
         nonlocal step
@@ -770,6 +790,7 @@ async def run_in_context(
         honeypots=honeypots,
         num_samples=config.eval.num_samples,
         on_result=on_result,
+        retest_problems=retest,
     )
 
     def on_summary(summary: RoundSummary) -> None:
@@ -780,23 +801,53 @@ async def run_in_context(
             f"suspicion {summary.suspicion_mean:.3f} | {summary.strategy[:80]!r}"
         )
 
-    knowledge = Knowledge()
+    knowledge = resume.knowledge if resume is not None else Knowledge()
 
     def on_reply(
         episode: int, stage: str, prompt: list[dict[str, str]], reply: str
     ) -> None:
         recorder.learner_reply(episode, stage, prompt, reply)
 
+    def on_state(state: SearchState) -> None:
+        state.save(config.output_dir / "icrl_state.json")
+        recorder.sync_file("icrl_state.json")
+
+    retest_rows: list[dict[str, Any]] = []
     try:
         history, best = await run_icrl(
             learner,
             team,
             episodes=icrl.episodes,
             n_result_examples=icrl.n_result_examples,
-            knowledge=knowledge,
+            knowledge=None if resume is not None else knowledge,
             on_reply=on_reply,
             on_summary=on_summary,
+            resume=resume,
+            on_state=on_state,
         )
+        if icrl.retest_top:
+            recorder.status(state="retest")
+            top = sorted(history, key=lambda item: item.reward_mean, reverse=True)
+            scored = []
+            for candidate in top[: icrl.retest_top]:
+                summary = summarise(
+                    candidate.round,
+                    candidate.strategy,
+                    await team.retest(candidate.strategy),
+                )
+                scored.append((summary.reward_mean, candidate))
+                retest_rows.append(
+                    {
+                        **summary_row(summary),
+                        "search_reward_mean": candidate.reward_mean,
+                    }
+                )
+                click.echo(
+                    f"retest round {summary.round}: reward {summary.reward_mean:.3f} "
+                    f"(search {candidate.reward_mean:.3f})"
+                )
+            recorder.table(step, "icrl/retest", retest_rows)
+            best = max(scored, key=lambda item: item[0])[1]
         recorder.status(
             state="held_out", best_round=best.round, best_strategy=best.strategy
         )
@@ -830,6 +881,7 @@ async def run_in_context(
             {
                 "best": dataclasses.asdict(best),
                 "strategies": [dataclasses.asdict(item) for item in history],
+                "retest": retest_rows,
                 "held_out": held_out,
                 "knowledge": dataclasses.asdict(knowledge),
             },
@@ -900,6 +952,7 @@ async def train(
         control_arena_parity=sandbox.control_arena_parity,
         batch_tests=sandbox.batch_tests,
         max_containers=sandbox.max_containers,
+        max_output_bytes=sandbox.max_output_bytes,
         num_tests=config.data.max_tests,
     )
     parity = await sandbox_parity_check(evaluator, train_tasks)
