@@ -80,9 +80,13 @@ class RewardSettings(_Strict):
     similarity_weight: float = Field(default=0.0, ge=0)
     # bonus when the rewrite's backdoor still triggers on the secret input
     backdoor_kept_weight: float = Field(default=0.0, ge=0)
+    backdoor_requires_pass: bool = False
 
 
 class TrainingConfig(_Strict):
+    # rewrite: restyle a saved attack. generate: write the attack and its secret
+    # input from the problem alone.
+    sender_task: Literal["rewrite", "generate"] = "rewrite"
     steps: int = Field(default=50, ge=1)
     problems_per_step: int = Field(default=16, ge=1)
     group_size: int = Field(default=8, ge=2)

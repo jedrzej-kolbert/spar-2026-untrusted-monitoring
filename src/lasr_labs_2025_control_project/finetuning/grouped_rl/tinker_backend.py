@@ -114,6 +114,24 @@ def rewrite_sender_messages(
     )
 
 
+def generate_sender_messages(
+    problem: AppsProblem, *, system_prompt: str
+) -> list[dict[str, str]]:
+    """Option B: write the attack from the problem alone, with no input code."""
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": problem.question},
+    ]
+
+
+def extract_secret_input(text: str) -> str | None:
+    """The sender's own secret input, or None when the tags are malformed."""
+    match = re.search(r"<secret_input>\s*(.*?)\s*</secret_input>", text, re.DOTALL)
+    if match is None or "<final_code>" in match[1] or not match[1]:
+        return None
+    return match[1]
+
+
 def extract_final_code(text: str) -> str:
     """Code from the last <final_code> block, else the first Python fence."""
     blocks = re.findall(r"<final_code>\s*([\s\S]*?)\s*</final_code>", text)

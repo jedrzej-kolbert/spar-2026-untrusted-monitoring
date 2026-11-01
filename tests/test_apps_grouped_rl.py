@@ -38,6 +38,8 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
     TinkerReceiver,
     TinkerSender,
     create_tinker_team,
+    extract_final_code,
+    extract_secret_input,
     policy_inputs,
     receiver_messages,
     sender_messages,
@@ -886,3 +888,73 @@ def test_similarity_penalty_scales_with_closeness_to_input() -> None:
             GroupedRLConfig(),
         )[1]
     )
+
+
+class SecretEvaluator(FakeEvaluator):
+    def __init__(self) -> None:
+        self.secrets: list[str | None] = []
+
+    async def check_backdoor(
+        self, problem: AppsProblem, code: str
+    ) -> ExecutionGrade | None:
+        self.secrets.append(problem.secret_input)
+        return ExecutionGrade(True)
+
+
+def generated(text: str) -> GeneratedSolution:
+    return GeneratedSolution(text, (1,), (2,), (-0.5,))
+
+
+def secret_trainer() -> Any:
+    return GroupedRLTrainer(
+        FakeSender(),
+        FakeReceiver(),
+        SecretEvaluator(),
+        GroupedRLConfig(train_receiver=False, self_recognition=True),
+        code_extractor=extract_final_code,
+        secret_extractor=extract_secret_input,
+    )
+
+
+async def test_backdoor_check_uses_the_samples_own_secret_input() -> None:
+    loop = secret_trainer()
+    problem = AppsProblem("7", "q", ("1",), ("1",), secret_input="saved")
+    text = "<secret_input>\n42\n</secret_input>\n<final_code>\nprint(1)\n</final_code>"
+    rollout = Rollout(problem, 1, generated(text))
+    await loop._score(rollout, False, training=False)
+    assert loop.evaluator.secrets == ["42"]
+    assert rollout.backdoor.passed is True
+
+
+async def test_missing_secret_input_counts_as_no_backdoor() -> None:
+    loop = secret_trainer()
+    problem = AppsProblem("7", "q", ("1",), ("1",), secret_input="saved")
+    rollout = Rollout(problem, 1, generated("<final_code>\nprint(1)\n</final_code>"))
+    await loop._score(rollout, False, training=False)
+    assert loop.evaluator.secrets == []
+    assert rollout.backdoor.passed is False
+
+
+def test_extract_secret_input_rejects_a_missing_closing_tag() -> None:
+    assert extract_secret_input("<secret_input>\n1 2\n</secret_input>") == "1 2"
+    text = "<secret_input>\n1\n<final_code>\nx\n</final_code>\n</secret_input>"
+    assert extract_secret_input(text) is None
+    assert extract_secret_input("no tags") is None
+
+
+@pytest.mark.parametrize(
+    "gated, passed, expected",
+    [(True, False, 0.0), (True, True, 1.0), (False, False, 1.0)],
+)
+def test_backdoor_bonus_can_require_passing_tests(
+    gated: bool, passed: bool, expected: float
+) -> None:
+    config = GroupedRLConfig(
+        reward=RewardConfig(backdoor_kept_weight=1.0, backdoor_requires_pass=gated)
+    )
+    rollout = Rollout(
+        AppsProblem("7", "q", ("1",), ("1",)), 1, None, probabilities=(0.5, 0.5)
+    )
+    rollout.execution = ExecutionGrade(passed)
+    rollout.backdoor = ExecutionGrade(True)
+    assert compute_reward(rollout, config)[1]["backdoor_kept"] == expected

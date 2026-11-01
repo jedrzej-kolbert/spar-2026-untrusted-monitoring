@@ -373,6 +373,7 @@ def core_config(
             kl_coef=reward.kl_coef,
             similarity_weight=reward.similarity_weight,
             backdoor_kept_weight=reward.backdoor_kept_weight,
+            backdoor_requires_pass=reward.backdoor_requires_pass,
         ),
         train_receiver=training.train_receiver,
         self_recognition=config.task_mode == "self_recognition",
@@ -422,6 +423,8 @@ async def build_trainer(
         create_tinker_receiver,
         create_tinker_sender,
         extract_final_code,
+        extract_secret_input,
+        generate_sender_messages,
         rewrite_sender_messages,
     )
 
@@ -433,7 +436,11 @@ async def build_trainer(
         get_prompt_by_name(prompts.signal_on),
     )
 
+    generating = training.sender_task == "generate"
+
     def messages_fn(problem: AppsProblem, payload: int) -> list[dict[str, str]]:
+        if generating:
+            return generate_sender_messages(problem, system_prompt=system_prompt)
         return rewrite_sender_messages(
             problem,
             payload,
@@ -496,6 +503,7 @@ async def build_trainer(
         backdoor_monitor=backdoor_monitor,
         reference=reference,
         code_extractor=extract_final_code,
+        secret_extractor=extract_secret_input if generating else None,
     )
     return trainer, sender
 

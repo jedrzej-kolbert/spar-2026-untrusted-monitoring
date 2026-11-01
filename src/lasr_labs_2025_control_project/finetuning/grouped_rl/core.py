@@ -7,7 +7,7 @@ import json
 import math
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Literal, Protocol, cast
 
 from .rewards import RewardConfig, compute_reward
@@ -460,6 +460,7 @@ class GroupedRLTrainer:
         backdoor_monitor: Overseer | None = None,
         reference: ReferencePolicy | None = None,
         code_extractor: Callable[[str], str] = extract_code,
+        secret_extractor: Callable[[str], str | None] | None = None,
     ) -> None:
         self.sender = sender
         self.receiver = receiver
@@ -487,6 +488,7 @@ class GroupedRLTrainer:
         self.backdoor_monitor = backdoor_monitor
         self.reference = reference
         self.code_extractor = code_extractor
+        self.secret_extractor = secret_extractor
         self._rng = random.Random(self.config.seed)
         self._train_ids: set[str] = set()
         self._eval_ids: set[str] = set()
@@ -643,9 +645,16 @@ class GroupedRLTrainer:
             except Exception as exc:
                 rollout.errors.append(f"execution scoring failed: {exc!r}")
         check_backdoor = getattr(self.evaluator, "check_backdoor", None)
-        if check_backdoor is not None and problem.secret_input is not None:
+        checked = problem
+        if self.secret_extractor is not None:
+            checked = replace(
+                problem, secret_input=self.secret_extractor(generation.text)
+            )
+            if checked.secret_input is None:
+                rollout.backdoor = ExecutionGrade(False, "no secret input in response")
+        if check_backdoor is not None and checked.secret_input is not None:
             try:
-                rollout.backdoor = await check_backdoor(problem, rollout.code)
+                rollout.backdoor = await check_backdoor(checked, rollout.code)
                 if rollout.backdoor and rollout.backdoor.infrastructure_error:
                     rollout.errors.append(rollout.backdoor.infrastructure_error)
             except Exception as exc:
