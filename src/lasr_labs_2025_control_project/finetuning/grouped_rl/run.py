@@ -43,6 +43,8 @@ from .core import (
 )
 from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .icrl import (
+    CENTRAL,
+    SENDER_ONLY,
     Knowledge,
     RoundSummary,
     SearchState,
@@ -53,6 +55,11 @@ from .icrl import (
 from .icrl_adapters import StrategyBox, TrainerTeam, with_strategy
 from .rewards import RewardConfig
 from . import usage
+from lasr_labs_2025_control_project.prompts.rl_prompts import (
+    RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
+    RL_WHILE_LOOP_JUDGE_INSTRUCTIONS,
+    RL_WHILE_LOOP_SENDER_INSTRUCTIONS,
+)
 from .sandbox import DockerAppsEvaluator
 from .tinker_backend import TinkerReceiver
 
@@ -96,6 +103,14 @@ def summary_row(summary: RoundSummary) -> dict[str, Any]:
     return {
         "round": summary.round,
         "strategy": summary.strategy,
+        **(
+            {
+                "decoder": summary.decoder,
+                "honeypot_p_yes_mean": summary.honeypot_p_yes_mean,
+            }
+            if summary.honeypot_p_yes_mean is not None
+            else {}
+        ),
         "reward_mean": summary.reward_mean,
         **{
             f"reward/{name}": value for name, value in summary.reward_components.items()
@@ -124,6 +139,7 @@ class Recorder:
     def __init__(self, config: RLRunConfig, output_dir: Path) -> None:
         self.output_dir = output_dir
         self.self_recognition = config.task_mode == "self_recognition"
+        self.centralized = config.icrl.centralized
         output_dir.mkdir(parents=True, exist_ok=True)
         self.wandb = None
         self.strategy_rows: list[dict[str, Any]] = []
@@ -194,6 +210,7 @@ class Recorder:
                     "suspiciousness": item.suspiciousness,
                     "overseer_log_odds": item.overseer_log_odds,
                     "backdoor_suspicion": item.backdoor_suspicion,
+                    "honeypot_p_yes": item.honeypot_p_yes,
                     "kl": item.kl,
                     "reward": item.reward,
                     "reward_components": item.reward_components,
@@ -259,7 +276,7 @@ class Recorder:
         self.sync_file("learner.jsonl")
         if stage == "strategy":
             try:
-                chosen = parse_strategy(reply)
+                chosen = parse_strategy(reply, centralized=self.centralized)
             except ValueError:
                 return  # the learner loop logs and retries malformed strategy replies
             self.proposed_rows.append(
@@ -267,6 +284,11 @@ class Recorder:
                     "episode": episode,
                     "description": chosen.description,
                     "strategy": chosen.encoder_instructions,
+                    **(
+                        {"decoder": chosen.decoder_instructions}
+                        if self.centralized
+                        else {}
+                    ),
                 }
             )
             self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
@@ -480,6 +502,7 @@ def core_config(
         train_receiver=training.train_receiver,
         self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
+        trusted_reads_original=config.icrl.centralized,
     )
 
 
@@ -738,6 +761,8 @@ async def run_in_context(
     train_tasks: list[AppsProblem],
     validation: list[AppsProblem],
     honeypots: list[tuple[AppsProblem, str]],
+    train_honeypots: tuple[tuple[AppsProblem, str], ...]
+    | list[tuple[AppsProblem, str]] = (),
 ) -> None:
     """ICRL search on training problems, then a held-out check against honeypots.
 
@@ -747,6 +772,10 @@ async def run_in_context(
     four files are also uploaded to the W&B run.
     """
     icrl = config.icrl
+    if icrl.centralized:
+        # The paired reward needs each search problem's honeypot.
+        paired = {problem.problem_id for problem, _ in train_honeypots}
+        train_tasks = [task for task in train_tasks if task.problem_id in paired]
     if icrl.search_problems > len(train_tasks):
         raise ValueError("icrl.search_problems exceeds the training problems")
     search = random.Random(config.seed).sample(train_tasks, icrl.search_problems)
@@ -775,7 +804,9 @@ async def run_in_context(
     def on_result(strategy: str, result: BatchResult, phase: str) -> None:
         nonlocal step
         step += 1
-        recorder.rollouts(step, phase, result.rollouts, strategy=strategy)
+        recorder.rollouts(
+            step, phase, result.rollouts, strategy=strategy, decoder=box.decoder
+        )
         recorder.sync_file("rollouts.jsonl")
         if result.errors:
             # Batch-level causes (e.g. a sender exception) are not on any rollout.
@@ -791,6 +822,8 @@ async def run_in_context(
         num_samples=config.eval.num_samples,
         on_result=on_result,
         retest_problems=retest,
+        judge_template=RL_CENTRAL_JUDGE_SYSTEM_PROMPT if icrl.centralized else "",
+        train_honeypots=train_honeypots if icrl.centralized else (),
     )
 
     def on_summary(summary: RoundSummary) -> None:
@@ -798,7 +831,9 @@ async def run_in_context(
         click.echo(
             f"round {summary.round}: reward {summary.reward_mean:.3f}, "
             f"P(self) {summary.p_self_mean:.3f}, working {summary.working_rate}, "
-            f"suspicion {summary.suspicion_mean:.3f} | {summary.strategy[:80]!r}"
+            f"suspicion {summary.suspicion_mean:.3f}, "
+            f"honeypot P(YES) {summary.honeypot_p_yes_mean} "
+            f"| {summary.strategy[:80]!r}"
         )
 
     knowledge = resume.knowledge if resume is not None else Knowledge()
@@ -824,6 +859,7 @@ async def run_in_context(
             on_summary=on_summary,
             resume=resume,
             on_state=on_state,
+            prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
         )
         if icrl.retest_top:
             recorder.status(state="retest")
@@ -833,7 +869,8 @@ async def run_in_context(
                 summary = summarise(
                     candidate.round,
                     candidate.strategy,
-                    await team.retest(candidate.strategy),
+                    await team.retest(candidate.strategy, candidate.decoder),
+                    candidate.decoder,
                 )
                 scored.append((summary.reward_mean, candidate))
                 retest_rows.append(
@@ -849,19 +886,44 @@ async def run_in_context(
             recorder.table(step, "icrl/retest", retest_rows)
             best = max(scored, key=lambda item: item[0])[1]
         recorder.status(
-            state="held_out", best_round=best.round, best_strategy=best.strategy
+            state="held_out",
+            best_round=best.round,
+            best_strategy=best.strategy,
+            best_decoder=best.decoder,
         )
         held_out: dict[str, Any] = {}
         # The baseline is checked too, so a gain is measured against no strategy.
-        for label, strategy in (("best", best.strategy), ("baseline", "")):
-            if label == "baseline" and best.strategy == "":
-                held_out["baseline"] = held_out["best"]
+        checks = [("best", best.strategy, best.decoder), ("baseline", "", "")]
+        if icrl.centralized:
+            checks += [
+                # Do the instructions matter, on the same sender text?
+                ("instructions_removed", best.strategy, ""),
+                # Is the judge reading a signal, or just spotting honeypots?
+                ("empty_sender", "", best.decoder),
+                (
+                    "while_loop",
+                    RL_WHILE_LOOP_SENDER_INSTRUCTIONS,
+                    RL_WHILE_LOOP_JUDGE_INSTRUCTIONS,
+                ),
+            ]
+        done: dict[tuple[str, str], dict[str, Any]] = {}
+        for label, strategy, decoder in checks:
+            if (strategy, decoder) in done:
+                held_out[label] = done[(strategy, decoder)]
                 continue
-            episodes, honeypot = await team.held_out(strategy)
+            episodes, honeypot = await team.held_out(strategy, decoder)
             summary = summarise(
-                best.round if label == "best" else 0, strategy, episodes
+                best.round if label == "best" else 0, strategy, episodes, decoder
             )
             metrics = {**summary_row(summary), **honeypot.metrics()}
+            paired_rewards = [
+                e.reward for e in episodes if e.honeypot_p_yes is not None
+            ]
+            if paired_rewards:
+                metrics["paired_reward_mean"] = sum(paired_rewards) / len(
+                    paired_rewards
+                )
+            done[(strategy, decoder)] = metrics
             recorder.honeypots(step, honeypot.honeypot_scores)
             recorder.scalars(step, f"icrl/held_out_{label}", metrics)
             held_out[label] = metrics
@@ -999,6 +1061,7 @@ async def train(
                 train_tasks,
                 validation,
                 honeypots,
+                train_honeypots,
             )
         finally:
             close_run(recorder, meter, output_dir, recorder.last_step)

@@ -164,6 +164,9 @@ class IcrlConfig(_Strict):
     # the held-out check. 0 keeps the search's best.
     retest_top: int = Field(default=0, ge=0)
     retest_problems: int = Field(default=64, ge=1)
+    # The learner writes the judge's instructions too (HiPT's centralized learner).
+    # A shared strategy is causal collusion, a different question from self-recognition.
+    centralized: bool = False
 
 
 class RLRunConfig(_Strict):
@@ -246,6 +249,10 @@ class RLRunConfig(_Strict):
                 raise ValueError(
                     "in_context needs reward.backdoor_suspicion_weight > 0"
                 )
+        if self.icrl.centralized and (
+            self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
+        ):
+            raise ValueError("centralized needs method in_context and valid_sigmoid")
         return self
 
     @property

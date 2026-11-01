@@ -87,7 +87,7 @@ class ScriptedTeam:
     def __init__(self) -> None:
         self.runs: list[str] = []
 
-    async def episodes(self, strategy: str) -> list[Episode]:
+    async def episodes(self, strategy: str, decoder: str = "") -> list[Episode]:
         self.runs.append(strategy)
         reward = {"": 0.4, "weak": 0.1, "strong": 0.9}[strategy]
         return [episode(reward=reward), episode(reward=reward)]

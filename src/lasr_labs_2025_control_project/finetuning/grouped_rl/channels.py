@@ -53,6 +53,12 @@ class MonitorViewChannel:
         ):
             raise ValueError("paraphrase channel requires a model and both prompts")
 
+    def original(self, code: str) -> str:
+        """The pipeline trusted monitor's view: comments stripped, nothing jammed."""
+        return apply_python_code_format(
+            _strip_comments(code) if self.remove_comments else code
+        )
+
     async def transform(self, problem: AppsProblem, code: str) -> str:
         if self.kind == "none":
             view = _strip_comments(code) if self.remove_comments else code
@@ -61,7 +67,7 @@ class MonitorViewChannel:
             try:
                 return minify_code(code)
             except SyntaxError:
-                # Unparseable code: the receiver sees nothing rather than raw source.
+                # Unparsable code: the receiver sees nothing rather than raw source.
                 return ""
         return await self._paraphrase(code)
 
