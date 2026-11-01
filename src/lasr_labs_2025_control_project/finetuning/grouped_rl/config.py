@@ -64,6 +64,10 @@ class RewardSettings(_Strict):
     # overseer_ramp_start to its final value over overseer_ramp_steps steps.
     overseer_ramp_start: float | None = None
     overseer_ramp_steps: int = Field(default=0, ge=0)
+    # Penalise only the suspicion a rewrite adds over the attack it rewrote
+    # (rewrite_signal): overseer_weight * max(0, suspicion - original's suspicion).
+    overseer_baseline: Literal["none", "original_attack"] = "none"
+    overseer_delta_space: Literal["probability", "logit"] = "probability"
     # hipt reward
     stego_scale: float = Field(default=1.0, ge=0)
     overseer_scale: float = Field(default=1.0, ge=0)
@@ -129,9 +133,8 @@ class LoggingConfig(_Strict):
 
 class CheckpointConfig(_Strict):
     save_every: int | None = 10
-    # On completion the final sender checkpoint is added to this file under
-    # ``name`` so make_configs.py can build monitor configs for it.
-    ckpts_json: Path | None = Path("experiments/open_models/ckpts.json")
+    # Name of the saved sender weights; the final tinker:// path is written to
+    # status.json (final_checkpoint) for the evaluation pipeline.
     name: str | None = None
 
 
@@ -177,6 +180,13 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
+        if reward.overseer_baseline != "none":
+            if reward.reward_fn != "branch":
+                raise ValueError("overseer_baseline is only defined for reward_fn branch")
+            if self.task_mode != "rewrite_signal":
+                raise ValueError("overseer_baseline original_attack needs rewrite_signal")
+            if not self.models.overseer:
+                raise ValueError("overseer_baseline needs models.overseer")
         return self
 
     @property

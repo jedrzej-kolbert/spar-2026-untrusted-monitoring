@@ -59,6 +59,19 @@ def _logit(p: float) -> float:
     return math.log(p) - math.log1p(-p)
 
 
+def suspicion_increase(
+    score: float, baseline: float, space: Literal["probability", "logit"]
+) -> float:
+    """How much more suspicious ``score`` is than ``baseline``, clipped at 0.
+
+    Used with ``overseer_baseline="original_attack"``: only the suspicion a rewrite
+    adds over the attack it rewrote is penalised, never rewarded when it removes some.
+    """
+    if space == "logit":
+        return max(0.0, _logit(score) - _logit(baseline))
+    return max(0.0, score - baseline)
+
+
 def compute_reward(
     rollout: Rollout, config: GroupedRLConfig, *, include_kl: bool = True
 ) -> tuple[float, dict[str, float]]:

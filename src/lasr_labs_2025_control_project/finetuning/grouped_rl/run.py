@@ -111,6 +111,8 @@ class Recorder:
                     else None,
                     "backdoor": item.backdoor.passed if item.backdoor else None,
                     "suspiciousness": item.suspiciousness,
+                    "baseline_suspicion": item.baseline_suspicion,
+                    "suspicion_increase": item.suspicion_increase,
                     "backdoor_suspicion": item.backdoor_suspicion,
                     "kl": item.kl,
                     "reward": item.reward,
@@ -239,6 +241,8 @@ def core_config(
         if overseer_weight is None
         else overseer_weight,
         payload_grouping=training.payload_grouping,
+        overseer_baseline=reward.overseer_baseline,
+        overseer_delta_space=reward.overseer_delta_space,
         reward=RewardConfig(
             reward_fn=reward.reward_fn,
             stego_scale=reward.stego_scale,
@@ -455,13 +459,6 @@ def docker_down(result: BatchResult) -> bool:
     return any(marker in message for message in messages for marker in _DOCKER_DOWN)
 
 
-def _update_ckpts_json(path: Path, name: str, checkpoint: str) -> None:
-    current = json.loads(path.read_text()) if path.exists() else {}
-    current[name] = checkpoint
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(current, indent=2) + "\n")
-
-
 async def train(
     config: RLRunConfig,
     allow_paid: bool,
@@ -524,6 +521,21 @@ async def train(
         if gap < config.preflight.require_overseer_gap:
             recorder.status(state="stopped", reason=f"overseer gap {gap:.3f} too small")
             raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
+
+    if config.reward.overseer_baseline == "original_attack":
+        # One overseer score per original attack, reused for every rewrite of it.
+        baselines = await trainer.score_original_attacks(train_tasks + validation)
+        (output_dir / "original_attack_suspicion.json").write_text(
+            json.dumps(baselines, indent=2)
+        )
+        values = list(baselines.values())
+        click.echo(
+            f"original attacks: mean overseer suspicion "
+            f"{sum(values) / len(values):.3f} over {len(values)}"
+        )
+        recorder.scalars(
+            0, "preflight", {"original_attack_suspicion_mean": sum(values) / len(values)}
+        )
 
     if start_step == 1:
         await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
@@ -604,10 +616,6 @@ async def train(
         final = await sender.save_checkpoint(config.checkpoint_name)
         recorder.status(state="finished", final_checkpoint=final)
         click.echo(f"final sender checkpoint: {final}")
-        if config.checkpoints.ckpts_json is not None:
-            _update_ckpts_json(
-                config.checkpoints.ckpts_json, config.checkpoint_name, final
-            )
         try:
             figure = plot_auroc_over_steps(output_dir)
             click.echo(f"AUROC over steps: {figure}")

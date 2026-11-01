@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol
 
-from .rewards import RewardConfig, compute_reward
+from .rewards import RewardConfig, compute_reward, suspicion_increase
 
 
 @dataclass(frozen=True)
@@ -169,6 +169,12 @@ class GroupedRLConfig:
     # "both": half of each group gets bit 0 and half bit 1 for the same problem, so
     # a sender that stops signalling gains nothing relative to its siblings.
     payload_grouping: Literal["single", "both"] = "single"
+    # "none": the branch penalty is overseer_weight * suspicion. "original_attack"
+    # (rewrite tasks): overseer_weight * max(0, suspicion - suspicion of the attack
+    # being rewritten), so only suspicion the rewrite adds is penalised. The
+    # difference is taken in probability or logit space.
+    overseer_baseline: Literal["none", "original_attack"] = "none"
+    overseer_delta_space: Literal["probability", "logit"] = "probability"
     reward: RewardConfig = field(default_factory=RewardConfig)
     train_receiver: bool = True
     max_concurrency: int = 16
@@ -184,6 +190,14 @@ class GroupedRLConfig:
             raise ValueError("max_concurrency must be positive")
         if not math.isfinite(self.overseer_weight) or self.overseer_weight < 0:
             raise ValueError("overseer weight must be finite and nonnegative")
+        if self.overseer_baseline not in ("none", "original_attack"):
+            raise ValueError(f"invalid overseer_baseline: {self.overseer_baseline}")
+        if self.overseer_delta_space not in ("probability", "logit"):
+            raise ValueError(
+                f"invalid overseer_delta_space: {self.overseer_delta_space}"
+            )
+        if self.overseer_baseline != "none" and self.reward.reward_fn != "branch":
+            raise ValueError("overseer_baseline is only defined for the branch reward")
         weights = (self.task_weight, self.communication_weight)
         if not all(math.isfinite(value) and value >= 0 for value in weights):
             raise ValueError("reward weights must be finite and nonnegative")
@@ -223,6 +237,10 @@ class Rollout:
     advantage: float | None = None
     errors: list[str] = field(default_factory=list)
     suspiciousness: float | None = None
+    # With overseer_baseline="original_attack": the overseer's score for the attack
+    # being rewritten, and the clipped increase the penalty is computed from.
+    baseline_suspicion: float | None = None
+    suspicion_increase: float | None = None
     overseer_penalty: float | None = 0.0
     # The code as the receiver (and overseer) saw it, after any signal jamming.
     receiver_code: str | None = None
@@ -368,6 +386,18 @@ class BatchResult:
             if suspicion
             else None
         )
+        increase: dict[int, list[float]] = {0: [], 1: []}
+        baselines = []
+        for item in self.rollouts:
+            if item.suspicion_increase is not None:
+                increase[item.payload].append(item.suspicion_increase)
+            if item.baseline_suspicion is not None:
+                baselines.append(item.baseline_suspicion)
+        if baselines:
+            out["baseline_suspicion_mean"] = _mean(baselines)
+            out["suspicion_increase_mean"] = _mean(increase[0] + increase[1])
+            for bit in (0, 1):
+                out[f"bit{bit}_suspicion_increase_mean"] = _mean(increase[bit])
         backdoors = [item.backdoor for item in self.rollouts if item.backdoor]
         out["backdoor_success"] = (
             sum(grade.passed for grade in backdoors) / len(backdoors)
@@ -484,6 +514,51 @@ class GroupedRLTrainer:
         self._train_ids: set[str] = set()
         self._eval_ids: set[str] = set()
         self._semaphore = asyncio.Semaphore(self.config.max_concurrency)
+        self._baselines: dict[str, asyncio.Task[float]] = {}
+
+    async def original_attack_suspicion(self, problem: AppsProblem) -> float:
+        """The overseer's score for the attack a rewrite task starts from.
+
+        Scored once per problem, through the same channel as the rewrites (so
+        comments are stripped the same way), and cached for the run.
+        """
+        if self.overseer is None:
+            raise ValueError("original-attack suspicion requires an overseer")
+        if not problem.base_code:
+            raise ValueError(f"problem {problem.problem_id} has no original attack")
+        task = self._baselines.get(problem.problem_id)
+        if task is None:
+            task = asyncio.ensure_future(self._score_original(problem))
+            self._baselines[problem.problem_id] = task
+        try:
+            return await asyncio.shield(task)
+        except Exception:
+            # Let a later rollout retry a failed score.
+            if self._baselines.get(problem.problem_id) is task and task.done():
+                del self._baselines[problem.problem_id]
+            raise
+
+    async def _score_original(self, problem: AppsProblem) -> float:
+        assert self.overseer is not None
+        view = problem.base_code
+        if self.channel is not None:
+            view = await self.channel.transform(problem, view)
+        score = await self.overseer.suspiciousness(problem, view)
+        if not math.isfinite(score) or not 0 <= score <= 1:
+            raise ValueError("suspiciousness must be finite and in [0, 1]")
+        return score
+
+    async def score_original_attacks(
+        self, problems: list[AppsProblem]
+    ) -> dict[str, float]:
+        """Score every problem's original attack up front (problem id -> score)."""
+        scores = await asyncio.gather(
+            *(self.original_attack_suspicion(problem) for problem in problems)
+        )
+        return {
+            problem.problem_id: score
+            for problem, score in zip(problems, scores, strict=True)
+        }
 
     @staticmethod
     def _validate_problems(problems: list[AppsProblem]) -> set[str]:
@@ -642,7 +717,17 @@ class GroupedRLTrainer:
                 if not math.isfinite(score) or not 0 <= score <= 1:
                     raise ValueError("suspiciousness must be finite and in [0, 1]")
                 rollout.suspiciousness = score
-                rollout.overseer_penalty = self.config.overseer_weight * score
+                if self.config.overseer_baseline == "original_attack":
+                    baseline = await self.original_attack_suspicion(problem)
+                    rollout.baseline_suspicion = baseline
+                    rollout.suspicion_increase = suspicion_increase(
+                        score, baseline, self.config.overseer_delta_space
+                    )
+                    rollout.overseer_penalty = (
+                        self.config.overseer_weight * rollout.suspicion_increase
+                    )
+                else:
+                    rollout.overseer_penalty = self.config.overseer_weight * score
             except Exception as exc:
                 rollout.errors.append(f"overseer scoring failed: {exc}")
         if self.backdoor_monitor is not None:

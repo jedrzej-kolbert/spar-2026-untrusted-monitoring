@@ -82,4 +82,3 @@ logging:
 
 checkpoints:
   save_every: 10
-  ckpts_json: experiments/open_models/ckpts.json
