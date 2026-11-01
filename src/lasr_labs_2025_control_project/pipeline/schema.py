@@ -197,6 +197,9 @@ class MeasurementConfig:
     monitors: list[str] = field(default_factory=lambda: list(MONITORS))
     #: reuse generations across collusion strategies when their config matches
     share_generations: bool = True
+    #: run the suspiciousness monitors once per input, not once per monitor arm
+    #: (changes monitor step hashes, so existing monitor outputs are not reused)
+    share_suspiciousness: bool = False
     limits: MeasurementLimits = field(default_factory=MeasurementLimits)
     #: refuse to analyse with fewer usable samples than this per label
     min_samples_per_label: int = 10

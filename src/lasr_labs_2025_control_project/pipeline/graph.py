@@ -420,6 +420,27 @@ class GraphBuilder:
             "temperature": cfg.generation.temperature,
             "seed": cfg.seed,
         }
+        if m.share_suspiciousness and "untrusted_collusion" in monitors:
+            collusion_entry = monitors.pop("untrusted_collusion")
+            if monitors:
+                # Arm-independent, so one step per input; the arm's collusion
+                # monitor then adds its score to that step's log.
+                deps["input"] = self.add(
+                    Node(
+                        "monitor",
+                        f"monitor.shared.{transform}.{source_label}",
+                        names.extend(source.name, "mon-suspiciousness"),
+                        {**params, "label": source_label},
+                        deps={"input": source},
+                        paid=True,
+                        info={
+                            "label": source_label,
+                            "transform": transform,
+                            "arm": "shared",
+                        },
+                    )
+                )
+            params["monitors"] = monitors = {"untrusted_collusion": collusion_entry}
         if "untrusted_collusion" in monitors:
             segment_model, segment_prompt = collusion_alias, collusion_prompt
         else:
@@ -563,6 +584,10 @@ def validate(cfg: Config) -> None:
         )
     check(
         s.view in ("trajectory", "action"), "setting.view must be trajectory or action"
+    )
+    check(
+        s.view == "trajectory" or not m.share_suspiciousness,
+        "measurement.share_suspiciousness isn't available for per-action views",
     )
     check(
         s.view == "trajectory" or not cfg.elicitation.training.checkpoint_auc,

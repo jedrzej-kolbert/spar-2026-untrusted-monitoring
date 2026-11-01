@@ -8,6 +8,7 @@ import gzip
 import json
 import posixpath
 import shutil
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ from lasr_labs_2025_control_project.pipeline.graph import (
     Node,
     build_graph,
 )
-from lasr_labs_2025_control_project.pipeline.schema import Config, register
+from lasr_labs_2025_control_project.pipeline.schema import MONITORS, Config, register
 from lasr_labs_2025_control_project.pipeline.store import CollisionError, Output
 from lasr_labs_2025_control_project.scripts.plot_data import (
     BootstrapSettings,
@@ -270,6 +271,32 @@ def test_graph_reproduces_every_config_make_configs_emitted(tree: str) -> None:
     expected = _snapshot_signatures(json.loads(SNAPSHOT.read_text())[tree])
     actual = set().union(*(_graph_signatures(*ov) for ov in TREES[tree]))
     assert expected - actual == set()
+
+
+def test_share_suspiciousness_runs_those_monitors_once_per_input() -> None:
+    def calls(*overrides: str) -> Counter[str]:
+        nodes = graph("experiment=self_rec", *overrides).nodes
+        return Counter(
+            name
+            for node in nodes
+            if node.stage == "monitor"
+            for name in node.params["monitors"]
+        )
+
+    assert calls() == dict.fromkeys(MONITORS, 18)
+    assert calls("measurement.share_suspiciousness=true") == {
+        "untrusted_collusion": 18,  # differs per arm
+        "trusted_suspiciousness": 9,  # 3 transforms x 3 labels
+        "untrusted_suspiciousness": 9,
+    }
+    g = graph("experiment=self_rec", "measurement.share_suspiciousness=true").by_id()
+    shared = g["monitor.shared.minified.attacks"]
+    assert g["monitor.minified.base.attacks"].deps["input"] is shared
+    assert g["monitor.minified.sft.attacks"].deps["input"] is shared
+    assert (
+        shared.deps["input"].id == "transform.test.minified.attacks"
+        and "collusion_model" not in shared.deps
+    )
 
 
 def test_generations_are_shared_across_collusion_strategies() -> None:

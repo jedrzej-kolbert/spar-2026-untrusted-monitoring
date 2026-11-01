@@ -29,6 +29,7 @@ from omegaconf import OmegaConf
 from lasr_labs_2025_control_project.pipeline import run as pipeline_run
 from lasr_labs_2025_control_project.pipeline.schema import Config, register
 from lasr_labs_2025_control_project.scripts.plot_data import (
+    build_jsonl_dataframe_from_eval_log,
     load_game,
     load_saved_condition,
     resolve_saved_condition,
@@ -115,12 +116,14 @@ def _monitored(tmp_path: Path, label: str, n: int = 40) -> str:
     return _log(samples, tmp_path / f"mon_{label}.eval")
 
 
-def _run(tmp_path: Path, *overrides: str) -> list[pipeline_run.Step]:
+def _run(
+    tmp_path: Path, *overrides: str, experiment: str = "acausal"
+) -> list[pipeline_run.Step]:
     with initialize_config_dir(config_dir=str(ROOT / "conf"), version_base="1.3"):
         raw = compose(
             config_name="config",
             overrides=[
-                "experiment=acausal",
+                f"experiment={experiment}",
                 f"experiments_dir={tmp_path / 'experiments'}",
                 "models.U=mockllm/model",
                 "models.T=mockllm/model",
@@ -179,6 +182,35 @@ def test_minify_and_monitor_stages(tmp_path: Path) -> None:
         *(f"+inputs.generate.test.{label}={path}" for label, path in gens.items()),
     )
     assert pipeline_run.RUN not in {s.status for s in again}
+
+
+def test_shared_suspiciousness_scores_reach_each_arm(tmp_path: Path) -> None:
+    gens = {
+        label: _generation(tmp_path, label)
+        for label in ("attacks", "honest", "honeypots")
+    }
+    steps = _run(
+        tmp_path,
+        "measurement.transforms=[none]",
+        "measurement.share_suspiciousness=true",
+        "measurement.arms.sft.model=mockllm/other",
+        "stages=[generate,monitor]",
+        *(f"+inputs.generate.test.{label}={path}" for label, path in gens.items()),
+        experiment="self_rec",
+    )
+    ran = [s.node for s in steps if s.status == pipeline_run.RUN]
+    assert len(ran) == 3 + 2 * 3  # one shared step per label, one per arm and label
+
+    store = pipeline_run.Store(tmp_path / "experiments", "apps")
+    frame = build_jsonl_dataframe_from_eval_log(
+        store.output_path(next(n for n in ran if n.id == "monitor.none.sft.attacks"))
+    )
+    assert len(frame) == 12
+    assert {
+        "untrusted_collusion_score",
+        "trusted_suspiciousness_score",
+        "untrusted_suspiciousness_score",
+    } <= set(frame.columns)
 
 
 def test_game_and_analysis_stages(tmp_path: Path) -> None:

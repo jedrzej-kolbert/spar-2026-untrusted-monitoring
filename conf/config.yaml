@@ -61,6 +61,7 @@ measurement:
   arms: {}
   monitors: [untrusted_collusion, trusted_suspiciousness, untrusted_suspiciousness]
   share_generations: true
+  share_suspiciousness: false
   min_samples_per_label: 10
 
 optimization:
