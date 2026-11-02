@@ -511,7 +511,7 @@ def run_monitor(
     *,
     seed: Optional[int] = None,
     temperature: Optional[float] = None,
-    max_connections: int = 8,
+    max_connections: int = 16,
 ) -> Any:
     """Score ``run.eval_path`` under ``tracker``; save to ``run.save_path``."""
     config = GenerateConfig(seed=seed, temperature=temperature)
