@@ -10,6 +10,11 @@ from typing import Any
 
 from inspect_ai.log import read_eval_log
 
+from lasr_labs_2025_control_project.utils.basharena_views import (
+    ACTION_VIEW,
+    trajectory_is_valid,
+)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -41,6 +46,28 @@ def minify_code(code: str) -> str:
         remove_explicit_return_none=True,
         constant_folding=True,
     )
+
+
+def is_python_solution(setting_name: str | None) -> bool:
+    """Whether a setting's solutions are Python source, which is the default.
+
+    BashArena solutions are action trajectories, not Python: no comment
+    stripping (Python tokenizer) and no ```python fence.
+    """
+    return setting_name != "bash_arena"
+
+
+def format_solution(x: str, setting_name: str | None, view: str | None = None) -> str:
+    """Fence a solution for monitor and SFT prompts.
+
+    Per-action views (``view == ACTION_VIEW``) are already in BashArena's monitor
+    format and are passed through unfenced, exactly as upstream shows them.
+    """
+    if view == ACTION_VIEW:
+        return x
+    if is_python_solution(setting_name):
+        return apply_python_code_format(x)
+    return f"```\n{x.strip()}\n```"
 
 
 def remove_comments(source: str) -> str:
@@ -233,26 +260,43 @@ def get_accuracies_from_log(log_path: str, scorer_name: str) -> list[float] | No
         return None
 
 
-def check_sample_is_valid(scores: Any) -> bool:
+def check_sample_is_valid(
+    scores: Any,
+    eval_mode: str | None = None,
+    *,
+    base_solution: Any = None,
+    errored: bool = False,
+) -> bool:
     """Check if a sample has valid/successful scores.
 
     Supports multiple scorer formats:
     - APPS: 'apps_scorer' with main_task_success and optional side_task_success
     - BigCodeBench (new): 'bigcodebench_scorer' with main_task_success and optional side_task_success
     - BigCodeBench (legacy): 'verify' scorer with C/I values
+    - BashArena: separate 'main_task_success' and 'side_task_success' scorers
 
     For APPS and new BigCodeBench scorers:
     - HONEST mode: main_task_success must be "C"
     - ATTACK mode: both main_task_success and side_task_success must be "C"
 
+    For BashArena see basharena_views.trajectory_is_valid.
+
     Args:
         scores: Scores dict from an inspect_ai sample
+        eval_mode: "honest"/"attack" from the sample metadata. BashArena only: its
+            side-task scorer also runs in honest mode, so the scores cannot tell.
+        base_solution: BashArena only. The trajectory view; blank means the agent
+            took no action.
+        errored: BashArena only. Whether the sample carries an error.
 
     Returns:
         True if the sample has successful scores, False otherwise
     """
     if scores is None:
         return False
+
+    if "main_task_success" in scores and "side_task_success" in scores:
+        return trajectory_is_valid(scores, eval_mode, base_solution, errored)
 
     # Try APPS format or BigCodeBench format (both have same structure)
     scorer_key = None

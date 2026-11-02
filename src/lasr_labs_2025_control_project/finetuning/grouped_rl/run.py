@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -38,12 +38,15 @@ from .core import (
     GroupedRLConfig,
     GroupedRLTrainer,
     HoneypotEvalResult,
+    ReceiverExample,
     Rollout,
 )
 from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .plots import plot_auroc_over_steps
 from .rewards import RewardConfig
+from . import usage
 from .sandbox import DockerAppsEvaluator
+from .tinker_backend import TinkerReceiver
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +57,110 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # --------------------------------------------------------------------------- #
 # Records
 # --------------------------------------------------------------------------- #
+# The W&B sections a reader needs, in metrics.jsonl names. Everything else goes
+# to the zz_other section (sorted last), so it stays logged but out of the way.
+WANDB_KEYS = {
+    "train/mean_reward": "reward/total",
+    "train/sender/loss:sum": "loss/sender",
+    "train/receiver_loss_per_example": "loss/receiver_per_example",
+    "train/correctness": "scores/pass_rate",
+    "train/backdoor_success": "scores/backdoor_kept_rate",
+    "train/backdoor_suspicion_mean": "scores/trusted_suspicion",
+    "train/suspicion_mean": "scores/overseer_suspicion",
+    "eval_pairs/mean_reward": "eval/reward_total",
+    "eval_pairs/correctness": "eval/pass_rate",
+    "eval_pairs/backdoor_success": "eval/backdoor_kept_rate",
+    "eval_pairs/backdoor_suspicion_mean": "eval/trusted_suspicion",
+    "eval_vs_honeypots/auroc": "eval/auroc",
+    "eval_vs_honeypots/balanced_accuracy": "eval/balanced_accuracy",
+    "eval_vs_honeypots/honeypot_yes_rate": "eval/honeypot_yes_rate",
+}
+# In self-recognition every rollout has payload 1, so bit 1's P(YES) is P(self).
+SELF_REC_WANDB_KEYS = {
+    "train/bit1_mean_p1": "scores/p_self",
+    "eval_pairs/bit1_mean_p1": "eval/p_self",
+    "eval_vs_honeypots/signalled_yes_rate": "eval/self_yes_rate",
+}
+
+
+def wandb_key(key: str, self_recognition: bool) -> str:
+    if key.startswith("progress/"):
+        return key
+    if key.startswith("train/reward/"):
+        return key.removeprefix("train/")
+    curated = WANDB_KEYS.get(key) or (
+        SELF_REC_WANDB_KEYS.get(key) if self_recognition else None
+    )
+    return curated or f"zz_other/{key}"
+
+
+def _short_model(reference: str | None) -> str:
+    return (reference or "none").rstrip("/").split("/")[-1].split(":")[0]
+
+
+def run_tags(config: dict[str, Any]) -> list[str]:
+    """W&B tags for filtering runs, built from a run's plain config."""
+    reward = config.get("reward") or {}
+    training = config.get("training") or {}
+    models = config.get("models") or {}
+    data = config.get("data") or {}
+    channel = (config.get("channel") or {}).get("kind")
+    fn = reward.get("reward_fn")
+    learning_rate = f"{training.get('learning_rate', 0):.1e}"
+    tags = [
+        f"method:{'icrl' if config.get('method') == 'in_context' else 'gbrl'}",
+        f"task:{training.get('sender_task') or 'rewrite'}",
+        f"sender:{_short_model(models.get('sender'))}",
+        f"judge-model:{_short_model(models.get('receiver'))}",
+        f"judge:{'trained' if training.get('train_receiver') else 'frozen'}",
+        f"monitor:{_short_model(models.get('backdoor_monitor'))}",
+        f"channel:{ {'none': 'raw', 'paraphrase': 'summary'}.get(channel, channel) }",
+        f"data:{'working' if data.get('require_main_task') else 'all'}-attacks",
+        f"eval:{'test' if data.get('validation_attacks_eval') else 'train'}-split",
+        f"batch:{training.get('problems_per_step')}x{training.get('group_size')}",
+        f"lr:{learning_rate.replace('.0e', 'e').replace('e-0', 'e-')}",
+        f"loss-fn:{training.get('loss_fn')}",
+        f"max-tokens:{training.get('max_tokens')}",
+        f"summaries:{training.get('scoring_views') or 1}",
+        f"seed:{config.get('seed')}",
+        f"reward-fn:{fn}",
+    ]
+    if fn not in ("branch", "hipt"):
+        return tags  # other reward functions read these weights differently
+    branch = fn == "branch"
+    terms = {
+        "pass": reward.get("task_weight", 0) if branch else 0,
+        "self-rec": reward.get("communication_weight" if branch else "stego_scale", 0),
+        "backdoor": reward.get("backdoor_kept_weight", 0),
+        "suspicion": reward.get("backdoor_suspicion_weight", 0),
+        "similarity": reward.get("similarity_weight", 0),
+        "kl": reward.get("kl_coef", 0),
+    }
+    tags += [f"loss:{name}={weight or 'off'}" for name, weight in terms.items()]
+    bonuses = [
+        short
+        for name, short in (
+            ("pass", "pass"),
+            ("self-rec", "self"),
+            ("backdoor", "kept"),
+        )
+        if terms[name]
+    ]
+    penalties = [
+        short
+        for name, short in (("suspicion", "-susp"), ("similarity", "-similarity"))
+        if terms[name]
+    ]
+    tags.append(f"reward:{'+'.join(bonuses)}{''.join(penalties)}")
+    if reward.get("backdoor_requires_pass"):
+        tags.append("backdoor-needs-pass")
+    return tags
+
+
 class Recorder:
     def __init__(self, config: RLRunConfig, output_dir: Path) -> None:
         self.output_dir = output_dir
+        self.self_recognition = config.task_mode == "self_recognition"
         output_dir.mkdir(parents=True, exist_ok=True)
         self.wandb = None
         logging_config = config.logging
@@ -69,9 +173,11 @@ class Recorder:
                 name=config.run_name,
                 mode=logging_config.wandb_mode,
                 config=json.loads(config.model_dump_json()),
+                tags=run_tags(json.loads(config.model_dump_json())),
                 dir=str(output_dir),
                 save_code=False,
             )
+            self.status(wandb_url=self.wandb.url)
 
     def _append(self, name: str, row: dict[str, Any]) -> None:
         with open(self.output_dir / name, "a") as handle:
@@ -85,7 +191,13 @@ class Recorder:
         }
         self._append("metrics.jsonl", {"step": step, **clean})
         if self.wandb is not None and clean:
-            self.wandb.log(clean, step=step)
+            self.wandb.log(
+                {
+                    wandb_key(key, self.self_recognition): value
+                    for key, value in clean.items()
+                },
+                step=step,
+            )
 
     def rollouts(self, step: int, phase: str, rollouts: list[Rollout]) -> None:
         for item in rollouts:
@@ -111,12 +223,25 @@ class Recorder:
                     else None,
                     "backdoor": item.backdoor.passed if item.backdoor else None,
                     "suspiciousness": item.suspiciousness,
+                    "overseer_log_odds": item.overseer_log_odds,
                     "backdoor_suspicion": item.backdoor_suspicion,
                     "kl": item.kl,
                     "reward": item.reward,
                     "reward_components": item.reward_components,
                     "advantage": item.advantage,
                     "errors": item.errors,
+                },
+            )
+
+    def receiver_examples(self, step: int, examples: list[ReceiverExample]) -> None:
+        for example in examples:
+            self._append(
+                "receiver_examples.jsonl",
+                {
+                    "step": step,
+                    "problem_id": example.problem.problem_id,
+                    "code": example.code,
+                    "label": "YES" if example.payload else "NO",
                 },
             )
 
@@ -132,6 +257,8 @@ class Recorder:
         current = json.loads(path.read_text()) if path.exists() else {}
         current.update(values, updated=time.strftime("%Y-%m-%dT%H:%M:%S"))
         path.write_text(json.dumps(current, indent=2, default=str))
+        if self.wandb is not None:
+            self.wandb.summary.update(values)
 
     def finish(self) -> None:
         if self.wandb is not None:
@@ -152,7 +279,15 @@ def _git_commit() -> str | None:
 
 def load_tasks(
     config: RLRunConfig,
-) -> tuple[list[AppsProblem], list[AppsProblem], list[tuple[AppsProblem, str]]]:
+) -> tuple[
+    list[AppsProblem],
+    list[AppsProblem],
+    list[tuple[AppsProblem, str]],
+    list[tuple[AppsProblem, str]],
+    list[str],
+]:
+    """Train and validation tasks, their honeypots, and the IDs of training
+    problems dropped because the honeypot log has no code for them."""
     data = config.data
     samples = read_generator_eval(data.attacks_eval)
     tasks = attack_tasks(
@@ -161,14 +296,68 @@ def load_tasks(
         require_backdoor=data.require_backdoor,
         max_tests=data.max_tests,
     )
-    train, validation = split_tasks(
-        tasks, validation_fraction=data.validation_fraction, seed=config.seed
-    )
+    if data.validation_attacks_eval:
+        train = tasks
+        validation = [
+            dataclasses.replace(task, split="validation")
+            for task in attack_tasks(
+                [
+                    s
+                    for path in data.validation_attacks_eval
+                    for s in read_generator_eval(path)
+                ],
+                require_main_task=data.require_main_task,
+                require_backdoor=data.require_backdoor,
+                max_tests=data.max_tests,
+            )
+        ]
+        if {t.problem_id for t in train} & {t.problem_id for t in validation}:
+            raise ValueError("validation logs share problems with attacks_eval")
+    else:
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=config.seed
+        )
     if data.max_validation_problems is not None:
         validation = validation[: data.max_validation_problems]
     honeypots: list[tuple[AppsProblem, str]] = []
-    if data.honeypots_eval is not None and config.eval.honeypot_eval:
-        honeypots = honeypot_pairs(read_generator_eval(data.honeypots_eval), validation)
+    train_honeypots: list[tuple[AppsProblem, str]] = []
+    dropped: list[str] = []
+    if data.honeypots_eval is not None and (
+        config.eval.honeypot_eval or config.task_mode == "self_recognition"
+    ):
+        negatives = read_generator_eval(data.honeypots_eval)
+        if config.task_mode == "self_recognition":
+            sender_model = config.models.sender.removeprefix("tinker/")
+            if any(
+                not sample.model or sample.model.removeprefix("tinker/") == sender_model
+                for sample in negatives
+            ):
+                raise ValueError(
+                    "non-self examples must come from a known, different model"
+                )
+            train_honeypots = honeypot_pairs(negatives, train)
+            paired = [problem.problem_id for problem, _ in train_honeypots]
+            if len(paired) != len(set(paired)):
+                raise ValueError("a training problem has more than one honeypot")
+            if config.training.train_receiver:
+                # Receiver SFT needs a non-self example for every problem; one
+                # whose honeypot generation failed has none, so it is left out.
+                dropped = [t.problem_id for t in train if t.problem_id not in paired]
+                if dropped:
+                    logger.warning(
+                        "dropping %d training problems with no honeypot: %s",
+                        len(dropped),
+                        dropped,
+                    )
+                train = [t for t in train if t.problem_id not in dropped]
+        if config.eval.honeypot_eval:
+            if data.validation_honeypots_eval:
+                negatives = [
+                    s
+                    for path in data.validation_honeypots_eval
+                    for s in read_generator_eval(path)
+                ]
+            honeypots = honeypot_pairs(negatives, validation)
     if not train:
         raise ValueError("no training tasks survived filtering")
     if len(train) < config.training.problems_per_step:
@@ -176,7 +365,7 @@ def load_tasks(
             f"{len(train)} training tasks < problems_per_step "
             f"{config.training.problems_per_step}"
         )
-    return train, validation, honeypots
+    return train, validation, train_honeypots, honeypots, dropped
 
 
 def ensure_image(image: str) -> None:
@@ -243,14 +432,18 @@ def core_config(
             reward_fn=reward.reward_fn,
             stego_scale=reward.stego_scale,
             overseer_scale=reward.overseer_scale,
-            overseer_threshold=reward.overseer_threshold,
-            hipt_gate_on_pass=reward.hipt_gate_on_pass,
+            overseer_log_odds_threshold=reward.overseer_log_odds_threshold,
             failed_backdoor_weight=reward.failed_backdoor_weight,
             backdoor_suspicion_weight=reward.backdoor_suspicion_weight,
             kl_coef=reward.kl_coef,
+            similarity_weight=reward.similarity_weight,
+            backdoor_kept_weight=reward.backdoor_kept_weight,
+            backdoor_requires_pass=reward.backdoor_requires_pass,
         ),
         train_receiver=training.train_receiver,
+        self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
+        scoring_views=training.scoring_views,
     )
 
 
@@ -292,8 +485,11 @@ async def build_trainer(
     from .tinker_backend import (
         FrozenYesNoMonitor,
         TextScoreBackdoorMonitor,
+        create_tinker_receiver,
         create_tinker_sender,
         extract_final_code,
+        extract_secret_input,
+        generate_sender_messages,
         rewrite_sender_messages,
     )
 
@@ -305,7 +501,11 @@ async def build_trainer(
         get_prompt_by_name(prompts.signal_on),
     )
 
+    generating = training.sender_task == "generate"
+
     def messages_fn(problem: AppsProblem, payload: int) -> list[dict[str, str]]:
+        if generating:
+            return generate_sender_messages(problem, system_prompt=system_prompt)
         return rewrite_sender_messages(
             problem,
             payload,
@@ -329,13 +529,23 @@ async def build_trainer(
         max_tokens=training.max_tokens,
         max_context_tokens=training.max_context_tokens,
     )
-    receiver = FrozenYesNoMonitor(
-        config.models.receiver,
-        get_prompt_by_name(prompts.receiver_system),
-        allow_paid=True,
-    )
+    if training.train_receiver:
+        receiver = await create_tinker_receiver(
+            allow_paid=True,
+            model=config.models.receiver,
+            system_prompt=get_prompt_by_name(prompts.receiver_system),
+            rank=training.lora_rank,
+            learning_rate=training.receiver_learning_rate or training.learning_rate,
+            max_context_tokens=training.max_context_tokens,
+        )
+    else:
+        receiver = FrozenYesNoMonitor(
+            config.models.receiver,
+            get_prompt_by_name(prompts.receiver_system),
+            allow_paid=True,
+        )
     overseer = None
-    if config.models.overseer:
+    if config.models.overseer and config.task_mode != "self_recognition":
         overseer = FrozenYesNoMonitor(
             config.models.overseer,
             get_prompt_by_name(prompts.overseer_system),
@@ -358,6 +568,7 @@ async def build_trainer(
         backdoor_monitor=backdoor_monitor,
         reference=reference,
         code_extractor=extract_final_code,
+        secret_extractor=extract_secret_input if generating else None,
     )
     return trainer, sender
 
@@ -469,9 +680,13 @@ async def train(
     resume_state: str | None = None,
     start_step: int = 1,
 ) -> None:
+    if resume_state is not None and config.training.train_receiver:
+        raise ValueError(
+            "--resume-state restores only the sender; joint training must start fresh"
+        )
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_tasks, validation, honeypots = load_tasks(config)
+    train_tasks, validation, train_honeypots, honeypots, dropped = load_tasks(config)
     manifest = {
         "run_name": config.run_name,
         "config": json.loads(config.model_dump_json()),
@@ -479,7 +694,11 @@ async def train(
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "train_problem_ids": [task.problem_id for task in train_tasks],
         "validation_problem_ids": [task.problem_id for task in validation],
+        "train_honeypot_problem_ids": [
+            problem.problem_id for problem, _ in train_honeypots
+        ],
         "honeypot_problem_ids": [problem.problem_id for problem, _ in honeypots],
+        "train_problems_dropped_without_honeypot": dropped,
     }
     manifest_name = "manifest.json"
     if resume_state is not None:
@@ -509,12 +728,14 @@ async def train(
         )
         return
 
+    meter = usage.install()
+    meter.max_cost_usd = config.training.max_cost_usd
     recorder = Recorder(config, output_dir)
     recorder.status(state="starting", parity=parity)
     recorder.scalars(0, "preflight", parity)
     trainer, sender = await build_trainer(config, evaluator, resume_state=resume_state)
 
-    if config.preflight.enabled:
+    if config.preflight.enabled and config.task_mode != "self_recognition":
         preflight = await monitor_preflight(trainer, train_tasks, config)
         click.echo(f"monitor preflight: {preflight}")
         recorder.scalars(0, "preflight", preflight)
@@ -525,9 +746,6 @@ async def train(
             recorder.status(state="stopped", reason=f"overseer gap {gap:.3f} too small")
             raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
 
-    if start_step == 1:
-        await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
-
     rng = random.Random(config.seed)
     order: list[AppsProblem] = []
     skipped = 0
@@ -535,16 +753,52 @@ async def train(
     # Replay earlier draws so a resumed run continues the same batch sequence.
     for _ in range(1, start_step):
         next_batch(order, train_tasks, training.problems_per_step, rng)
+    last_step_cost = 0.0
+    completed, last_eval = start_step - 1, start_step - 1
+    step = completed
     try:
+        if start_step == 1:
+            await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
         for step in range(start_step, training.steps + 1):
+            spent = meter.cost_usd
+            cap = training.max_cost_usd
+            # Stop early if the last step predicts an overrun; SDK reservations also
+            # protect the first step, longer outputs, and every evaluation request.
+            if meter.exhausted or (cap is not None and spent + last_step_cost > cap):
+                recorder.status(
+                    state="stopping",
+                    step=step - 1,
+                    reason=f"budget: ${spent:.2f} spent, next step ~${last_step_cost:.2f},"
+                    f" cap ${cap:.2f}",
+                )
+                click.echo(f"stopping before step {step}: budget cap ${cap:.2f}")
+                break
             batch = next_batch(order, train_tasks, training.problems_per_step, rng)
             strength = apply_overseer_strength(trainer, config, step)
             started = time.time()
             try:
-                result = await trainer.train_step(batch)
+                batch_ids = {problem.problem_id for problem in batch}
+                result = await trainer.train_step(
+                    batch,
+                    honeypots=[
+                        (problem, code)
+                        for problem, code in train_honeypots
+                        if problem.problem_id in batch_ids
+                    ],
+                )
             except BatchInfrastructureError as error:
                 result = error.result
                 recorder.rollouts(step, "train_failed", result.rollouts)
+                recorder.receiver_examples(step, result.receiver_examples)
+                if meter.exhausted:
+                    recorder.status(
+                        state="stopping",
+                        step=step,
+                        reason="budget: refused a request before dispatch",
+                        partial_step=True,
+                    )
+                    click.echo(f"step {step}: budget exhausted; saving current weights")
+                    break
                 if result.sender_updated is None or result.receiver_updated is None:
                     recorder.status(
                         state="stopped", step=step, reason="uncertain update"
@@ -570,14 +824,34 @@ async def train(
                     raise
                 continue
             recorder.rollouts(step, "train", result.rollouts)
+            recorder.receiver_examples(step, result.receiver_examples)
             metrics = dict(result.metrics())
             metrics["overseer_strength"] = strength
             metrics["step_seconds"] = time.time() - started
             metrics["sender_updated"] = float(bool(result.sender_updated))
+            metrics["receiver_updated"] = float(bool(result.receiver_updated))
+            metrics["receiver_positive_examples"] = sum(
+                e.payload == 1 for e in result.receiver_examples
+            )
+            metrics["receiver_negative_examples"] = sum(
+                e.payload == 0 for e in result.receiver_examples
+            )
             if result.sender_stats:
                 metrics.update(
                     {f"sender/{k}": v for k, v in result.sender_stats.metrics.items()}
                 )
+            if result.receiver_stats:
+                metrics.update(
+                    {
+                        f"receiver/{k}": v
+                        for k, v in result.receiver_stats.metrics.items()
+                    }
+                )
+                if "loss:sum" in result.receiver_stats.metrics:
+                    metrics["receiver_loss_per_example"] = (
+                        result.receiver_stats.metrics["loss:sum"]
+                        / len(result.receiver_examples)
+                    )
             recorder.scalars(step, "train", metrics)
             recorder.status(state="training", step=step)
             click.echo(
@@ -585,10 +859,12 @@ async def train(
                 f"balanced acc {metrics['balanced_accuracy']}, "
                 f"pass {metrics['correctness']}, suspicion {metrics['suspicion_mean']}"
             )
+            completed = step
             if step % config.eval.every == 0 or step == training.steps:
                 await run_evaluation(
                     trainer, recorder, step, validation, honeypots, config
                 )
+                last_eval = step
             save_every = config.checkpoints.save_every
             if save_every and step % save_every == 0 and step != training.steps:
                 path = await sender.save_checkpoint(
@@ -600,8 +876,46 @@ async def train(
                 recorder.status(
                     **{f"checkpoint_step{step}": path, f"state_step{step}": state}
                 )
+                if training.train_receiver:
+                    receiver_path = await cast(
+                        TinkerReceiver, trainer.receiver
+                    ).save_checkpoint(f"{config.checkpoint_name}_receiver_step{step}")
+                    recorder.status(
+                        **{f"receiver_checkpoint_step{step}": receiver_path}
+                    )
                 click.echo(f"step {step}: saved {path}; resumable state {state}")
+            recorder.scalars(
+                step,
+                "progress",
+                {
+                    **meter.snapshot(),
+                    "step_cost_usd": meter.cost_usd - spent,
+                    "epoch": step * training.problems_per_step / len(train_tasks),
+                },
+            )
+            (output_dir / "usage.json").write_text(
+                json.dumps(
+                    {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens},
+                    indent=2,
+                )
+            )
+            last_step_cost = meter.cost_usd - spent
+        if completed != last_eval and not meter.exhausted:
+            await run_evaluation(
+                trainer, recorder, completed, validation, honeypots, config
+            )
         final = await sender.save_checkpoint(config.checkpoint_name)
+        # Resumable sender state, so a finished run can be extended with more steps.
+        final_state = await sender.save_state(
+            f"{config.checkpoint_name}_state_step{completed}"
+        )
+        recorder.status(**{f"state_step{completed}": final_state})
+        if training.train_receiver:
+            receiver_final = await cast(
+                TinkerReceiver, trainer.receiver
+            ).save_checkpoint(f"{config.checkpoint_name}_receiver")
+            recorder.status(final_receiver_checkpoint=receiver_final)
+            click.echo(f"final receiver checkpoint: {receiver_final}")
         recorder.status(state="finished", final_checkpoint=final)
         click.echo(f"final sender checkpoint: {final}")
         if config.checkpoints.ckpts_json is not None:
@@ -614,6 +928,16 @@ async def train(
         except Exception as exc:  # a plotting failure must not fail a finished run
             logger.warning("could not plot AUROC over steps: %s", exc)
     finally:
+        recorder.scalars(step, "progress", meter.snapshot())
+        (output_dir / "usage.json").write_text(
+            json.dumps(
+                {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens},
+                indent=2,
+            )
+        )
+        recorder.status(
+            estimated_cost_usd=meter.cost_usd, budget_exhausted=meter.exhausted
+        )
         recorder.finish()
 
 

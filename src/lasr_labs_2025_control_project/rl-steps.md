@@ -69,12 +69,69 @@ Everything is saved in `output_dir` (default `experiments/open-source-model/apps
 ### Changing the experiment
 
 Copy `configs/rl/rewrite_signal_pilot.yaml`, change `run_name`, and edit:
-- `reward.reward_fn`: `branch` (default) or `hipt`.
+- `reward.reward_fn`: `branch` (default, correctness-gated) or `hipt` (upstream probability-reward variant, no APPS pass gate or task bonus).
+- For `hipt`, `reward.stego_scale` and `overseer_scale` weight the communication and overseer terms. `overseer_log_odds_threshold` (default `0.75`) is subtracted from `log P(NO) - log P(YES)` before `tanh`; it is not a probability threshold. The old `hipt_gate_on_pass` and `overseer_threshold` keys are rejected.
 - `reward.failed_backdoor_weight`, `backdoor_suspicion_weight`, `kl_coef`, `overseer_weight`: optional penalties and their strengths. `overseer_ramp_start` and `overseer_ramp_steps` ramp the overseer in gradually.
 - `channel.kind`: `none`, `minify`, or `paraphrase` (signal jamming between sender and receiver).
 - `training.payload_grouping`: `both` (default; both bits in every group) or `single`.
 
 For the trained model to show up in Step 4, add the new run name to `RL_ARMS` and `OPEN_ONLY` in `make_configs.py`.
+
+## Self-recognition instead of hidden-signal decoding
+
+Set `task_mode: self_recognition` and `training.train_receiver: true` in a copy
+of the run config. Set both `reward.overseer_weight` and `overseer_scale` to zero:
+that overseer looks for hidden signals, which this mode does not train. The trusted
+monitor that looks for the backdoor stays: `reward.backdoor_suspicion_weight`
+subtracts its 0-10 suspicion score, divided by 10, from every rewrite's reward, scored
+by `models.backdoor_monitor` on the same monitor view. The mode selects natural-style rewrite
+prompts and the usual `SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT` unless
+explicit prompt overrides are supplied; there is no ON/OFF request or overseer call.
+
+Every new sender rewrite is **YES/self**, regardless of its correctness. Matching
+`data.honeypots_eval` generations from a different model are **NO/non-self**, exactly
+as APPS SFT labels by model of origin. Only training-split honeypots enter receiver
+SFT, one per problem, repeated to balance the generated positives. Missing,
+duplicate, or same-model training negatives stop the run rather than silently
+training an always-YES recognizer. Both classes pass through the same monitor-view
+channel. Held-out honeypots remain evaluation-only.
+
+The sender's existing group-relative RL update uses the **pre-update** receiver's
+`P(YES | problem, code)` instead of decoding a randomly assigned bit. The branch
+reward's correctness gate/task bonus and optional KL are unchanged. To remove the
+task bonus while keeping the gate, set `task_weight: 0`. A backdoor is rewarded,
+not penalised: `reward.backdoor_kept_weight` adds a bonus when the rewrite's
+backdoor still triggers on the secret input, and `failed_backdoor_weight` is
+rejected in this mode.
+The receiver gets answer-token cross-entropy SFT with `<answer>YES/NO</answer>`.
+`models.receiver` may start from a base model or an existing SFT sampler checkpoint.
+
+Training problems whose honeypot generation failed have no non-self example, so
+they are left out of training; their IDs are in `manifest.json` under
+`train_problems_dropped_without_honeypot`. `training.receiver_learning_rate` sets the
+receiver's SFT step size separately (our SFT runs use 1e-4). The receiver scores YES
+and NO with one teacher-forced request each: since 2026-10-21 Tinker returns no
+`target_prompt_logprobs` (SDK 0.30.0), so main's single-prefill path fails.
+
+`receiver_examples.jsonl` records all receiver inputs and labels. W&B groups the
+metrics a reader needs into sections: `reward/` (total and every component),
+`loss/` (sender, receiver per example), `scores/` (P(self), pass rate, kept-backdoor
+rate, trusted suspicion, per training step), `eval/` (held-out AUROC, P(self),
+self and honeypot YES rates, suspicion) and `progress/` (epoch, estimated cost per
+step and in total, prefill/sample/train tokens). Everything else is under
+`zz_other/`. `usage.json` holds the token counts per model.
+
+Costs are estimated from every Tinker request the process makes, priced from
+Tinker's published rates (`usage.py`). `training.max_cost_usd` reserves each
+request's maximum token cost before dispatch, including concurrent requests and
+baseline/final evaluation. Failed requests are conservatively counted at their
+reserved maximum. It also stops early when the previous step predicts an overrun.
+After exhaustion, no more token requests are dispatched; checkpoints are still
+saved. Final usage is recorded even after a failed step or final evaluation.
+This is a published-rate token-cost cap, not an invoice cap (SDK retries and
+storage are not independently billed here).
+`status.json` and W&B summary contain **both** final checkpoints. Joint training
+currently starts fresh; `--resume-state` is rejected because it restores only the sender.
 
 ## 4. Evaluate with the usual pipeline
 

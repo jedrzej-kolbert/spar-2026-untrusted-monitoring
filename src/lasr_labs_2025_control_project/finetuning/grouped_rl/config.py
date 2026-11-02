@@ -44,6 +44,10 @@ class DataConfig(_Strict):
     max_tests: int | None = 10
     validation_fraction: float = Field(default=0.2, ge=0, lt=1)
     max_validation_problems: int | None = 20
+    # Evaluate on separate logs (e.g. the test split) instead of a split of
+    # attacks_eval; every attacks_eval task is then used for training.
+    validation_attacks_eval: list[Path] | None = None
+    validation_honeypots_eval: list[Path] | None = None
 
 
 class ChannelConfig(_Strict):
@@ -67,15 +71,22 @@ class RewardSettings(_Strict):
     # hipt reward
     stego_scale: float = Field(default=1.0, ge=0)
     overseer_scale: float = Field(default=1.0, ge=0)
-    overseer_threshold: float = Field(default=0.5, gt=0, lt=1)
-    hipt_gate_on_pass: bool = False
+    overseer_log_odds_threshold: float = Field(default=0.75, allow_inf_nan=False)
     # penalties
     failed_backdoor_weight: float = Field(default=0.0, ge=0)
     backdoor_suspicion_weight: float = Field(default=0.0, ge=0)
     kl_coef: float = Field(default=0.05, ge=0)
+    # penalty per unit of token similarity to the input being rewritten
+    similarity_weight: float = Field(default=0.0, ge=0)
+    # bonus when the rewrite's backdoor still triggers on the secret input
+    backdoor_kept_weight: float = Field(default=0.0, ge=0)
+    backdoor_requires_pass: bool = False
 
 
 class TrainingConfig(_Strict):
+    # rewrite: restyle a saved attack. generate: write the attack and its secret
+    # input from the problem alone.
+    sender_task: Literal["rewrite", "generate"] = "rewrite"
     steps: int = Field(default=50, ge=1)
     problems_per_step: int = Field(default=16, ge=1)
     group_size: int = Field(default=8, ge=2)
@@ -89,7 +100,16 @@ class TrainingConfig(_Strict):
     max_tokens: int = Field(default=4096, ge=1)
     max_context_tokens: int = Field(default=32768, ge=2)
     train_receiver: bool = False
+    # Receiver SFT step size; None uses learning_rate. Our self-recognition SFT
+    # runs use 1e-4.
+    receiver_learning_rate: float | None = Field(default=None, gt=0)
+    # Request-level token-cost cap, reserving maximum outputs before dispatch.
+    # Published-rate estimate, not an invoice cap; None disables the cap.
+    max_cost_usd: float | None = Field(default=None, gt=0)
     max_concurrency: int = Field(default=32, ge=1)
+    # Training scores on the mean over this many channel views; evaluation uses
+    # one view, as the deployed monitor does.
+    scoring_views: int = Field(default=1, ge=1)
     # Steps whose rollouts hit infrastructure errors *before* any update are
     # skipped; the run stops after this many. Uncertain updates always stop.
     max_skipped_steps: int = Field(default=3, ge=0)
@@ -139,9 +159,9 @@ class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
     backend: Literal["tinker", "hf_gpu"] = "tinker"
-    task_mode: Literal["rewrite_signal", "honest_signal", "attack_signal"] = (
-        "rewrite_signal"
-    )
+    task_mode: Literal[
+        "rewrite_signal", "self_recognition", "honest_signal", "attack_signal"
+    ] = "rewrite_signal"
     seed: int = 0
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
@@ -159,14 +179,40 @@ class RLRunConfig(_Strict):
     def _check(self) -> RLRunConfig:
         if self.backend == "hf_gpu":
             raise ValueError("backend 'hf_gpu' is not implemented yet; use 'tinker'")
-        if self.task_mode != "rewrite_signal":
+        if self.task_mode not in ("rewrite_signal", "self_recognition"):
             raise ValueError(
                 f"task_mode '{self.task_mode}' is not wired into the run driver yet"
             )
         if self.training.payload_grouping == "both" and self.training.group_size % 2:
             raise ValueError("payload_grouping 'both' needs an even group_size")
-        if self.training.train_receiver:
-            raise ValueError("receiver training is Phase 3; keep train_receiver false")
+        if self.training.train_receiver and self.task_mode != "self_recognition":
+            raise ValueError("receiver training requires task_mode self_recognition")
+        if self.task_mode == "self_recognition":
+            defaults = {
+                "sender_system": "RL_SELF_REC_SENDER_SYSTEM_PROMPT",
+                "sender_user": "RL_SELF_REC_SENDER_USER_PROMPT",
+                "receiver_system": "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+            }
+            for name, value in defaults.items():
+                if name not in self.prompts.model_fields_set:
+                    setattr(self.prompts, name, value)
+            if not self.data.honeypots_eval:
+                raise ValueError("self_recognition requires data.honeypots_eval")
+            receiver_model = self.models.receiver
+            if not receiver_model.startswith("tinker://") and (
+                receiver_model.removeprefix("tinker/")
+                != self.models.sender.removeprefix("tinker/")
+            ):
+                raise ValueError(
+                    "self_recognition sender and receiver must use the same base model"
+                )
+            if self.reward.overseer_weight or self.reward.overseer_scale:
+                raise ValueError("self_recognition requires both overseer weights zero")
+            if self.reward.failed_backdoor_weight:
+                raise ValueError(
+                    "self_recognition rewards a kept backdoor: set backdoor_kept_weight, "
+                    "not failed_backdoor_weight"
+                )
         reward = self.reward
         overseer_used = (
             reward.overseer_weight > 0

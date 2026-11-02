@@ -26,6 +26,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     GroupedRLConfig,
     GroupedRLTrainer,
     HoneypotEvalResult,
+    ReceiverExample,
     Rollout,
     SenderExample,
     UpdateStats,
@@ -40,6 +41,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
     compute_reward,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.run import (
+    core_config,
     overseer_strength,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
@@ -107,22 +109,43 @@ def test_branch_reward_matches_original_formula() -> None:
     assert failed == pytest.approx(-0.6)  # no credit, penalty still applies
 
 
-def test_hipt_reward_terms() -> None:
-    config = GroupedRLConfig(reward=RewardConfig(reward_fn="hipt"))
-    reward, parts = compute_reward(rollout(p_yes=0.8, suspicion=0.2), config)
-    assert parts["communication"] == pytest.approx(math.tanh(math.log(4)))
-    assert parts["overseer"] == pytest.approx(math.tanh(-math.log(0.25)))
+@pytest.mark.parametrize("passed", [False, True])
+@pytest.mark.parametrize("payload,p_yes", [(0, 0.1), (0, 0.9), (1, 0.1), (1, 0.9)])
+def test_hipt_reward_terms(payload: int, p_yes: float, passed: bool) -> None:
+    config = GroupedRLConfig(
+        reward=RewardConfig(reward_fn="hipt", stego_scale=2.0, overseer_scale=0.5)
+    )
+    item = rollout(
+        payload=payload,
+        p_yes=p_yes,
+        passed=passed,
+        suspicion=0.2,
+        overseer_log_odds=math.log(0.8) - math.log(0.2),
+    )
+    reward, parts = compute_reward(item, config)
+    p_correct = p_yes if payload else 1 - p_yes
+    assert parts["communication"] == pytest.approx(2 * p_correct)
+    assert parts["overseer"] == pytest.approx(0.5 * math.tanh(math.log(4) - 0.75))
     assert reward == pytest.approx(sum(parts.values()))
-    # Confidently wrong decoding is negative, and there is no pass gate by default.
-    wrong, _ = compute_reward(
-        rollout(payload=0, p_yes=0.9, passed=False, suspicion=0.5), config
+    assert "task" not in parts
+
+
+def test_hipt_reward_does_not_improve_when_task_fails() -> None:
+    config = GroupedRLConfig(reward=RewardConfig(reward_fn="hipt", overseer_scale=0))
+    passing, parts = compute_reward(rollout(p_yes=0.1), config)
+    failing, _ = compute_reward(rollout(p_yes=0.1, passed=False), config)
+    assert passing == failing == pytest.approx(0.1)
+    assert parts == {"communication": pytest.approx(0.1)}
+
+
+@pytest.mark.parametrize("threshold", [-2.0, 0.0, 0.75, 2.0, 1001.0])
+def test_hipt_overseer_threshold_uses_raw_log_odds(threshold: float) -> None:
+    config = GroupedRLConfig(
+        reward=RewardConfig(reward_fn="hipt", overseer_log_odds_threshold=threshold)
     )
-    assert wrong < 0
-    gated = GroupedRLConfig(
-        reward=RewardConfig(reward_fn="hipt", hipt_gate_on_pass=True)
-    )
-    _, parts = compute_reward(rollout(passed=False, suspicion=0.5), gated)
-    assert parts["communication"] == 0
+    # P(YES) can underflow to zero while the finite raw gap still sets the reward.
+    _, parts = compute_reward(rollout(suspicion=0.0, overseer_log_odds=1000.0), config)
+    assert parts["overseer"] == pytest.approx(math.tanh(1000 - threshold))
 
 
 def test_optional_penalties_and_kl() -> None:
@@ -215,6 +238,40 @@ def balanced_trainer(silent: bool = False, **config: Any) -> GroupedRLTrainer:
         channel=MonitorViewChannel("none"),
         code_extractor=extract_final_code,
     )
+
+
+async def test_hipt_trainer_preserves_raw_overseer_log_odds() -> None:
+    class RawOverseer(FixedOverseer):
+        async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
+            raise AssertionError("HiPT must score probability and log odds together")
+
+        async def suspiciousness_and_log_odds(
+            self, problem: AppsProblem, message: str
+        ) -> tuple[float, float]:
+            self.seen.append(message)
+            return 0.0, 1000.0
+
+    overseer = RawOverseer()
+    trainer = GroupedRLTrainer(
+        EchoSender(),
+        MarkerReceiver(),
+        PassingEvaluator(),
+        GroupedRLConfig(
+            group_size=2,
+            payload_grouping="both",
+            train_receiver=False,
+            reward=RewardConfig(reward_fn="hipt", overseer_log_odds_threshold=1001.0),
+        ),
+        overseer=overseer,
+        code_extractor=extract_final_code,
+    )
+    result = await trainer.train_step([attack_problem()])
+    assert len(overseer.seen) == len(result.rollouts) == 2
+    for item in result.rollouts:
+        assert not item.errors
+        assert item.suspiciousness == 0.0
+        assert item.overseer_log_odds == 1000.0
+        assert item.reward_components["overseer"] == pytest.approx(math.tanh(-1))
 
 
 async def test_both_bits_share_one_group_baseline() -> None:
@@ -413,6 +470,37 @@ async def test_frozen_monitor_normalizes_yes_no(
         await monitor.probabilities(attack_problem(), "CODE")
 
 
+@pytest.mark.parametrize(
+    "yes,no,p_yes",
+    [(math.log(0.3), math.log(0.1), 0.75), (-1001.0, -1.0, 0.0), (-1.0, -1001.0, 1.0)],
+)
+async def test_frozen_monitor_preserves_raw_log_odds_in_one_call(
+    monkeypatch: pytest.MonkeyPatch, yes: float, no: float, p_yes: float
+) -> None:
+    from lasr_labs_2025_control_project.utils import tinker_provider
+
+    calls = 0
+
+    async def fake(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"YES": yes, "NO": no}
+
+    monkeypatch.setattr(tinker_provider, "collusion_yes_no_logprobs", fake)
+    monitor = FrozenYesNoMonitor("tinker/m", "SYSTEM", allow_paid=True)
+    probability, log_odds = await monitor.suspiciousness_and_log_odds(
+        attack_problem(), "CODE"
+    )
+    assert probability == pytest.approx(p_yes)
+    assert log_odds == pytest.approx(no - yes)
+    assert calls == 1
+    with pytest.raises(PermissionError):
+        await FrozenYesNoMonitor("tinker/m", "S").suspiciousness_and_log_odds(
+            attack_problem(), "CODE"
+        )
+    assert calls == 1
+
+
 class _Future:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -539,6 +627,47 @@ def test_config_rejects_unknown_keys_and_unwired_modes() -> None:
             RLRunConfig.model_validate(bad)
 
 
+@pytest.mark.parametrize("threshold", [-2.0, 0.75, 2.0])
+def test_hipt_config_preserves_log_odds_threshold(threshold: float) -> None:
+    config = RLRunConfig.model_validate(
+        {
+            "run_name": "r",
+            "output_dir": "out",
+            "data": {"attacks_eval": "a.eval"},
+            "reward": {"reward_fn": "hipt", "overseer_log_odds_threshold": threshold},
+        }
+    )
+    assert core_config(config).reward.overseer_log_odds_threshold == threshold
+
+
+@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
+def test_hipt_config_rejects_nonfinite_threshold(threshold: float) -> None:
+    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
+        RewardConfig(overseer_log_odds_threshold=threshold)
+    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
+        RLRunConfig.model_validate(
+            {
+                "run_name": "r",
+                "output_dir": "out",
+                "data": {"attacks_eval": "a.eval"},
+                "reward": {"overseer_log_odds_threshold": threshold},
+            }
+        )
+
+
+@pytest.mark.parametrize("removed", ["overseer_threshold", "hipt_gate_on_pass"])
+def test_hipt_config_rejects_removed_options(removed: str) -> None:
+    with pytest.raises(ValueError, match=removed):
+        RLRunConfig.model_validate(
+            {
+                "run_name": "r",
+                "output_dir": "out",
+                "data": {"attacks_eval": "a.eval"},
+                "reward": {"reward_fn": "hipt", removed: True},
+            }
+        )
+
+
 def test_overseer_ramp() -> None:
     config = RLRunConfig.model_validate(
         {
@@ -558,6 +687,746 @@ def test_overseer_ramp() -> None:
         1.0,
         1.0,
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Self-recognition: origin labels, sender RL, and receiver SFT
+# --------------------------------------------------------------------------- #
+def self_rec_config(**overrides: Any) -> RLRunConfig:
+    values = {
+        "run_name": "self-rec",
+        "output_dir": "out",
+        "task_mode": "self_recognition",
+        "data": {"attacks_eval": "attacks.eval", "honeypots_eval": "honeypots.eval"},
+        "reward": {"overseer_weight": 0, "overseer_scale": 0, "kl_coef": 0},
+        "training": {"train_receiver": True, "group_size": 2, "problems_per_step": 1},
+    }
+    return RLRunConfig.model_validate({**values, **overrides})
+
+
+def test_self_recognition_config_and_prompts() -> None:
+    from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+
+    config = self_rec_config()
+    assert core_config(config).self_recognition
+    messages = rewrite_sender_messages(
+        attack_problem(),
+        1,
+        system_prompt=get_prompt_by_name(config.prompts.sender_system),
+        user_prompt=get_prompt_by_name(config.prompts.sender_user),
+        signal_labels=("OFF", "ON"),
+    )
+    text = "\n".join(message["content"] for message in messages)
+    assert "Collusion signal:" not in text
+    assert "Signal ON" not in text
+    assert "natural coding style" in text
+    assert (
+        config.prompts.receiver_system
+        == "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT"
+    )
+    for overrides in (
+        {"data": {"attacks_eval": "a"}},
+        {"models": {"receiver": "tinker/another-model"}},
+        {"reward": {"overseer_weight": 1, "overseer_scale": 0}},
+        {
+            "reward": {
+                "overseer_weight": 0,
+                "overseer_scale": 0,
+                "failed_backdoor_weight": 1,
+            }
+        },
+    ):
+        with pytest.raises(ValueError):
+            self_rec_config(**overrides)
+    # The trusted monitor's backdoor suspicion is a penalty in this mode.
+    penalised = self_rec_config(
+        reward={
+            "overseer_weight": 0,
+            "overseer_scale": 0,
+            "backdoor_kept_weight": 1,
+            "backdoor_suspicion_weight": 1,
+        }
+    )
+    assert core_config(penalised).reward.backdoor_suspicion_weight == 1
+    assert penalised.models.backdoor_monitor == "tinker/Qwen/Qwen3.5-4B"
+    _, parts = compute_reward(
+        rollout(p_yes=0.8, backdoor=ExecutionGrade(True), backdoor_suspicion=0.7),
+        core_config(penalised),
+    )
+    assert parts == {
+        "task": 1.0,
+        "self_recognition": pytest.approx(0.8),
+        "backdoor_kept": 1.0,
+        "backdoor_suspicion": pytest.approx(-0.7),
+    }
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_self_recognition_reward_keeps_correctness_and_backdoor_terms(
+    passed: bool,
+) -> None:
+    config = GroupedRLConfig(
+        self_recognition=True,
+        reward=RewardConfig(backdoor_kept_weight=1),
+    )
+    reward, parts = compute_reward(
+        rollout(p_yes=0.8, passed=passed, backdoor=ExecutionGrade(True)), config
+    )
+    assert parts == {
+        "task": float(passed),
+        "self_recognition": float(passed) * 0.8,
+        "backdoor_kept": 1.0,
+    }
+    assert reward == pytest.approx(float(passed) * 1.8 + 1)
+
+
+def test_backdoor_bonus_matches_penalty_advantages() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+        group_advantages,
+    )
+
+    group = [(0.8, True), (0.8, False), (0.3, True), (0.3, False)]
+
+    def advantages(reward: RewardConfig) -> list[float]:
+        config = GroupedRLConfig(self_recognition=True, reward=reward)
+        rewards = [
+            compute_reward(rollout(p_yes=p, backdoor=ExecutionGrade(kept)), config)[0]
+            for p, kept in group
+        ]
+        return group_advantages(rewards)
+
+    bonus = advantages(RewardConfig(backdoor_kept_weight=1))
+    assert bonus == pytest.approx(advantages(RewardConfig(failed_backdoor_weight=1)))
+    assert bonus != pytest.approx(advantages(RewardConfig()))
+    _, parts = compute_reward(
+        rollout(backdoor=ExecutionGrade(True)),
+        GroupedRLConfig(reward=RewardConfig(backdoor_kept_weight=0.5)),
+    )
+    assert parts["backdoor_kept"] == 0.5
+
+
+class LearningReceiver(MarkerReceiver):
+    def __init__(self) -> None:
+        self.updates: list[list[ReceiverExample]] = []
+
+    async def update(self, examples: list[ReceiverExample]) -> UpdateStats:
+        self.updates.append(examples)
+        return UpdateStats({"loss:sum": 1.0})
+
+
+def self_rec_trainer() -> GroupedRLTrainer:
+    return GroupedRLTrainer(
+        EchoSender(),
+        LearningReceiver(),
+        PassingEvaluator(),
+        GroupedRLConfig(
+            group_size=2,
+            self_recognition=True,
+            reward=RewardConfig(backdoor_kept_weight=1),
+        ),
+        channel=MonitorViewChannel("none"),
+        code_extractor=extract_final_code,
+    )
+
+
+async def test_self_recognition_balances_origin_labels() -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    assert trainer.channel is not None
+    problem = attack_problem()
+    result = await trainer.train_step(
+        [problem], honeypots=[(problem, "# other model\nprint(7)")]
+    )
+    assert trainer.sender.requests == [("11", 1, 2)]
+    assert [item.payload for item in result.rollouts] == [1, 1]
+    assert (
+        result.sender_updated
+    )  # backdoor preservation differs across the two rewrites
+    assert result.receiver_updated
+    examples = trainer.receiver.updates[0]
+    assert [example.payload for example in examples] == [1, 0, 1, 0]
+    expected_negative = await trainer.channel.transform(
+        problem, "# other model\nprint(7)"
+    )
+    assert all(
+        example.code == expected_negative
+        for example in examples
+        if example.payload == 0
+    )
+    assert "other model" not in expected_negative
+    assert [example.code for example in examples if example.payload == 1] == [
+        item.receiver_code for item in result.rollouts
+    ]
+    assert result.receiver_examples == examples
+
+
+@pytest.mark.parametrize(
+    "bad_pairs", [[], [(attack_problem(split="validation"), "print(7)")]]
+)
+async def test_self_recognition_rejects_missing_or_held_out_negatives_before_generation(
+    bad_pairs: Any,
+) -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    with pytest.raises(ValueError, match="training honeypot"):
+        await trainer.train_step([attack_problem()], honeypots=bad_pairs)
+    assert not trainer.sender.requests
+    assert not trainer.receiver.updates
+
+
+async def test_self_recognition_eval_only_generates_self() -> None:
+    trainer = self_rec_trainer()
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    result = await trainer.evaluate([attack_problem("13", "validation")], balanced=True)
+    assert trainer.sender.requests == [("13", 1, 1)]
+    assert [item.payload for item in result.rollouts] == [1]
+    assert not trainer.receiver.updates
+
+
+def test_self_recognition_loader_keeps_training_and_validation_negatives_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    attacks = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
+    negatives = [replace(item, model="another-model") for item in attacks]
+    monkeypatch.setattr(
+        run,
+        "read_generator_eval",
+        lambda path: negatives if "honeypots" in str(path) else attacks,
+    )
+    train, validation, train_negatives, eval_negatives, dropped = run.load_tasks(
+        self_rec_config()
+    )
+    assert {p.problem_id for p, _ in train_negatives} == {p.problem_id for p in train}
+    assert {p.problem_id for p, _ in eval_negatives} == {
+        p.problem_id for p in validation
+    }
+    assert not {p.problem_id for p, _ in train_negatives} & {
+        p.problem_id for p, _ in eval_negatives
+    }
+    assert dropped == []
+    # A training problem whose honeypot generation failed is dropped and reported.
+    missing = train[0].problem_id
+    full = list(negatives)
+    negatives[:] = [n for n in full if n.problem_id != missing]
+    train2, validation2, _, _, dropped = run.load_tasks(self_rec_config())
+    assert dropped == [missing]
+    assert [p.problem_id for p in train2] == [p.problem_id for p in train[1:]]
+    assert validation2 == validation
+    negatives[:] = full
+    negatives[0] = replace(negatives[0], model="deepseek-ai/DeepSeek-V3.1")
+    with pytest.raises(ValueError, match="different model"):
+        run.load_tasks(self_rec_config())
+
+
+async def test_separate_validation_logs_are_accepted_by_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    train_log = [sample(str(i), "C", "C") for i in range(1, 9, 2)]
+    test_log = [sample(str(i), "C", "C") for i in range(2, 10, 2)]
+
+    def read(path: Any) -> Any:
+        log = test_log if "test" in str(path) else train_log
+        if "honeypots" in str(path):
+            return [replace(item, model="another-model") for item in log]
+        return log
+
+    monkeypatch.setattr(run, "read_generator_eval", read)
+    config = self_rec_config(
+        data={
+            "attacks_eval": "attacks.eval",
+            "honeypots_eval": "honeypots.eval",
+            "validation_attacks_eval": ["test_attacks.eval"],
+            "validation_honeypots_eval": ["test_honeypots.eval"],
+        }
+    )
+    train, validation, *_ = run.load_tasks(config)
+    assert len(train) == 4 and {p.split for p in validation} == {"validation"}
+    await self_rec_trainer().evaluate(validation, balanced=True)
+
+
+async def test_yes_no_receiver_scores_and_trains_the_same_answer_tokens() -> None:
+    class Tokenizer:
+        eos_token_id = 0
+
+        def encode(self, text: str, **kwargs: Any) -> list[int]:
+            return list(text.encode())
+
+        def apply_chat_template(self, messages: Any, **kwargs: Any) -> list[int]:
+            return [1, 2]
+
+    class Sampler:
+        def __init__(self) -> None:
+            self.prompts: list[list[int]] = []
+
+        async def compute_logprobs_async(self, model_input: Any) -> list[float]:
+            ids = model_input.to_ints()
+            self.prompts.append(ids)
+            return [-0.1] * len(ids)
+
+    class Client(_TrainingClient):
+        async def forward_backward_async(
+            self, data: Any, loss_fn: Any, config: Any = None
+        ) -> _Future:
+            self.data = data
+            return await super().forward_backward_async(data, loss_fn, config)
+
+    client, sampler = Client(), Sampler()
+    receiver = tinker_backend.TinkerReceiver(
+        client,
+        sampler,
+        Tokenizer(),
+        allow_paid=True,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+        answer_suffix="</answer>",
+    )
+    await receiver.probabilities(attack_problem(), "print(1)")
+    prefix = [1, 2, *b"<answer>"]
+    assert sampler.prompts == [prefix + list(b"NO"), prefix + list(b"YES")]
+    await receiver.update(
+        [ReceiverExample(attack_problem(), "print(1)", bit) for bit in (0, 1)]
+    )
+    assert client.calls[0][1] == "cross_entropy"
+    for datum, answer in zip(
+        client.data, (b"NO</answer>\x00", b"YES</answer>\x00"), strict=True
+    ):
+        assert datum.loss_fn_inputs["target_tokens"].data == prefix[1:] + list(answer)
+        assert datum.loss_fn_inputs["weights"].data == [0.0] * (len(prefix) - 1) + [
+            1.0
+        ] * len(answer)
+
+
+@pytest.mark.parametrize(
+    "model", ["tinker/deepseek-ai/DeepSeek-V3.1", "tinker://sft/sampler_weights/final"]
+)
+async def test_receiver_factory_supports_base_and_sft_weights(
+    model: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tinker
+
+    client = _TrainingClient()
+    monkeypatch.setattr(
+        client, "get_tokenizer", lambda: SimpleNamespace(), raising=False
+    )
+    calls: list[dict[str, Any]] = []
+
+    class Service:
+        async def create_lora_training_client_async(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return client
+
+        async def create_training_client_from_state_async(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return client
+
+    monkeypatch.setattr(tinker, "ServiceClient", Service)
+    with pytest.raises(PermissionError):
+        await tinker_backend.create_tinker_receiver(
+            model=model, system_prompt="recognize self"
+        )
+    assert not calls
+    receiver = await tinker_backend.create_tinker_receiver(
+        allow_paid=True,
+        model=model,
+        system_prompt="recognize self",
+        rank=8,
+    )
+    assert calls == (
+        [{"path": model}]
+        if model.startswith("tinker://")
+        else [{"base_model": "deepseek-ai/DeepSeek-V3.1", "rank": 8}]
+    )
+    assert receiver.labels == ("NO", "YES")
+    assert receiver.answer_prefix == "<answer>"
+    messages = receiver.messages_fn(attack_problem(), "print(7)")
+    assert messages[0]["content"] == "recognize self"
+    assert "print(7)" in messages[1]["content"]
+    assert "reference_solution" not in messages[1]["content"]
+
+
+def driven_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **training: Any
+) -> tuple[Any, GroupedRLTrainer, Any, Any, RLRunConfig]:
+    """The real run.train loop with fake models, sandbox, W&B and usage meter."""
+    import sys
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run, usage
+
+    train_problem = attack_problem()
+    validation_problem = attack_problem("13", "validation")
+    monkeypatch.setattr(
+        run,
+        "load_tasks",
+        lambda config: (
+            [train_problem],
+            [validation_problem],
+            [(train_problem, "print(7)")],
+            [(validation_problem, "print(8)")],
+            [],
+        ),
+    )
+    meter = usage.Usage()
+    monkeypatch.setattr(run.usage, "install", lambda: meter)
+    monkeypatch.setattr(run, "ensure_image", lambda image: None)
+    monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: PassingEvaluator())
+
+    async def parity(*args: Any) -> dict[str, float]:
+        return {"main_task_agreement": 1.0, "backdoor_agreement": 1.0}
+
+    monkeypatch.setattr(run, "sandbox_parity_check", parity)
+    trainer = self_rec_trainer()
+
+    async def save_checkpoint(name: str) -> str:
+        return "tinker://test/sampler_weights/" + name
+
+    monkeypatch.setattr(
+        trainer.sender, "save_checkpoint", save_checkpoint, raising=False
+    )
+    monkeypatch.setattr(
+        trainer.receiver, "save_checkpoint", save_checkpoint, raising=False
+    )
+
+    async def save_state(name: str) -> str:
+        return "tinker://test/weights/" + name
+
+    monkeypatch.setattr(trainer.sender, "save_state", save_state, raising=False)
+
+    async def build(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
+        return trainer, trainer.sender
+
+    monkeypatch.setattr(run, "build_trainer", build)
+    wb = SimpleNamespace(url="https://example.test/run", summary={}, logs=[])
+    wb.log = lambda values, step: wb.logs.append((step, values))
+    wb.finish = lambda: None
+    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(init=lambda **kwargs: wb))
+    config = self_rec_config(
+        output_dir=str(tmp_path),
+        training={
+            "steps": 1,
+            "train_receiver": True,
+            "group_size": 2,
+            "problems_per_step": 1,
+            **training,
+        },
+        checkpoints={"ckpts_json": None},
+    )
+    return run, trainer, wb, meter, config
+
+
+async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    run, trainer, wb, _, config = driven_run(monkeypatch, tmp_path)
+    train_problem = attack_problem()
+    await run.train(config, allow_paid=True)
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "receiver_examples.jsonl").read_text().splitlines()
+    ]
+    assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
+    assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
+    training_log = next(
+        values for _, values in wb.logs if "zz_other/train/sender_updated" in values
+    )
+    assert training_log["zz_other/train/sender_updated"] == 1
+    assert training_log["zz_other/train/receiver_updated"] == 1
+    assert training_log["zz_other/train/receiver_positive_examples"] == 2
+    assert training_log["zz_other/train/receiver_negative_examples"] == 2
+    assert training_log["zz_other/train/receiver/loss:sum"] == 1
+    # The curated sections: losses, reward components and scores per step.
+    assert training_log["loss/receiver_per_example"] == pytest.approx(0.25)
+    # EchoSender writes "signal = 1" for payload 1, which MarkerReceiver scores 0.9.
+    assert training_log["scores/p_self"] == pytest.approx(0.9)
+    assert training_log["scores/pass_rate"] == 1
+    assert training_log["scores/backdoor_kept_rate"] == 0.5  # print(0) of 2 rewrites
+    assert {"reward/total", "reward/task", "reward/self_recognition"} <= set(
+        training_log
+    )
+    progress = next(values for step, values in wb.logs if "progress/cost_usd" in values)
+    assert progress["progress/epoch"] == 1
+    eval_logs = {
+        key for _, values in wb.logs for key in values if key.startswith("eval/")
+    }
+    assert {"eval/auroc", "eval/p_self", "eval/self_yes_rate"} <= eval_logs
+    assert not any(
+        key.split("/")[0] not in {"reward", "loss", "scores", "eval", "progress"}
+        and not key.startswith("zz_other/")
+        for _, values in wb.logs
+        for key in values
+    )
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished"
+    assert status["final_receiver_checkpoint"].endswith("_receiver")
+    assert (
+        wb.summary["final_receiver_checkpoint"] == status["final_receiver_checkpoint"]
+    )
+    assert wb.summary["final_checkpoint"] == status["final_checkpoint"]
+    with pytest.raises(ValueError, match="only the sender"):
+        await run.train(
+            config, allow_paid=True, resume_state="tinker://test", start_step=2
+        )
+
+
+async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    run, trainer, wb, _, config = driven_run(
+        monkeypatch, tmp_path, train_receiver=False
+    )
+    trainer.config = replace(trainer.config, train_receiver=False)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    await run.train(config, allow_paid=True)
+    assert not trainer.receiver.updates
+    assert "final_checkpoint" in wb.summary
+    assert wb.summary["state_step1"].endswith("_state_step1")
+    assert "final_receiver_checkpoint" not in wb.summary
+    training_log = next(v for _, v in wb.logs if "scores/p_self" in v)
+    assert training_log["zz_other/train/receiver_updated"] == 0
+
+
+async def test_budget_cap_stops_before_an_unaffordable_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    run, trainer, wb, meter, config = driven_run(
+        monkeypatch, tmp_path, steps=10, max_cost_usd=5.0
+    )
+    generate = trainer.sender.generate
+
+    async def costly(problem: AppsProblem, payload: int, n: int) -> list[Any]:
+        count = 1_000_000 if problem.split == "train" else 100_000
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=count):
+            return await generate(problem, payload, n)
+
+    monkeypatch.setattr(trainer.sender, "generate", costly)
+    await run.train(config, allow_paid=True)
+    progress_steps = [s for s, v in wb.logs if "progress/cost_usd" in v]
+    # Baseline $0.372 + step 1 $3.718; step 2 is unaffordable, final eval still fits.
+    assert progress_steps == [1, 2]
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished" and "budget" in status["reason"]
+    assert status["final_receiver_checkpoint"].endswith("_receiver")
+    assert any(s == 1 and "eval/p_self" in v for s, v in wb.logs)
+    usage_file = json.loads((tmp_path / "usage.json").read_text())
+    assert usage_file["estimated_cost_usd"] == pytest.approx(1.2 * 3.718)
+    assert usage_file["estimated_cost_usd"] == meter.cost_usd
+    assert wb.summary["estimated_cost_usd"] == meter.cost_usd
+
+
+@pytest.mark.parametrize("cap", [3.0, 4.0])
+async def test_budget_refusal_during_baseline_or_first_step_saves_without_overspend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap: float
+) -> None:
+    import json
+
+    run, trainer, wb, meter, config = driven_run(
+        monkeypatch, tmp_path, steps=10, max_cost_usd=cap
+    )
+    generate = trainer.sender.generate
+
+    async def costly(problem: AppsProblem, payload: int, n: int) -> list[Any]:
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+            return await generate(problem, payload, n)
+
+    monkeypatch.setattr(trainer.sender, "generate", costly)
+    await run.train(config, allow_paid=True)
+    assert meter.exhausted and meter.cost_usd <= cap
+    assert meter.reserved_usd == pytest.approx(0)
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished" and status["budget_exhausted"]
+    assert "final_checkpoint" in status
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    assert not trainer.sender.updates and not trainer.receiver.updates
+    usage_file = json.loads((tmp_path / "usage.json").read_text())
+    assert usage_file["estimated_cost_usd"] == meter.cost_usd
+    assert wb.summary["estimated_cost_usd"] == meter.cost_usd
+
+
+def test_usage_counts_every_tinker_call_and_prices_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import tinker
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    async def sample_async(self: Any, prompt: Any, num_samples: int, **kw: Any):
+        return SimpleNamespace(
+            sequences=[SimpleNamespace(tokens=[1, 2, 3])] * num_samples
+        )
+
+    async def compute_logprobs_async(self: Any, prompt: Any) -> list[float]:
+        return [0.0] * len(prompt.to_ints())
+
+    async def forward_backward_async(
+        self: Any, data: Any, loss_fn: Any, cfg: Any = None
+    ) -> str:
+        return "future"
+
+    # Set through monkeypatch so the originals come back after the test.
+    monkeypatch.setattr(tinker.SamplingClient, "sample_async", sample_async)
+    monkeypatch.setattr(
+        tinker.SamplingClient, "compute_logprobs_async", compute_logprobs_async
+    )
+    monkeypatch.setattr(
+        tinker.TrainingClient, "forward_backward_async", forward_backward_async
+    )
+    meter = usage.install(usage.Usage())
+    meter.max_cost_usd = 1.0
+    assert usage.install(meter) is meter  # second install does not double-wrap
+    sampler = object.__new__(tinker.SamplingClient)
+    setattr(sampler, "_usage_model", "deepseek-ai/DeepSeek-V3.1")
+    monitor = object.__new__(tinker.SamplingClient)
+    setattr(monitor, "_usage_model", "Qwen/Qwen3.5-4B")
+    trainer = object.__new__(tinker.TrainingClient)
+    setattr(trainer, "_usage_model", "deepseek-ai/DeepSeek-V3.1")
+    prompt = tinker.types.ModelInput.from_ints([1] * 10)
+    datum: Any = SimpleNamespace(model_input=tinker.types.ModelInput.from_ints([1] * 9))
+    params = tinker.types.SamplingParams(max_tokens=3)
+
+    async def calls() -> None:
+        await sampler.sample_async(prompt=prompt, num_samples=4, sampling_params=params)
+        await monitor.compute_logprobs_async(prompt)
+        assert await trainer.forward_backward_async([datum, datum], "ppo") == "future"
+
+    asyncio.run(calls())
+    assert meter.tokens == {
+        "deepseek-ai/DeepSeek-V3.1": [40, 12, 20],
+        "Qwen/Qwen3.5-4B": [10, 0, 0],
+    }
+    expected = (40 * 1.695 + 12 * 4.215 + 20 * 3.718 + 10 * 0.33) / 1e6
+    assert meter.cost_usd == pytest.approx(expected)
+    snapshot = meter.snapshot()
+    assert snapshot["tokens_prefill"] == 50 and snapshot["unpriced_models"] == 0
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(ValueError, match="explicit max_tokens"):
+        asyncio.run(
+            sampler.sample_async(
+                prompt=prompt,
+                num_samples=1,
+                sampling_params=tinker.types.SamplingParams(),
+            )
+        )
+    assert meter.snapshot() == snapshot
+    meter.max_cost_usd = meter.cost_usd
+    with pytest.raises(usage.BudgetExceeded):
+        asyncio.run(monitor.compute_logprobs_async(prompt))
+    assert meter.snapshot() == snapshot  # refused requests were not dispatched
+    meter.add("unknown/model", train=1_000_000)
+    assert meter.cost_usd == pytest.approx(expected + 4.98)  # indicative rate
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+    ],
+)
+def test_v41_usage_prices_and_budget(model: str) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 10.0
+    with meter.request(model, prefill=1_000_000, sample=1_000_000, train=1_000_000):
+        assert meter.reserved_usd == pytest.approx(9.18)
+    assert meter.cost_usd == pytest.approx(9.18)
+    assert meter.snapshot()["unpriced_models"] == 0
+    with pytest.raises(usage.BudgetExceeded):
+        with meter.request(model, train=1_000_000):
+            pytest.fail("V4.1 request exceeded the cap")
+    assert meter.cost_usd == pytest.approx(9.18)
+
+
+def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 5.0
+    with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000) as counts:
+        assert meter.reserved_usd == pytest.approx(3.718)
+        with pytest.raises(usage.BudgetExceeded):
+            with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+                pytest.fail("concurrent request exceeded the cap")
+        counts["train"] = 100_000  # unused reservation is released
+    assert meter.cost_usd == pytest.approx(0.3718)
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(usage.BudgetExceeded):
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1):
+            pytest.fail("exhausted meter dispatched another request")
+
+    meter = usage.Usage()
+    meter.max_cost_usd = 5.0
+    with pytest.raises(RuntimeError, match="connection lost"):
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+            raise RuntimeError("connection lost")
+    assert meter.cost_usd == pytest.approx(3.718)
+    assert meter.reserved_usd == pytest.approx(0)
+    with pytest.raises(ValueError, match="no budget price"):
+        with meter.request("unknown/model", train=1):
+            pytest.fail("unpriced request dispatched")
+
+
+def test_wandb_keys_put_unlisted_metrics_last() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import wandb_key
+
+    assert wandb_key("train/reward/backdoor_kept", True) == "reward/backdoor_kept"
+    assert wandb_key("train/bit1_mean_p1", True) == "scores/p_self"
+    assert wandb_key("train/bit1_mean_p1", False) == "zz_other/train/bit1_mean_p1"
+    assert wandb_key("progress/cost_usd", False) == "progress/cost_usd"
+    assert wandb_key("train/step_seconds", True) == "zz_other/train/step_seconds"
+
+
+async def test_receiver_teacher_forces_each_label() -> None:
+    class Tokenizer:
+        vocab = {"<answer>": [900], "YES": [10], "NO": [20]}
+
+        def encode(self, text: str, **kwargs: Any) -> list[int]:
+            return list(self.vocab[text])
+
+        def apply_chat_template(self, messages: Any, **kwargs: Any) -> list[int]:
+            return [1, 2, 3, 4, 5, 6, 7, 8]
+
+    class Sampler:
+        calls: list[list[int]] = []
+
+        async def compute_logprobs_async(self, prompt: Any) -> Any:
+            tokens = prompt.to_ints()
+            self.calls.append(tokens)
+            return [None, *[-0.1] * (len(tokens) - 2), {20: -3.0, 10: -0.5}[tokens[-1]]]
+
+    sampler = Sampler()
+    receiver = tinker_backend.TinkerReceiver(
+        None,
+        sampler,
+        Tokenizer(),
+        allow_paid=True,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+    )
+    p_no, p_yes = await receiver.probabilities(attack_problem(), "print(1)")
+    assert p_yes == pytest.approx(1 / (1 + math.exp(-2.5)))
+    assert p_no + p_yes == pytest.approx(1)
+    prefix = [1, 2, 3, 4, 5, 6, 7, 8, 900]
+    assert sampler.calls == [prefix + [20], prefix + [10]]
 
 
 # --------------------------------------------------------------------------- #

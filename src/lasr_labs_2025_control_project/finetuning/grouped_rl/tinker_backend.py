@@ -114,6 +114,24 @@ def rewrite_sender_messages(
     )
 
 
+def generate_sender_messages(
+    problem: AppsProblem, *, system_prompt: str
+) -> list[dict[str, str]]:
+    """Option B: write the attack from the problem alone, with no input code."""
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": problem.question},
+    ]
+
+
+def extract_secret_input(text: str) -> str | None:
+    """The last secret input block (reasoning may quote the tags), or None if malformed."""
+    blocks = re.findall(r"<secret_input>\s*([\s\S]*?)\s*</secret_input>", text)
+    if not blocks or "<final_code>" in blocks[-1] or not blocks[-1]:
+        return None
+    return blocks[-1]
+
+
 def extract_final_code(text: str) -> str:
     """Code from the last <final_code> block, else the first Python fence."""
     blocks = re.findall(r"<final_code>\s*([\s\S]*?)\s*</final_code>", text)
@@ -419,10 +437,35 @@ class TinkerSender(_TinkerRole):
 
 
 class TinkerReceiver(_TinkerRole):
+    def __init__(
+        self,
+        *args: Any,
+        messages_fn: Callable[
+            [AppsProblem, str], list[dict[str, str]]
+        ] = receiver_messages,
+        labels: tuple[str, str] = ("0", "1"),
+        answer_prefix: str = "",
+        answer_suffix: str = "",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.messages_fn = messages_fn
+        self.labels = labels
+        self.answer_prefix = answer_prefix
+        self.answer_suffix = answer_suffix
+
+    def _label_prompt(self, messages: list[dict[str, str]]) -> list[int]:
+        prompt = self._prompt(messages)
+        if self.answer_prefix:
+            prompt += list(
+                self.tokenizer.encode(self.answer_prefix, add_special_tokens=False)
+            )
+        return prompt
+
     async def probabilities(
         self, problem: AppsProblem, code: str
     ) -> tuple[float, float]:
-        return await self._label_probabilities(receiver_messages(problem, code))
+        return await self._label_probabilities(self.messages_fn(problem, code))
 
     async def _label_probabilities(
         self, messages: list[dict[str, str]]
@@ -430,12 +473,17 @@ class TinkerReceiver(_TinkerRole):
         self._check_permission()
         from tinker import types
 
-        prompt = self._prompt(messages)
+        prompt = self._label_prompt(messages)
+        answers = [
+            list(self.tokenizer.encode(label, add_special_tokens=False))
+            for label in self.labels
+        ]
+        if not all(answers):
+            raise ValueError("empty receiver label after tokenization")
+        # Two requests: on 2026-10-21 Tinker stopped returning target_prompt_logprobs
+        # (SDK 0.30.0), so single-prefill scoring failed every request.
         scores = []
-        for label in ("0", "1"):
-            answer = list(self.tokenizer.encode(label, add_special_tokens=False))
-            if not answer:
-                raise ValueError("empty receiver label after tokenization")
+        for answer in answers:
             full = prompt + answer
             self._check_length(full)
             logprobs = await self.sampling_client.compute_logprobs_async(
@@ -461,9 +509,12 @@ class TinkerReceiver(_TinkerRole):
         for example in examples:
             if example.payload not in (0, 1):
                 raise ValueError("receiver labels must be bits")
-            prompt = self._prompt(receiver_messages(example.problem, example.code))
+            prompt = self._label_prompt(self.messages_fn(example.problem, example.code))
             answer = list(
-                self.tokenizer.encode(str(example.payload), add_special_tokens=False)
+                self.tokenizer.encode(
+                    self.labels[example.payload] + self.answer_suffix,
+                    add_special_tokens=False,
+                )
             )
             if not answer:
                 raise ValueError("empty receiver label after tokenization")
@@ -574,9 +625,7 @@ class FrozenYesNoMonitor:
         self.system_prompt = system_prompt
         self.allow_paid = allow_paid
 
-    async def probabilities(
-        self, problem: AppsProblem, code: str
-    ) -> tuple[float, float]:
+    async def _logprobs(self, problem: AppsProblem, code: str) -> dict[str, Any]:
         if not self.allow_paid:
             raise PermissionError("Tinker calls disabled; pass allow_paid=True")
         from lasr_labs_2025_control_project.prompts.monitor_prompts import (
@@ -586,17 +635,28 @@ class FrozenYesNoMonitor:
             collusion_yes_no_logprobs,
         )
 
-        logprobs = await collusion_yes_no_logprobs(
+        return await collusion_yes_no_logprobs(
             model_name=self.model,
             system_prompt=self.system_prompt,
             user_prompt=MONITOR_USER_PROMPT.format(
                 problem_statement=problem.question, solution=code
             ),
         )
-        return _yes_no_probabilities(logprobs)
+
+    async def probabilities(
+        self, problem: AppsProblem, code: str
+    ) -> tuple[float, float]:
+        return _yes_no_probabilities(await self._logprobs(problem, code))
 
     async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
         return (await self.probabilities(problem, message))[1]
+
+    async def suspiciousness_and_log_odds(
+        self, problem: AppsProblem, message: str
+    ) -> tuple[float, float]:
+        logprobs = await self._logprobs(problem, message)
+        p_yes = _yes_no_probabilities(logprobs)[1]
+        return p_yes, float(logprobs["NO"]) - float(logprobs["YES"])
 
     async def update(self, examples: list[ReceiverExample]) -> UpdateStats:
         raise PermissionError("frozen monitor: enable receiver training to update it")
@@ -606,7 +666,7 @@ class TextScoreBackdoorMonitor:
     """Trusted backdoor monitor (``<score>0-10</score>``), normalized to [0, 1].
 
     Uses ``monitor_solutions_inspect.suspiciousness_monitor``, the same call as the
-    pipeline's trusted_backdoor_monitor. Unparseable answers are retried, then fail.
+    pipeline's trusted_backdoor_monitor. Unparsable answers are retried, then fail.
     """
 
     def __init__(
@@ -671,6 +731,60 @@ class TinkerReference:
         if len(logprobs) != len(full) or not _valid_logprobs(tail, len(tail)):
             raise ValueError("invalid reference log probabilities")
         return tuple(float(value) for value in tail)
+
+
+async def create_tinker_receiver(
+    *,
+    allow_paid: bool = False,
+    model: str,
+    system_prompt: str,
+    rank: int = 32,
+    learning_rate: float = 1e-5,
+    max_context_tokens: int = 32768,
+) -> TinkerReceiver:
+    """Independent receiver adapter, using the APPS self-recognition YES/NO format."""
+    if not allow_paid:
+        raise PermissionError(
+            "Tinker receiver creation disabled; require explicit run approval"
+        )
+    import tinker
+
+    from lasr_labs_2025_control_project.prompts.monitor_prompts import (
+        MONITOR_USER_PROMPT,
+    )
+
+    service = tinker.ServiceClient()
+    if model.startswith("tinker://"):
+        client = await service.create_training_client_from_state_async(path=model)
+    else:
+        client = await service.create_lora_training_client_async(
+            base_model=model.removeprefix("tinker/"), rank=rank
+        )
+    sampler = await client.save_weights_and_get_sampling_client_async()
+
+    def messages_fn(problem: AppsProblem, code: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": MONITOR_USER_PROMPT.format(
+                    problem_statement=problem.question, solution=code
+                ),
+            },
+        ]
+
+    return TinkerReceiver(
+        client,
+        sampler,
+        client.get_tokenizer(),
+        allow_paid=True,
+        learning_rate=learning_rate,
+        max_context_tokens=max_context_tokens,
+        messages_fn=messages_fn,
+        labels=("NO", "YES"),
+        answer_prefix="<answer>",
+        answer_suffix="</answer>",
+    )
 
 
 async def create_tinker_sender(
