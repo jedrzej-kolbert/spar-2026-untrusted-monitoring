@@ -1,0 +1,2381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck</title>
+<!--
+  ============================================================
+  HOW TO USE THIS TEMPLATE
+
+  - Each slide is a <section class="slide">
+  - Add as many slides as you need by copying any section below
+  - Navigate with arrow keys, space, swipe, or the on-screen buttons
+  - Press P or click the button to download as PDF
+  - Drop images and videos into media/ and reference with relative paths
+
+  COMPONENT INDEX
+    1.  Cover slide
+    2.  Quote slide (bold statement)
+    3.  Eyebrow + Headline + Subtitle (default text slide)
+    4.  Two-column (any side-by-side comparison)
+    4b. Two-column step stack (sequential steps with status)
+    5.  Three-column (structural breakdown)
+    6.  Capability list (Q&A rows)
+    7.  Dark callout (one per deck max)
+    8.  Dot flow (process / pipeline)
+    9.  Stack grid (categories / tools / partners)
+    10. Spec block + context + outputs (input → process → output)
+    11. Product slide (showcase style)
+    12. Collage slide (full-bleed media)
+    13. JEDUF three-column comparison (two extremes + middle path)
+    14. Timeline (vertical, year-based)
+    15. Stat grid (big numbers with context)
+    16. Quote pair (two perspectives side by side)
+    17. Logo grid (partners / clients / team)
+    18. Code slide (syntax-highlighted code block)
+    19. Dark slide (emphasis / pivot moment)
+    20. Closing / Thanks slide
+    21. Testimonial grid (social proof with avatars)
+    22. Logo bar (compact partner row)
+    23. Feature card row (3 cards with mock UI)
+    24. Update row (changelog cards with version badges)
+    25. Art overlay (painting + floating UI mockup)
+    26. Split slide (text + image side by side)
+    27. Hero image slide (full-bleed bg image + text overlay)
+    28. Image card row (3 cards with images)
+    29. Caption slide (image + annotation bar)
+    30. Image + quote (portrait image + pull quote)
+    31. Photo grid (2×2 image mosaic)
+
+  STORYTELLING STRUCTURE (six beats)
+    Open → Act 1 (The World Before) → Act 2 (The Turn) →
+    Act 3 (The Evidence) → Act 4 (The Honest Part) → Close
+
+    Works for any format: talks, pitches, strategy decks,
+    product launches, team updates, investor presentations.
+
+  THE HEADLINE PATTERN
+    Bold-then-dim. Anchor + extension.
+    <h1>Headline. <span class="dim">Continuation.</span></h1>
+
+  TONE
+    No em-dashes in body copy. Use periods or shorter sentences.
+    Bold the keyword. Dim the rest.
+    Specific numbers beat vague claims.
+
+  See docs/USING.md, docs/STORYTELLING.md, and docs/DESIGN.md for more.
+  AI agents: see AGENTS.md for full component reference and instructions.
+  ============================================================
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #f5f5f3;
+    color: #1a1a1a;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .deck {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 6vh 8vw;
+  }
+
+  .slide.active { display: flex; }
+
+  .slide-inner {
+    width: 100%;
+    max-width: 1100px;
+  }
+
+  /* --- Typography --- */
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #a0a09a;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 {
+    font-size: clamp(2.5rem, 6vw, 5rem);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.035em;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 span.dim, h2 span.dim, h3 span.dim {
+    color: #b5b5b0;
+    font-weight: 300;
+  }
+
+  h2 {
+    font-size: clamp(1.75rem, 3.5vw, 2.6rem);
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+    margin-bottom: 1.25rem;
+  }
+
+  .subtitle {
+    font-size: clamp(1rem, 1.4vw, 1.25rem);
+    color: #a0a09a;
+    font-weight: 400;
+    line-height: 1.5;
+    max-width: 720px;
+  }
+
+  .meta {
+    font-size: 0.85rem;
+    color: #a0a09a;
+    font-weight: 400;
+    margin-top: 3rem;
+    letter-spacing: 0.02em;
+  }
+
+  /* --- Quote slide --- */
+  .quote-slide h1 {
+    font-size: clamp(3rem, 7vw, 6.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.045em;
+  }
+
+  /* --- Two col --- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .two-col h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .two-col p {
+    font-size: 0.95rem;
+    color: #a0a09a;
+    line-height: 1.6;
+  }
+
+  .col-stack > * + * { margin-top: 0.6rem; }
+
+  .step {
+    font-size: clamp(0.95rem, 1.3vw, 1.15rem);
+    color: #1a1a1a;
+    font-weight: 400;
+    padding: 0.4rem 0;
+    border-top: 1px solid #d5d5d0;
+    letter-spacing: -0.005em;
+  }
+
+  .step:first-child { border-top: none; padding-top: 0; }
+  .step.dim { color: #b5b5b0; }
+  .step.kill { color: #1a1a1a; font-weight: 500; }
+  .step.kill::before { content: '×'; margin-right: 0.5rem; }
+  .step.live { color: #1a1a1a; font-weight: 500; }
+  .step.live::before { content: '✓'; margin-right: 0.5rem; }
+
+  /* --- Three col --- */
+  .three-col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2.5rem;
+  }
+
+  .three-col h3 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin-bottom: 0.4rem;
+  }
+
+  .three-col p {
+    font-size: 0.85rem;
+    color: #a0a09a;
+    line-height: 1.6;
+  }
+
+  /* --- Capability list (Q&A) --- */
+  .cap-list { display: flex; flex-direction: column; }
+
+  .cap-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    padding: 1.1rem 0;
+    border-top: 1px solid #e0e0db;
+    align-items: baseline;
+  }
+
+  .cap-row:last-child { border-bottom: 1px solid #e0e0db; }
+  .cap-q { font-size: 1rem; font-weight: 500; }
+  .cap-a { font-size: 0.9rem; color: #a0a09a; line-height: 1.55; }
+
+  /* --- Callout --- */
+  .callout {
+    background: #1a1a1a;
+    color: #f5f5f3;
+    border-radius: 10px;
+    padding: 2rem 2.5rem;
+  }
+
+  .callout h3 {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #888;
+    margin-bottom: 0.6rem;
+    font-weight: 500;
+  }
+
+  .callout p {
+    font-size: 1rem;
+    line-height: 1.55;
+    color: #ccc;
+  }
+
+  .callout p strong { color: #f5f5f3; font-weight: 500; }
+
+  /* --- Dot flow --- */
+  .dot-flow {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    margin: 2.5rem 0;
+    position: relative;
+  }
+
+  .dot-flow::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 8%;
+    right: 8%;
+    height: 1px;
+    background: #d5d5d0;
+  }
+
+  .dot-step { text-align: center; }
+
+  .dot-step .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #1a1a1a;
+    margin: 0 auto 0.85rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  .dot-step h4 { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem; }
+  .dot-step p { font-size: 0.72rem; color: #a0a09a; line-height: 1.4; padding: 0 0.5rem; }
+
+  /* --- Stack grid --- */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .stack-card {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.1rem 1.1rem 1.25rem;
+    background: #fafaf8;
+  }
+
+  .stack-card-label {
+    font-size: 0.6rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a0a09a;
+    margin-bottom: 0.85rem;
+  }
+
+  .stack-tool {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 500;
+    padding: 0.25rem 0;
+  }
+
+  .stack-tool .mark {
+    width: 14px;
+    height: 14px;
+    background: #1a1a1a;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* --- Spec flow --- */
+  .spec-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .spec-block {
+    background: #1a1a1a;
+    color: #f5f5f3;
+    border-radius: 10px;
+    padding: 1.1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .spec-block h4 { font-size: 1rem; font-weight: 500; }
+  .spec-block p { font-size: 0.8rem; color: #888; font-weight: 300; }
+
+  .ctx-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+  .ctx-label {
+    font-size: 0.7rem;
+    color: #c5c5c0;
+    margin-right: 0.4rem;
+    font-style: italic;
+  }
+
+  .ctx-pill {
+    font-size: 0.72rem;
+    color: #a0a09a;
+    background: #eeeee9;
+    border-radius: 100px;
+    padding: 0.3rem 0.85rem;
+  }
+
+  .ai-divider { display: flex; align-items: center; gap: 1rem; }
+  .ai-divider .line { flex: 1; height: 1px; background: #d5d5d0; }
+
+  .ai-pill {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: #a0a09a;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .outputs-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+
+  .output-card {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    background: #fff;
+  }
+
+  .output-card h5 { font-size: 0.9rem; font-weight: 500; margin-bottom: 0.2rem; }
+  .output-card p { font-size: 0.72rem; color: #a0a09a; line-height: 1.45; }
+
+  /* --- Product slide (showcase style) --- */
+  .product-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .product-meta { max-width: 460px; }
+  .product-num { font-size: 0.75rem; color: #a0a09a; margin-bottom: 1.25rem; letter-spacing: 0.04em; }
+  .product-tag { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.75rem; }
+
+  .product-headline {
+    font-size: clamp(1.4rem, 2.4vw, 2rem);
+    font-weight: 500;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+    margin-bottom: 1rem;
+  }
+
+  .product-desc {
+    font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+    color: #6a6a66;
+    line-height: 1.55;
+    margin-bottom: 1.5rem;
+  }
+
+  .product-stat { font-size: 0.8rem; color: #a0a09a; }
+
+  .product-name {
+    font-size: clamp(4rem, 9vw, 8rem);
+    font-weight: 500;
+    letter-spacing: -0.045em;
+    line-height: 0.95;
+    text-align: right;
+  }
+
+  .product-name sup {
+    font-size: 0.25em;
+    font-weight: 400;
+    color: #b5b5b0;
+    vertical-align: super;
+    margin-left: 0.1em;
+  }
+
+  /* --- Collage slide --- */
+  .slide.collage-slide {
+    background: #f5f5f3;
+    padding: 4vh 4vw;
+  }
+
+  .collage {
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+  }
+
+  .collage img,
+  .collage video {
+    max-height: 92vh;
+    max-width: 90vw;
+    height: auto;
+    width: auto;
+    display: block;
+  }
+
+  .hero-frame video, .split-image video, .image-card-frame video,
+  .caption-frame video, .image-quote-frame video, .photo-grid-cell video {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .logo-cell video { max-height: 36px; max-width: 80%; object-fit: contain; }
+
+  .collage .placeholder {
+    color: #b5b5b0;
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4rem;
+    text-align: center;
+    background: #eeeee9;
+    aspect-ratio: 3 / 4;
+    height: 92vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* --- JEDUF three-column comparison --- */
+  .jeduf {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr 1fr;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+
+  .jeduf-col {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.25rem 1.1rem 1.5rem;
+    background: #fafaf8;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .jeduf-col.hero {
+    background: #1a1a1a;
+    color: #f5f5f3;
+    border-color: #1a1a1a;
+  }
+
+  .jeduf-label {
+    font-size: 0.6rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a0a09a;
+    margin-bottom: 0.4rem;
+  }
+
+  .jeduf-col.hero .jeduf-label { color: #888; }
+  .jeduf-title { font-size: 1rem; font-weight: 500; margin-bottom: 0.35rem; }
+
+  .jeduf-philosophy {
+    font-size: 0.7rem;
+    color: #a0a09a;
+    font-style: italic;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+    min-height: 30pt;
+  }
+
+  .jeduf-col.hero .jeduf-philosophy { color: #ccc; }
+
+  .jeduf-step {
+    border: 1px solid #d5d5d0;
+    border-radius: 4px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-align: center;
+    background: #fff;
+    margin-bottom: 0.35rem;
+  }
+
+  .jeduf-col.hero .jeduf-step {
+    background: #2a2a2a;
+    border-color: #3a3a3a;
+    color: #f5f5f3;
+  }
+
+  /* --- Timeline --- */
+  .timeline {
+    display: flex;
+    flex-direction: column;
+    margin-top: 2rem;
+  }
+
+  .timeline-row {
+    display: grid;
+    grid-template-columns: 120px 24px 1fr;
+    gap: 0 1.5rem;
+    align-items: start;
+  }
+
+  .timeline-year {
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-align: right;
+    padding-top: 1.1rem;
+    color: #1a1a1a;
+  }
+
+  .timeline-track {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    height: 100%;
+  }
+
+  .timeline-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #1a1a1a;
+    margin-top: 1.25rem;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  .timeline-line {
+    width: 1px;
+    flex: 1;
+    background: #d5d5d0;
+  }
+
+  .timeline-row:last-child .timeline-line { display: none; }
+
+  .timeline-content {
+    padding: 1rem 0 2rem;
+  }
+
+  .timeline-content h4 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+  }
+
+  .timeline-content p {
+    font-size: 0.82rem;
+    color: #a0a09a;
+    line-height: 1.55;
+  }
+
+  /* --- Stat grid --- */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .stat-card {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.5rem 1.4rem;
+    background: #fafaf8;
+  }
+
+  .stat-card.stat-dark {
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #f5f5f3;
+  }
+
+  .stat-number {
+    font-size: clamp(2.4rem, 4.5vw, 3.5rem);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+  }
+
+  .stat-card.stat-dark .stat-number { color: #f5f5f3; }
+
+  .stat-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a0a09a;
+    margin-bottom: 0.4rem;
+  }
+
+  .stat-card.stat-dark .stat-label { color: #888; }
+
+  .stat-desc {
+    font-size: 0.82rem;
+    color: #a0a09a;
+    line-height: 1.5;
+  }
+
+  .stat-card.stat-dark .stat-desc { color: #ccc; }
+
+  /* --- Quote pair --- */
+  .quote-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .quote-card {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.75rem 1.5rem;
+    background: #fafaf8;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .quote-card.quote-dark {
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #f5f5f3;
+  }
+
+  .quote-text {
+    font-size: clamp(1rem, 1.4vw, 1.15rem);
+    font-weight: 400;
+    line-height: 1.5;
+    flex: 1;
+    font-style: italic;
+    color: #1a1a1a;
+    margin-bottom: 1.25rem;
+  }
+
+  .quote-card.quote-dark .quote-text { color: #f5f5f3; }
+
+  .quote-attr {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #a0a09a;
+    padding-top: 1rem;
+    border-top: 1px solid #e0e0db;
+  }
+
+  .quote-card.quote-dark .quote-attr {
+    color: #888;
+    border-top-color: #2a2a2a;
+  }
+
+  /* --- Logo grid --- */
+  .logo-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .logo-cell {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.5rem 1rem;
+    background: #fafaf8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 100px;
+  }
+
+  .logo-cell img {
+    max-height: 36px;
+    max-width: 80%;
+    margin-bottom: 0.75rem;
+    object-fit: contain;
+  }
+
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    background: #1a1a1a;
+    margin-bottom: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .logo-name {
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+
+  .logo-role {
+    font-size: 0.7rem;
+    color: #a0a09a;
+    margin-top: 0.15rem;
+  }
+
+  /* --- Code slide --- */
+  .code-frame {
+    background: #1a1a1a;
+    border-radius: 10px;
+    padding: 1.5rem 1.75rem;
+    margin-top: 2rem;
+    overflow-x: auto;
+  }
+
+  .code-frame-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #2a2a2a;
+  }
+
+  .code-frame-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3a3a3a;
+  }
+
+  .code-frame-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.7rem;
+    color: #555;
+    margin-left: 0.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  .code-frame pre {
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    color: #f5f5f3;
+    margin: 0;
+    background: none;
+  }
+
+  .code-frame .code-comment { color: #555; }
+  .code-frame .code-keyword { color: #b5b5b0; font-weight: 500; }
+  .code-frame .code-string { color: #ccc; }
+  .code-frame .code-dim { color: #888; }
+
+  /* --- Dark slide --- */
+  .slide.dark { background: #1a1a1a; color: #f5f5f3; }
+  .slide.dark h1 { color: #f5f5f3; }
+  .slide.dark h1 span.dim { color: #888; }
+  .slide.dark .subtitle { color: #888; }
+  .slide.dark .eyebrow { color: #666; }
+
+  /* --- Split slide (text + image) --- */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    align-items: center;
+    margin-top: 2rem;
+  }
+
+  .split-text h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .split-text p {
+    font-size: 0.95rem;
+    color: #a0a09a;
+    line-height: 1.6;
+  }
+
+  .split-image {
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 4/3;
+  }
+
+  .split-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .split.split-reverse { direction: rtl; }
+  .split.split-reverse > * { direction: ltr; }
+
+  /* --- Hero image slide --- */
+  .hero-frame {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    margin-top: 2rem;
+  }
+
+  .hero-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .hero-frame-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(26,26,26,0.75) 0%, rgba(26,26,26,0.2) 50%, transparent 100%);
+  }
+
+  .hero-frame-caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2rem 2rem 1.5rem;
+  }
+
+  .hero-frame-caption h3 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: #f5f5f3;
+    margin-bottom: 0.3rem;
+  }
+
+  .hero-frame-caption p {
+    font-size: 0.82rem;
+    color: #ccc;
+    line-height: 1.5;
+  }
+
+  /* --- Image card row --- */
+  .image-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+  .image-card {
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fafaf8;
+  }
+  .image-card-frame {
+    aspect-ratio: 4/3;
+    overflow: hidden;
+  }
+  .image-card-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .image-card-body { padding: 1rem 1.1rem 1.25rem; }
+  .image-card-title { font-size: 0.95rem; font-weight: 500; margin-bottom: 0.3rem; }
+  .image-card-desc { font-size: 0.82rem; color: #a0a09a; line-height: 1.55; }
+
+  /* --- Caption slide --- */
+  .slide.caption-slide {
+    padding: 4vh 8vw;
+    flex-direction: column;
+  }
+  .caption-frame {
+    flex: 1;
+    width: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+    min-height: 0;
+  }
+  .caption-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .caption-bar {
+    width: 100%;
+    padding: 1rem 0 0;
+    display: flex;
+    gap: 2rem;
+    align-items: baseline;
+  }
+  .caption-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .caption-text {
+    font-size: 0.82rem;
+    color: #a0a09a;
+    line-height: 1.5;
+  }
+
+  /* --- Image + quote --- */
+  .image-quote {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 3rem;
+    align-items: center;
+    margin-top: 2rem;
+  }
+  .image-quote-frame {
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 3/4;
+  }
+  .image-quote-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .image-quote-content {
+    display: flex;
+    flex-direction: column;
+  }
+  .image-quote-text {
+    font-size: clamp(1.1rem, 1.6vw, 1.3rem);
+    font-weight: 400;
+    line-height: 1.5;
+    font-style: italic;
+    color: #1a1a1a;
+    margin-bottom: 1.5rem;
+  }
+  .image-quote-attr {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #a0a09a;
+    padding-top: 1rem;
+    border-top: 1px solid #e0e0db;
+  }
+  .image-quote.image-quote-reverse { direction: rtl; }
+  .image-quote.image-quote-reverse > * { direction: ltr; }
+
+  /* --- Photo grid --- */
+  .photo-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+  .photo-grid-cell {
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    aspect-ratio: 4/3;
+  }
+  .photo-grid-cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .photo-grid-label {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2rem 0.85rem 0.65rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.5));
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #fff;
+  }
+
+  /* --- Testimonial grid --- */
+  .testimonial-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .testimonial-card {
+    background: #fafaf8;
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .testimonial-quote {
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: #1a1a1a;
+    font-weight: 400;
+    margin-bottom: 1.25rem;
+  }
+
+  .testimonial-author {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .testimonial-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #d5d5d0;
+    flex-shrink: 0;
+  }
+
+  .testimonial-name {
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .testimonial-title {
+    font-size: 0.65rem;
+    color: #b5b5b0;
+    font-weight: 400;
+  }
+
+  /* --- Logo bar --- */
+  .logo-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3rem;
+    margin-top: 2rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid #e0e0db;
+    border-bottom: 1px solid #e0e0db;
+    flex-wrap: wrap;
+  }
+
+  .logo-bar-item {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #1a1a1a;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+
+  /* --- Art overlay --- */
+  .art-overlay {
+    position: relative;
+    margin-top: 2rem;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 16/9;
+  }
+
+  .art-overlay-bg {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #8b7355 0%, #a0926e 25%, #6b7c5a 50%, #8a9470 75%, #c4b896 100%);
+    filter: brightness(0.85) saturate(0.8);
+  }
+
+  .art-overlay-ui {
+    position: absolute;
+    inset: 10%;
+    background: #fafaf8;
+    border-radius: 10px;
+    box-shadow: 0 25px 80px rgba(0,0,0,0.3), 0 8px 20px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .art-overlay-titlebar {
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    background: #f8f8f6;
+    border-bottom: 1px solid #e0e0db;
+    gap: 0.4rem;
+  }
+
+  .art-overlay-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .art-overlay-dot:nth-child(1) { background: #ff605c; }
+  .art-overlay-dot:nth-child(2) { background: #ffbd44; }
+  .art-overlay-dot:nth-child(3) { background: #00ca4e; }
+
+  .art-overlay-content {
+    flex: 1;
+    padding: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    font-size: 0.7rem;
+    color: #a0a09a;
+    overflow: hidden;
+  }
+
+  .art-overlay-sidebar {
+    width: 35%;
+    border-right: 1px solid #e0e0db;
+    padding-right: 1rem;
+  }
+
+  .art-overlay-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .art-overlay-line {
+    height: 6px;
+    background: #e0e0db;
+    border-radius: 3px;
+  }
+
+  .art-overlay-line.short { width: 60%; }
+  .art-overlay-line.accent { background: #1a1a1a; width: 40%; opacity: 0.3; }
+
+  .art-overlay-caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2rem 2.5rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    color: #fff;
+  }
+
+  .art-overlay-caption h3 {
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: #fff;
+    margin-bottom: 0.25rem;
+  }
+
+  .art-overlay-caption p {
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.7);
+    font-weight: 300;
+  }
+
+  /* --- Feature card row --- */
+  .feature-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .feature-card {
+    background: #fafaf8;
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 200px;
+  }
+
+  .feature-card-title {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .feature-card-desc {
+    font-size: 0.85rem;
+    color: #a0a09a;
+    line-height: 1.55;
+    font-weight: 300;
+    margin-bottom: 1.5rem;
+  }
+
+  .feature-card-inner {
+    background: #f5f5f3;
+    border: 1px solid #e0e0db;
+    border-radius: 4px;
+    padding: 1rem;
+    flex: 1;
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.4rem;
+  }
+
+  .feature-card-mock-line {
+    height: 5px;
+    background: #e0e0db;
+    border-radius: 3px;
+  }
+
+  .feature-card-mock-line.short { width: 50%; }
+  .feature-card-mock-line.accent { background: #1a1a1a; width: 35%; opacity: 0.2; }
+
+  /* --- Update row (changelog) --- */
+  .update-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+
+  .update-card {
+    background: #fafaf8;
+    border: 1px solid #e0e0db;
+    border-radius: 10px;
+    padding: 1.25rem;
+  }
+
+  .update-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .update-badge {
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid #d5d5d0;
+    border-radius: 999px;
+    color: #a0a09a;
+  }
+
+  .update-date {
+    font-size: 0.7rem;
+    color: #b5b5b0;
+    font-weight: 400;
+  }
+
+  .update-title {
+    font-size: 0.85rem;
+    font-weight: 400;
+    line-height: 1.4;
+  }
+
+  /* --- Nav --- */
+  .nav {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    font-size: 0.7rem;
+    color: #b5b5b0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .nav-buttons { display: flex; gap: 0.5rem; }
+
+  .nav-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid #d5d5d0;
+    background: transparent;
+    color: #b5b5b0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    padding: 0;
+  }
+
+  .nav-btn:hover { border-color: #1a1a1a; color: #1a1a1a; }
+
+  .progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 2px;
+    background: #1a1a1a;
+    transition: width 0.3s ease;
+    z-index: 100;
+  }
+
+  /* --- PDF download button --- */
+  .pdf-btn {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    background: #1a1a1a;
+    color: #f5f5f3;
+    border: none;
+    padding: 0.55rem 1.25rem;
+    border-radius: 100px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.02em;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  }
+
+  .pdf-btn:hover { background: #000; }
+
+  /* --- Print: each slide becomes one 16:9 PDF page --- */
+  @page { size: 13.333in 7.5in; margin: 0; }
+
+  @media print {
+    html, body {
+      width: 13.333in;
+      height: auto !important;
+      overflow: visible !important;
+      background: #f5f5f3;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .deck { width: 13.333in; height: auto; position: static; }
+    .slide {
+      display: flex !important;
+      position: relative !important;
+      inset: auto !important;
+      width: 13.333in !important;
+      height: 7.5in !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      -webkit-print-color-adjust: exact !important;
+    }
+    .slide:last-child { page-break-after: auto !important; }
+    .slide.dark { background: #1a1a1a !important; }
+    .nav, .progress, .pdf-btn , .btn-row { display: none !important; }
+  }
+
+  .btn-row {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    display: flex;
+    gap: 0.5rem;
+  }
+  .btn-row .pdf-btn { position: static; transform: none; }
+
+  /* Mentor deck: bullets kept as written; the framework has no list component. */
+  a { color: inherit; }
+  .bullets { margin: 0; padding-left: 1.2em; font-size: 1.15rem; line-height: 1.5; color: #1a1a1a; }
+  .bullets li { margin: .45em 0; }
+  .bullets ul { padding-left: 1.2em; margin: .2em 0; }
+  .slide-inner > .bullets { margin-top: 2rem; }
+  .bullets-text { font-size: 1rem; line-height: 1.5; color: #1a1a1a; }
+  .bullets-text p { color: #1a1a1a; font-size: inherit; margin: .5em 0; overflow-wrap: anywhere; }
+  .bullets-text .bullets { font-size: inherit; }
+  .split.fig-narrow { grid-template-columns: 1fr 2.4fr; }
+  .figures { min-width: 0; }
+  /* Data figures must never be cropped. */
+  .split-image { background: none; }
+  .split-image img { object-fit: contain; height: auto; }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="deck">
+
+  <!-- ========== 1. Meeting 02 Nov Agenda ========== -->
+  <section class="slide active">
+    <div class="slide-inner">
+      <h2>Meeting 02 Nov Agenda</h2>
+      <ul class="bullets">
+        <li>V3.1 - V4.1 migration</li>
+        <li>RL runs
+          <ul>
+            <li>HiPT runs with GBRL</li>
+            <li>Self-rec runs with GBRL</li>
+            <li>ICRL runs</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ========== 2. V3.1 migration ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>V3.1 migration</h2>
+      <ul class="bullets">
+        <li>We moved V3.1 is retiring</li>
+        <li>V4.1 is available</li>
+        <li>Question is V4.1 a drop in?</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ========== 3. V3.1 vs V4.1 attack success ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>V3.1 vs V4.1 attack success</h2>
+      <div class="split fig-narrow">
+        <div class="split-text bullets-text">
+          <p>Based on <a href="https://claude.ai/artifact/RJNM51vFJ4eepRroa1H9vh">https://claude.ai/artifact/RJNM51vFJ4eepRroa1H9vh</a></p>
+          <ul class="bullets">
+            <li>I use `DeepSeek-V4-1-Flash:peft:262144`</li>
+            <li>Same H: gpt-oss-120b , T:QwenQwen3.5-4B</li>
+          </ul>
+          <p><b>Does DeepSeek V4.1 create more working attacks?</b></p>
+          <p>Yes! Went up from 114-309 on test dataset<br><br><b>Do they overlap?</b><br>Yes - <b>a lot on honest but little on attack</b><br><br>Checkerboard visual:<br><a href="https://claude.ai/artifact/EsfahpN38QjaU36rkVX9Ku">https://claude.ai/artifact/EsfahpN38QjaU36rkVX9Ku</a></p>
+        </div>
+        <div class="split-image">
+          <img src="media/slide18_attack_success.png" alt="Image carried over from the V3.1 vs V4.1 attack success slide">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 4. How do base model compare? ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>How do base model compare?</h2>
+      <div class="split">
+        <div class="split-text bullets-text">
+          <p>For interactive: </p>
+          <p><a href="https://claude.ai/artifact/XGE7YVZM7L1zXpeEctWB7A">https://claude.ai/artifact/XGE7YVZM7L1zXpeEctWB7A</a></p>
+          <ul class="bullets">
+            <li>Untrusted collusion is similar(ly bad)</li>
+            <li>Trusted monitor performs slightly worse on V4.1</li>
+            <li>V4.1 Is better at catching it’s own attacks0.920 (0.887–0.952) vs 0.972 (0.959–0.983)</li>
+            <li>It looks like because selfrec is bad and V4.1 is a better monitor the safety goes up</li>
+          </ul>
+        </div>
+        <div class="figures"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 5. How do base model compare? - minified ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>How do base model compare? - minified</h2>
+      <div class="split">
+        <div class="split-text bullets-text">
+          <ul class="bullets">
+            <li>For some reason minification improved self-rec of V4.1…</li>
+            <li>… and only slightly lowers U_M monitoring AUC</li>
+            <li>But SU curve overlap</li>
+            <li>Paraphrased works as usual</li>
+          </ul>
+        </div>
+        <div class="figures"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 6. How is SFT comparing ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>How is SFT comparing</h2>
+      <div class="split">
+        <div class="split-text bullets-text">
+          <p>On no signal jamming:</p>
+          <ul class="bullets">
+            <li>V4.1 performs worse -&gt; 0.868 vs 0.979 of V3.1</li>
+            <li>This results in better safety for V4.1</li>
+            <li>For paraphrased the collusion capability is equal</li>
+            <li>But safety for paraphrased is higher for V4.1 since it is worse at collusion and better at monitorng</li>
+          </ul>
+        </div>
+        <div class="figures"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 7. Why did V4.1 perform worse on SFT ========== -->
+  <section class="slide">
+    <div class="slide-inner">
+      <h2>Why did V4.1 perform worse on SFT</h2>
+    </div>
+  </section>
+
+</div>
+
+<div class="nav">
+  <span id="counter">1 / 16</span>
+  <div class="nav-buttons">
+    <button class="nav-btn" onclick="prev()">‹</button>
+    <button class="nav-btn" onclick="next()">›</button>
+  </div>
+</div>
+
+<script>
+  let slides = document.querySelectorAll('.slide');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+  let current = 0;
+
+  window.refreshSlides = () => {
+    slides = document.querySelectorAll('.deck > .slide');
+    if (current >= slides.length) current = slides.length - 1;
+  };
+
+
+  function show(i) {
+    slides.forEach(s => s.classList.remove('active'));
+    slides[i].classList.add('active');
+    counter.textContent = `${i + 1} / ${slides.length}`;
+    progress.style.width = `${((i + 1) / slides.length) * 100}%`;
+    current = i;
+  }
+
+  function next() { if (current < slides.length - 1) show(current + 1); }
+  function prev() { if (current > 0) show(current - 1); }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+    if (e.key === 'Home') { show(0); }
+    if (e.key === 'End') { show(slides.length - 1); }
+    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); downloadPDF(); }
+  });
+
+  function downloadPDF() {
+    const originalTitle = document.title;
+    document.title = 'deck';
+    window.print();
+    setTimeout(() => { document.title = originalTitle; }, 1000);
+  }
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  const SWIPE_THRESHOLD = 50;
+
+  document.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].screenX - touchStartX;
+    const dy = e.changedTouches[0].screenY - touchStartY;
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return;
+    if (dx < 0) next();
+    else prev();
+  }, { passive: true });
+
+  const isEmbed = new URLSearchParams(window.location.search).has('embed');
+
+  show(0);
+</script>
+
+<script>
+/* ============================================================
+   Edit mode (?edit)
+   Open the deck with ?edit appended to the URL, or click the
+   Edit button. Text: click to edit in place (plain text only).
+   Slides: reorder, duplicate, delete via the left rail.
+   Save: Cmd/Ctrl+S or the Save button writes back to this file
+   in place (Chromium browsers; the first save asks you to pick
+   this file once). Other browsers download an updated copy.
+   Saving rewrites only the slides that changed; everything else
+   passes through byte-for-byte, so diffs stay clean.
+   ============================================================ */
+(() => {
+  if (!new URLSearchParams(location.search).has('edit')) return;
+
+  const RAIL_W = 200, THUMB_W = 164;
+  const deck = document.querySelector('.deck');
+  const liveSlides = () => [...deck.querySelectorAll(':scope > .slide')];
+  const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+  const $ = id => document.getElementById(id);
+
+  let baseCount = 0;          // slide count in the on-disk file we mapped against
+  let structuralChanged = false;
+  let fileHandle = null;
+  let justPicked = false;     // true when this save triggered the one-time file pick
+  const undoStack = [];
+  let autoSaveTimer = null;
+  let saving = false;
+
+  function scheduleAutoSave() {
+    if (!fileHandle || saving) return;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => { if (typeof autoSave === 'function') autoSave(); }, 2000);
+  }
+
+  /* ---------- editor styles (theme-adaptive via --ed-* tokens) ---------- */
+  const css = document.createElement('style');
+  css.dataset.edUi = '';
+  css.textContent = `
+    body.ed-on { --ed-panel: rgba(255,255,255,.93); --ed-ink: #1a1a1a; --ed-inv: #ffffff;
+      --ed-line: rgba(0,0,0,.14); --ed-dim: rgba(0,0,0,.45); --ed-view-bg: #ffffff; }
+    body.ed-on.ed-dark { --ed-panel: rgba(28,28,32,.93); --ed-ink: #f5f5f3; --ed-inv: #1a1a1a;
+      --ed-line: rgba(255,255,255,.18); --ed-dim: rgba(255,255,255,.5); --ed-view-bg: #131316; }
+    body.ed-on .deck { width: calc(100vw - ${RAIL_W}px); margin-left: ${RAIL_W}px; }
+    body.ed-on .edit-btn { display: none; }
+    [contenteditable] { outline: none; cursor: text; border-radius: 3px; }
+    [contenteditable]:hover { box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent); }
+    [contenteditable]:focus { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 60%, transparent); }
+    [contenteditable]:empty::before { content: '\\2026'; opacity: .35; }
+    .ed-toolbar { position: fixed; top: 14px; right: 16px; z-index: 1000; display: flex; gap: 8px;
+      align-items: center; font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.3;
+      background: var(--ed-panel); color: var(--ed-ink); backdrop-filter: blur(8px);
+      border: 1px solid var(--ed-line); border-radius: 10px; padding: 8px 10px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+    .ed-toolbar button { font-family: inherit; font-size: 12px; font-weight: 500;
+      border: 1px solid var(--ed-line); background: transparent; color: var(--ed-ink);
+      border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+    .ed-toolbar button:hover { border-color: var(--ed-ink); }
+    .ed-toolbar .ed-save.ed-dirty { background: var(--ed-ink); border-color: var(--ed-ink); color: var(--ed-inv); }
+    .ed-status { color: var(--ed-dim); max-width: 240px; }
+    .ed-rail { position: fixed; left: 0; top: 0; bottom: 0; width: ${RAIL_W}px; z-index: 999;
+      overflow-y: auto; background: var(--ed-panel); backdrop-filter: blur(8px);
+      border-right: 1px solid var(--ed-line); padding: 14px 12px 80px;
+      display: flex; flex-direction: column; align-items: center; }
+    .ed-thumb { position: relative; width: fit-content; margin-bottom: 12px; border: 2px solid transparent; border-radius: 10px;
+      cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; transition: border-color 0.15s ease; }
+    .ed-thumb.ed-current { border-color: var(--ed-ink); }
+    .ed-thumb.ed-drop-before { box-shadow: 0 -3px 0 0 var(--ed-ink); }
+    .ed-thumb.ed-dragging { opacity: .65; z-index: 10; }
+    .ed-thumb-view { position: relative; width: ${THUMB_W}px; overflow: hidden; border-radius: 8px;
+      border: 1px solid var(--ed-line); pointer-events: none; background: var(--ed-view-bg); }
+    .ed-n { position: absolute; top: 6px; left: 6px; z-index: 2; font-family: inherit; font-size: 9px;
+      font-weight: 500; color: var(--ed-ink); background: var(--ed-panel); border: 1px solid var(--ed-line);
+      border-radius: 5px; padding: 1px 5px; line-height: 1.4; pointer-events: none; }
+    .ed-thumb-bar { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 1px;
+      padding: 3px; border-radius: 9px; background: var(--ed-panel); border: 1px solid var(--ed-line);
+      box-shadow: 0 2px 8px rgba(0,0,0,.18); backdrop-filter: blur(6px);
+      opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+    .ed-thumb:hover .ed-thumb-bar { opacity: 1; pointer-events: auto; }
+    .ed-thumb-bar button { border: none; background: none; cursor: pointer; font-size: 11px;
+      color: var(--ed-dim); padding: 3px 5px; border-radius: 6px; line-height: 1; }
+    .ed-thumb-bar button:hover { color: var(--ed-ink);
+      background: color-mix(in srgb, var(--ed-ink) 8%, transparent); }
+    body.ed-on .slide img, body.ed-on .slide video { transition: outline-color 0.12s ease; }
+    body.ed-on .slide img:hover, body.ed-on .slide video:hover { outline: 2px solid color-mix(in srgb, var(--ed-ink) 55%, transparent); outline-offset: -2px; }
+    .ed-img-drag { outline: 2px dashed var(--ed-ink) !important; outline-offset: -2px; }
+    .ed-imgbar { position: fixed; z-index: 1001; display: none; flex-direction: column; align-items: center; gap: 8px;
+      transform: translate(-50%, -50%); padding: 14px; border-radius: 12px; text-align: center;
+      background: var(--ed-panel); border: 1px solid var(--ed-line);
+      box-shadow: 0 6px 22px rgba(0,0,0,.22); backdrop-filter: blur(8px); font-family: inherit; }
+    .ed-imgbar-label { font-size: 9px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--ed-dim); }
+    .ed-imgbar-main { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .ed-imgbar-drop { display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer;
+      width: 210px; max-width: 60vw; padding: 16px 18px; border: 1.5px dashed var(--ed-line); border-radius: 10px;
+      background: transparent; color: var(--ed-dim); font-family: inherit; transition: border-color .12s ease, color .12s ease; }
+    .ed-imgbar-drop:hover, .ed-imgbar.ed-drag-active .ed-imgbar-drop { border-color: var(--ed-ink); color: var(--ed-ink); }
+    .ed-imgbar-drop svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .ed-imgbar-drop-title { font-size: 12px; font-weight: 500; color: var(--ed-ink); }
+    .ed-imgbar-drop-sub { font-size: 10px; }
+    .ed-imgbar-linkbtn { font-family: inherit; font-size: 11px; font-weight: 500; cursor: pointer; border: none;
+      background: none; color: var(--ed-dim); padding: 2px; text-decoration: underline; text-underline-offset: 2px; }
+    .ed-imgbar-linkbtn:hover { color: var(--ed-ink); }
+    .ed-imgbar-link { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .ed-imgbar-input { font-family: inherit; font-size: 12px; color: var(--ed-ink); width: 220px; max-width: 50vw;
+      padding: 7px 10px; border-radius: 7px; border: 1px solid var(--ed-line); background: var(--ed-view-bg); outline: none; }
+    .ed-imgbar-input:focus { border-color: var(--ed-ink); }
+    @media print { .ed-rail, .ed-toolbar, [data-ed-ui] { display: none !important; }
+      body.ed-on .deck { width: auto; margin-left: 0; } }
+  `;
+  document.head.appendChild(css);
+  document.body.classList.add('ed-on');
+
+  /* match the editor chrome to the theme */
+  (function detectDark() {
+    for (const probe of [document.body, document.querySelector('.slide')]) {
+      if (!probe) continue;
+      const m = getComputedStyle(probe).backgroundColor.match(/[\d.]+/g);
+      if (!m || m.length < 3 || (m.length > 3 && +m[3] === 0)) continue;
+      if (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2] < 128) document.body.classList.add('ed-dark');
+      return;
+    }
+  })();
+
+  /* ---------- inline text editing (leaf-level, plaintext only) ---------- */
+  const INLINE = new Set(['SPAN', 'SUP', 'SUB', 'STRONG', 'EM', 'B', 'I', 'A', 'BR']);
+
+  function isTextLeaf(node) {
+    if (!node.childNodes.length) return false;
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) continue;
+      if (n.nodeType !== 1 || !INLINE.has(n.tagName)) return false;
+      if (n.tagName !== 'BR' && n.childNodes.length && !isTextLeaf(n)) return false;
+    }
+    return node.textContent.trim().length > 0;
+  }
+
+  function setEd(n) {
+    n.setAttribute('contenteditable', 'plaintext-only');
+    n.setAttribute('spellcheck', 'false');
+  }
+
+  function makeEditable(root) {
+    const leaves = [];
+    (function walk(node) {
+      for (const c of node.children) (isTextLeaf(c) ? leaves.push(c) : walk(c));
+    })(root);
+    for (const leaf of leaves) {
+      const hasEls = [...leaf.children].some(c => c.tagName !== 'BR');
+      if (!hasEls) { setEd(leaf); continue; }
+      // mixed content: protected inline spans + bare text runs each become their own field
+      for (const c of leaf.children) {
+        if (c.tagName !== 'BR' && c.textContent.length) setEd(c);
+      }
+      for (const n of [...leaf.childNodes]) {
+        if (n.nodeType === 3 && n.textContent.trim()) {
+          const w = document.createElement('span');
+          w.dataset.edWrap = '';
+          n.replaceWith(w); w.appendChild(n); setEd(w);
+        }
+      }
+    }
+  }
+
+  /* ---------- dirty tracking ---------- */
+  const hasChanges = () => structuralChanged || !!deck.querySelector('[data-ed-dirty]');
+  function markDirty() {
+    const btn = $('edSave');
+    if (btn) btn.classList.toggle('ed-dirty', hasChanges());
+    if (hasChanges()) scheduleAutoSave();
+  }
+
+  function watchMutations() {
+    new MutationObserver(muts => {
+      let hit = false;
+      for (const m of muts) {
+        const elx = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+        const slide = elx && elx.closest('.slide');
+        if (slide && deck.contains(slide)) { slide.dataset.edDirty = '1'; hit = true; }
+      }
+      if (hit) markDirty();
+    }).observe(deck, { childList: true, characterData: true, subtree: true });
+  }
+
+  /* ---------- navigation: reuse the deck's own show()/next()/prev() ----------
+     The core script exposes window.refreshSlides() so its slide list follows
+     structural edits. We wrap show() to keep the rail highlight in sync. */
+  const curIdx = () => liveSlides().findIndex(s => s.classList.contains('active'));
+  function edShow(i) {
+    window.refreshSlides();
+    window.show(Math.max(0, Math.min(i, liveSlides().length - 1)));
+  }
+
+  document.addEventListener('keydown', e => {
+    const meta = e.metaKey || e.ctrlKey;
+    if (meta && e.key.toLowerCase() === 's') { e.preventDefault(); e.stopPropagation(); doSave(); return; }
+    if (e.target.isContentEditable) {
+      if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+      if (e.key === 'Escape') e.target.blur();
+      e.stopPropagation();          // keep deck navigation away from typing
+      return;
+    }
+    if (meta && e.key.toLowerCase() === 'z' && undoStack.length) {
+      e.preventDefault(); e.stopPropagation(); popUndo();
+    }
+  }, true);
+
+  /* ---------- structural undo (snapshots) ---------- */
+  function pushUndo() {
+    undoStack.push({ html: deck.innerHTML, cur: curIdx() });
+    if (undoStack.length > 50) undoStack.shift();
+  }
+  function popUndo() {
+    const s = undoStack.pop();
+    deck.innerHTML = s.html;
+    structuralChanged = true;
+    renderRail(); edShow(s.cur); markDirty();
+  }
+
+  /* ---------- thumbnail rail ---------- */
+  const rail = el('div', 'ed-rail'); rail.dataset.edUi = '';
+  document.body.appendChild(rail);
+
+  function makeThumb(slide, i) {
+    const t = el('div', 'ed-thumb'); t.dataset.idx = i;
+    const view = el('div', 'ed-thumb-view');
+    const dw = deck.clientWidth || innerWidth, dh = deck.clientHeight || innerHeight;
+    const sc = THUMB_W / dw;
+    view.style.height = (dh * sc) + 'px';
+    const c = slide.cloneNode(true);
+    c.classList.remove('active');
+    c.querySelectorAll('[contenteditable]').forEach(n => n.removeAttribute('contenteditable'));
+    c.style.cssText = 'display:flex; position:absolute; inset:auto; left:0; top:0; width:' + dw +
+      'px; height:' + dh + 'px; transform:scale(' + sc + '); transform-origin:0 0;';
+    view.appendChild(c);
+    const num = el('div', 'ed-n'); num.textContent = (i + 1);
+    view.appendChild(num);
+    const bar = el('div', 'ed-thumb-bar');
+    bar.innerHTML = '<button data-act="up" title="Move up">&#8593;</button>' +
+      '<button data-act="down" title="Move down">&#8595;</button>' +
+      '<button data-act="dup" title="Duplicate">&#10697;</button>' +
+      '<button data-act="del" title="Delete">&#10005;</button>';
+    t.append(view, bar);
+    return t;
+  }
+
+  function renderRail() {
+    rail.textContent = '';
+    liveSlides().forEach((s, i) => rail.appendChild(makeThumb(s, i)));
+    highlightThumb();
+  }
+
+  function highlightThumb() {
+    const cur = curIdx();
+    const thumbs = rail.querySelectorAll('.ed-thumb');
+    thumbs.forEach((t, j) => t.classList.toggle('ed-current', j === cur));
+    if (thumbs[cur]) thumbs[cur].scrollIntoView({ block: 'nearest' });
+  }
+
+  function structural() { structuralChanged = true; renderRail(); markDirty(); }
+
+  let suppressClick = false;
+  rail.addEventListener('click', e => {
+    if (suppressClick) { suppressClick = false; return; }
+    const t = e.target.closest('.ed-thumb'); if (!t) return;
+    const i = +t.dataset.idx;
+    const btn = e.target.closest('button');
+    const s = liveSlides();
+    if (!btn) { edShow(i); return; }
+    const act = btn.dataset.act;
+    if (act === 'up' && i > 0) { pushUndo(); s[i - 1].before(s[i]); structural(); edShow(i - 1); }
+    else if (act === 'down' && i < s.length - 1) { pushUndo(); s[i + 1].after(s[i]); structural(); edShow(i + 1); }
+    else if (act === 'dup') {
+      pushUndo();
+      const c = s[i].cloneNode(true);
+      c.classList.remove('active');
+      delete c.dataset.srcIdx;
+      c.dataset.edDirty = '1';
+      s[i].after(c); structural(); edShow(i + 1);
+    } else if (act === 'del') {
+      if (s.length === 1) return;
+      if (!confirm('Delete slide ' + (i + 1) + '?')) return;
+      pushUndo(); s[i].remove(); structural(); edShow(Math.min(i, s.length - 2));
+    }
+  });
+
+  /* drag to reorder */
+  let drag = null;
+  rail.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    const t = e.target.closest('.ed-thumb'); if (!t) return;
+    drag = { t, startY: e.clientY, idx: +t.dataset.idx, moved: false, drop: -1 };
+    t.setPointerCapture(e.pointerId);
+  });
+  rail.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dy) < 6) return;
+    drag.moved = true;
+    drag.t.classList.add('ed-dragging');
+    drag.t.style.transform = 'translateY(' + dy + 'px)';
+    const thumbs = [...rail.querySelectorAll('.ed-thumb')];
+    let drop = thumbs.length;
+    for (let j = 0; j < thumbs.length; j++) {
+      if (thumbs[j] === drag.t) continue;
+      const r = thumbs[j].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { drop = j; break; }
+    }
+    drag.drop = drop;
+    thumbs.forEach((x, j) => x.classList.toggle('ed-drop-before', j === drop && x !== drag.t));
+  });
+  function endDrag(commit) {
+    if (!drag) return;
+    const { t, idx, moved, drop } = drag; drag = null;
+    t.classList.remove('ed-dragging'); t.style.transform = '';
+    rail.querySelectorAll('.ed-drop-before').forEach(x => x.classList.remove('ed-drop-before'));
+    if (!moved) return;
+    suppressClick = true;
+    if (!commit || drop < 0 || drop === idx || drop === idx + 1) return;
+    pushUndo();
+    const s = liveSlides();
+    deck.insertBefore(s[idx], s[drop] || null);
+    structural();
+    edShow(liveSlides().indexOf(s[idx]));
+  }
+  rail.addEventListener('pointerup', () => endDrag(true));
+  rail.addEventListener('pointercancel', () => endDrag(false));
+
+  /* re-render a slide's thumbnail after editing its text */
+  deck.addEventListener('focusout', e => {
+    if (!e.target.isContentEditable) return;
+    const slide = e.target.closest('.slide'); if (!slide) return;
+    const i = liveSlides().indexOf(slide);
+    const old = rail.querySelectorAll('.ed-thumb')[i];
+    if (old) old.replaceWith(makeThumb(slide, i));
+    highlightThumb();
+  });
+
+  /* ---------- image replace (file / drop / paste / link, one affordance) ---------- */
+  const MAX_IMG_DIM = 1600;
+  const imgBar = el('div', 'ed-imgbar'); imgBar.dataset.edUi = '';
+  imgBar.innerHTML =
+    '<div class="ed-imgbar-label">Replace image</div>' +
+    '<div class="ed-imgbar-main">' +
+      '<button type="button" class="ed-imgbar-drop" data-imgact="file">' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M5 16v2a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-2"/></svg>' +
+        '<span class="ed-imgbar-drop-title">Drag &amp; drop image or video</span>' +
+        '<span class="ed-imgbar-drop-sub">or click to upload</span>' +
+      '</button>' +
+      '<button type="button" class="ed-imgbar-linkbtn" data-imgact="link">Paste a link instead</button>' +
+    '</div>' +
+    '<div class="ed-imgbar-link" style="display:none">' +
+      '<input type="text" class="ed-imgbar-input" placeholder="Paste image or video URL, press Enter">' +
+      '<button type="button" class="ed-imgbar-linkbtn ed-imgbar-cancel">Go back</button>' +
+    '</div>';
+  document.body.appendChild(imgBar);
+  const imgMain = imgBar.querySelector('.ed-imgbar-main');
+  const linkBox = imgBar.querySelector('.ed-imgbar-link');
+  const linkInput = imgBar.querySelector('.ed-imgbar-input');
+  const cancelBtn = imgBar.querySelector('.ed-imgbar-cancel');
+  let hoverImg = null, linkMode = false;
+
+  function placeImgBar(img) {
+    const r = img.getBoundingClientRect();
+    imgBar.style.left = (r.left + r.width / 2) + 'px';
+    imgBar.style.top = (r.top + r.height / 2) + 'px';
+    imgBar.style.display = 'flex';
+  }
+  function hideImgBar() { imgBar.style.display = 'none'; hoverImg = null; if (linkMode) exitLinkMode(); }
+
+  // inline URL entry (native prompt() is unreliable; Chrome can suppress it)
+  function enterLinkMode() {
+    linkMode = true;
+    imgMain.style.display = 'none';
+    linkBox.style.display = 'flex';
+    linkInput.value = '';
+    linkInput.focus();
+  }
+  function exitLinkMode() {
+    linkMode = false;
+    imgMain.style.display = '';
+    linkBox.style.display = 'none';
+  }
+  linkInput.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { const img = hoverImg, url = linkInput.value; exitLinkMode(); if (img && url) setImageFromURL(img, url); }
+    else if (e.key === 'Escape') exitLinkMode();
+  });
+  linkInput.addEventListener('blur', exitLinkMode);
+  cancelBtn.addEventListener('mousedown', e => e.preventDefault());
+  cancelBtn.addEventListener('click', exitLinkMode);
+
+  function refreshThumbFor(img) {
+    const slide = img.closest('.slide');
+    if (slide) {
+      slide.dataset.edDirty = '1';
+      const i = liveSlides().indexOf(slide);
+      const old = rail.querySelectorAll('.ed-thumb')[i];
+      if (old) old.replaceWith(makeThumb(slide, i));
+      highlightThumb();
+    }
+    markDirty();
+  }
+
+  function readAsDataURL(file) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error);
+      fr.readAsDataURL(file);
+    });
+  }
+
+  // oversized images get downscaled so the embedded base64 stays reasonable
+  function shrinkDataURL(dataURL, type) {
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const max = Math.max(im.naturalWidth, im.naturalHeight);
+        if (max <= MAX_IMG_DIM) { res(dataURL); return; }
+        const k = MAX_IMG_DIM / max;
+        const cv = el('canvas');
+        cv.width = Math.round(im.naturalWidth * k);
+        cv.height = Math.round(im.naturalHeight * k);
+        cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+        res(cv.toDataURL(/png/i.test(type) ? 'image/png' : 'image/jpeg', 0.85));
+      };
+      im.onerror = () => res(dataURL);
+      im.src = dataURL;
+    });
+  }
+
+  const MAX_VIDEO_BYTES = 30 * 1024 * 1024;
+
+  // swap an <img> for a <video> (or back) in place, preserving class/style
+  function asVideo(node) {
+    if (node.tagName === 'VIDEO') return node;
+    const v = document.createElement('video');
+    ['autoplay', 'loop', 'muted', 'playsinline'].forEach(a => v.setAttribute(a, ''));
+    v.muted = true;
+    const st = node.getAttribute('style'); if (st) v.setAttribute('style', st);
+    if (node.className) v.className = node.className;
+    node.replaceWith(v);
+    return v;
+  }
+  function asImage(node) {
+    if (node.tagName === 'IMG') return node;
+    const im = document.createElement('img'); im.alt = '';
+    const st = node.getAttribute('style'); if (st) im.setAttribute('style', st);
+    if (node.className) im.className = node.className;
+    node.replaceWith(im);
+    return im;
+  }
+
+  // user files embed as base64 to keep the deck self-contained
+  async function setImageFromFile(node, file) {
+    if (!file) return;
+    const isVid = /^video\//.test(file.type);
+    if (!isVid && !/^image\//.test(file.type)) { status('That is not an image or video file'); return; }
+    if (isVid && file.size > MAX_VIDEO_BYTES) { status('Video is too large to embed (max 30MB). Use a link instead.'); return; }
+    status(isVid ? 'Embedding video...' : 'Embedding image...');
+    try {
+      const data = isVid ? await readAsDataURL(file) : await shrinkDataURL(await readAsDataURL(file), file.type);
+      const elx = isVid ? asVideo(node) : asImage(node);
+      elx.src = data;
+      if (hoverImg === node) hoverImg = elx;
+      refreshThumbFor(elx);
+      status(isVid ? 'Video added' : 'Image replaced'); setTimeout(() => status('Edit mode'), 1500);
+    } catch (err) { console.error(err); status('Could not add media'); }
+  }
+
+  // pasted or dropped links stay as URLs (matches the deck media convention)
+  function setImageFromURL(node, url) {
+    url = (url || '').trim();
+    if (!/^(https?:\/\/|data:(image|video)\/)/i.test(url)) { status('That is not a valid image or video URL'); return; }
+    const isVid = /^data:video\//i.test(url) || /\.(mp4|webm|ogg|ogv|mov|m4v)(\?|#|$)/i.test(url);
+    const elx = isVid ? asVideo(node) : asImage(node);
+    elx.src = url;
+    if (hoverImg === node) hoverImg = elx;
+    refreshThumbFor(elx);
+    status(isVid ? 'Video linked' : 'Image linked'); setTimeout(() => status('Edit mode'), 1500);
+  }
+
+  function pickImageFile(node) {
+    if (saving) return;
+    const inp = el('input'); inp.type = 'file'; inp.accept = 'image/*,video/*';
+    inp.addEventListener('change', () => { if (inp.files && inp.files[0]) setImageFromFile(node, inp.files[0]); });
+    inp.click();
+  }
+
+  document.addEventListener('pointermove', e => {
+    if (drag || linkMode) return;
+    if (e.target.closest && e.target.closest('.ed-imgbar')) return;
+    const img = e.target.closest && e.target.closest('.deck .slide img, .deck .slide video');
+    if (img) { hoverImg = img; placeImgBar(img); }
+    else if (imgBar.style.display !== 'none') hideImgBar();
+  }, true);
+
+  imgBar.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || !hoverImg) return;
+    if (b.dataset.imgact === 'link') enterLinkMode();
+    else if (b.dataset.imgact === 'file') pickImageFile(hoverImg);
+  });
+
+  // drop works over the image and over the centered card (maps to the hovered image)
+  function dropTargetImg(e) {
+    if (!e.target.closest) return null;
+    if (e.target.closest('.ed-imgbar')) return hoverImg;
+    return e.target.closest('.deck .slide img, .deck .slide video');
+  }
+  document.addEventListener('dragover', e => {
+    const img = dropTargetImg(e); if (!img) return;
+    e.preventDefault(); img.classList.add('ed-img-drag');
+    imgBar.classList.toggle('ed-drag-active', !!(e.target.closest && e.target.closest('.ed-imgbar')));
+  });
+  document.addEventListener('dragleave', e => {
+    const img = dropTargetImg(e); if (img) img.classList.remove('ed-img-drag');
+  });
+  document.addEventListener('drop', e => {
+    const img = dropTargetImg(e); if (!img) return;
+    e.preventDefault(); img.classList.remove('ed-img-drag'); imgBar.classList.remove('ed-drag-active');
+    const dt = e.dataTransfer; if (!dt) return;
+    if (dt.files && dt.files.length) setImageFromFile(img, dt.files[0]);
+    else setImageFromURL(img, dt.getData('text/uri-list') || dt.getData('text/plain'));
+  });
+
+  document.addEventListener('paste', e => {
+    if (!hoverImg || linkMode) return;
+    if (document.activeElement && document.activeElement.isContentEditable) return;
+    const dt = e.clipboardData; if (!dt) return;
+    for (const f of dt.files) { if (/^image\//.test(f.type)) { e.preventDefault(); setImageFromFile(hoverImg, f); return; } }
+    const text = dt.getData('text');
+    if (text && /^(https?:\/\/|data:image\/)/i.test(text.trim())) { e.preventDefault(); setImageFromURL(hoverImg, text); }
+  });
+
+  /* ---------- toolbar ---------- */
+  const bar = el('div', 'ed-toolbar'); bar.dataset.edUi = '';
+  bar.innerHTML = '<span class="ed-status" id="edStatus">Edit mode</span>' +
+    '<button class="ed-save" id="edSave" title="Save (Cmd/Ctrl+S). The first save asks you to pick this file once.">Save</button>' +
+    '<button id="edExit">Exit</button>';
+  document.body.appendChild(bar);
+  $('edSave').addEventListener('click', doSave);
+
+  function showExitConfirm() {
+    bar.innerHTML = '<span class="ed-status">Unsaved changes</span>' +
+      '<button id="edDiscard">Discard & Exit</button>' +
+      '<button id="edCancel">Cancel</button>';
+    $('edDiscard').addEventListener('click', () => {
+      structuralChanged = false;
+      deck.querySelectorAll('[data-ed-dirty]').forEach(s => delete s.dataset.edDirty);
+      location.href = location.pathname;
+    });
+    $('edCancel').addEventListener('click', restoreToolbar);
+  }
+
+  function restoreToolbar() {
+    bar.innerHTML = '<span class="ed-status" id="edStatus">Edit mode</span>' +
+      '<button class="ed-save" id="edSave" title="Save (Cmd/Ctrl+S). The first save asks you to pick this file once.">Save</button>' +
+      '<button id="edExit">Exit</button>';
+    $('edSave').addEventListener('click', doSave);
+    $('edExit').addEventListener('click', handleExit);
+    markDirty();
+  }
+
+  // shown when in-place saving is not possible (Safari, or a restricted folder)
+  function offerDownload(msg) {
+    bar.innerHTML = '<span class="ed-status" id="edStatus">' + msg + '</span>' +
+      '<button class="ed-save" id="edDl">Download copy</button>' +
+      '<button id="edBack">Back</button>';
+    $('edDl').addEventListener('click', () => { downloadCopy(); setTimeout(restoreToolbar, 1200); });
+    $('edBack').addEventListener('click', restoreToolbar);
+  }
+
+  function handleExit() {
+    if (!hasChanges()) { location.href = location.pathname; return; }
+    showExitConfirm();
+  }
+  $('edExit').addEventListener('click', handleExit);
+
+  function status(msg) { const s = $('edStatus'); if (s) s.textContent = msg; }
+
+  addEventListener('beforeunload', e => { if (hasChanges()) e.preventDefault(); });
+
+  /* ---------- auto-save (debounced, only when file handle exists) ---------- */
+  async function autoSave() {
+    if (!fileHandle || !hasChanges() || saving) return;
+    saving = true;
+    status('Saving...');
+    try {
+      const src = await (await fileHandle.getFile()).text();
+      const out = splice(src);
+      if (out == null) { status('Auto-save skipped (file changed externally)'); saving = false; return; }
+      const w = await fileHandle.createWritable();
+      await w.write(out); await w.close();
+      liveSlides().forEach((s, i) => { delete s.dataset.edDirty; s.dataset.srcIdx = i; });
+      baseCount = liveSlides().length;
+      structuralChanged = false;
+      markDirty(); renderRail();
+      status('Saved');
+      setTimeout(() => status('Edit mode'), 1500);
+    } catch (err) {
+      console.error('Auto-save failed:', err);
+      status('Auto-save failed');
+      setTimeout(() => status('Edit mode'), 3000);
+    }
+    saving = false;
+  }
+
+  /* ---------- save: File System Access + slide-anchored splice ---------- */
+  const IDB_KEY = 'deckHandle:' + location.pathname;
+  function idb(mode, fn) {
+    return new Promise((res, rej) => {
+      const o = indexedDB.open('deck-edit', 1);
+      o.onupgradeneeded = () => o.result.createObjectStore('kv');
+      o.onerror = () => rej(o.error);
+      o.onsuccess = () => {
+        const tx = o.result.transaction('kv', mode);
+        const r = fn(tx.objectStore('kv'));
+        tx.oncomplete = () => res(r && r.result);
+        tx.onerror = () => rej(tx.error);
+      };
+    });
+  }
+
+  async function getHandle() {
+    if (!fileHandle) fileHandle = await idb('readonly', s => s.get(IDB_KEY)).catch(() => null);
+    if (fileHandle) {
+      let p = await fileHandle.queryPermission({ mode: 'readwrite' });
+      if (p !== 'granted') p = await fileHandle.requestPermission({ mode: 'readwrite' });
+      if (p !== 'granted') fileHandle = null;
+    }
+    if (!fileHandle) {
+      const pageName = decodeURIComponent(location.pathname.split('/').pop());
+      status('One-time: select "' + pageName + '" in the dialog to allow in-place saving');
+      [fileHandle] = await showOpenFilePicker({
+        id: 'deck-edit',
+        types: [{ description: 'HTML deck', accept: { 'text/html': ['.html'] } }]
+      });
+      if (fileHandle.name !== pageName &&
+          !confirm('Picked "' + fileHandle.name + '" but this page is "' + pageName + '". Overwrite it anyway?')) {
+        fileHandle = null; throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
+      }
+      await idb('readwrite', s => s.put(fileHandle, IDB_KEY)).catch(() => {});
+      justPicked = true;
+    }
+    return fileHandle;
+  }
+
+  function serializeClean(section) {
+    const c = section.cloneNode(true);
+    c.querySelectorAll('[data-ed-wrap]').forEach(w => w.replaceWith(document.createTextNode(w.textContent)));
+    for (const n of [c, ...c.querySelectorAll('*')]) {
+      n.removeAttribute('contenteditable');
+      n.removeAttribute('spellcheck');
+      delete n.dataset.edDirty;
+      delete n.dataset.srcIdx;
+      n.classList.remove('active');
+      if (!n.getAttribute('class')) n.removeAttribute('class');
+    }
+    return '  ' + c.outerHTML;
+  }
+
+  function ensureActive(body, isFirst) {
+    return body.replace(/<section([^>]*?)class="([^"]*)"/, (m, pre, cls) => {
+      const list = cls.split(/\s+/).filter(x => x && x !== 'active');
+      if (isFirst) list.splice(1, 0, 'active');
+      return '<section' + pre + 'class="' + list.join(' ') + '"';
+    });
+  }
+
+  // Replace only edited slides in the on-disk source; untouched slides, head
+  // (style) and tail (scripts) pass through byte-identical.
+  function splice(src) {
+    const re = /^([ \t]*)<section class="slide[^>]*>[\s\S]*?\n\1<\/section>/gm;
+    const ms = [...src.matchAll(re)];
+    if (ms.length !== baseCount) return null;
+    const chunks = []; let pos = 0;
+    for (const m of ms) {
+      const prefix = src.slice(pos, m.index);
+      const cm = prefix.match(/\n([ \t]*<!--[^\n]*-->)[ \t]*\n?$/);
+      chunks.push({
+        comment: cm ? cm[1] : null,
+        body: m[0],
+        headFree: pos === 0 ? prefix.slice(0, cm ? cm.index : prefix.length) : null
+      });
+      pos = m.index + m[0].length;
+    }
+    const tail = src.slice(pos);
+    let out = (chunks[0].headFree || '').replace(/\s*$/, '\n');
+    liveSlides().forEach((s, i) => {
+      const ch = s.dataset.srcIdx !== undefined ? chunks[+s.dataset.srcIdx] : null;
+      const comment = ch ? ch.comment : '  <!' + '-- ========== NEW SLIDE ========== --' + '>';
+      let body = (ch && !s.dataset.edDirty) ? ch.body : serializeClean(s);
+      body = ensureActive(body, i === 0);
+      out += '\n' + (comment ? comment + '\n' : '') + body + '\n';
+    });
+    out += tail.replace(/^\s*\n/, '\n');
+    return out;
+  }
+
+  function downloadCopy() {
+    const dc = document.documentElement.cloneNode(true);
+    dc.querySelectorAll('[data-ed-ui]').forEach(n => n.remove());
+    dc.querySelectorAll('[data-ed-wrap]').forEach(w => w.replaceWith(w.textContent));
+    dc.querySelectorAll('[contenteditable]').forEach(n => {
+      n.removeAttribute('contenteditable'); n.removeAttribute('spellcheck');
+    });
+    dc.querySelectorAll('[data-ed-dirty], [data-src-idx]').forEach(n => {
+      delete n.dataset.edDirty; delete n.dataset.srcIdx;
+    });
+    dc.querySelector('body').classList.remove('ed-on', 'ed-dark');
+    const html = '<!DOCTYPE html>\n' + dc.outerHTML;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    a.download = decodeURIComponent(location.pathname.split('/').pop() || 'deck.html');
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    status('Downloaded updated copy');
+  }
+
+  async function doSave() {
+    if (saving) return;
+    saving = true;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    try {
+      if (!window.showOpenFilePicker) {
+        offerDownload('This browser saves a copy instead of writing in place. In-place saving needs Chrome or Edge.');
+        return;
+      }
+      const h = await getHandle();
+      const src = await (await h.getFile()).text();
+      const out = splice(src);
+      if (out == null) {
+        if (confirm('The file on disk has a different slide count than when this page loaded ' +
+            '(someone else edited it?). In-place merge is unsafe. Download an updated copy instead?')) downloadCopy();
+        return;
+      }
+      const w = await h.createWritable();
+      await w.write(out); await w.close();
+      // re-anchor against the file we just wrote
+      liveSlides().forEach((s, i) => { delete s.dataset.edDirty; s.dataset.srcIdx = i; });
+      baseCount = liveSlides().length;
+      structuralChanged = false;
+      markDirty(); renderRail();
+      status(justPicked ? 'Saved. Auto-save is now active.' : 'Saved');
+      setTimeout(() => status('Edit mode'), justPicked ? 4000 : 1500);
+      justPicked = false;
+    } catch (err) {
+      if (err && err.name === 'AbortError') { offerDownload('Could not save in place here. Download an updated copy instead?'); return; }
+      if (err && err.name === 'SecurityError') { status('Timed out waiting — click Save again'); return; }
+      if (err && /already active/i.test(err.message || '')) { status('A file dialog is already open. Finish it, then save again.'); return; }
+      console.error(err);
+      offerDownload('Save failed: ' + (err && err.message) + '. Download an updated copy instead?');
+    } finally {
+      saving = false;
+    }
+  }
+
+  /* ---------- init ---------- */
+  liveSlides().forEach((s, i) => s.dataset.srcIdx = i);
+  baseCount = liveSlides().length;
+  makeEditable(deck);
+  watchMutations();
+  const coreShow = window.show;
+  window.show = i => { coreShow(i); highlightThumb(); hideImgBar(); };
+  renderRail();
+  edShow(Math.max(0, curIdx()));
+  markDirty();
+})();
+</script>
+
+</body>
+</html>
