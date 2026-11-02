@@ -113,6 +113,8 @@ class TrainingConfig:
     lr: float = 1e-4
     epochs: int = 3
     batch_size: int = 64
+    #: Pin data preparation, holdout and batch order across training configurations.
+    seed: Optional[int] = None
     #: held-out fraction for the post-training collapse check (Tinker)
     val_frac: float = 0.05
     #: save and score a checkpoint every N steps (Tinker; 0 = final only)

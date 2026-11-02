@@ -101,6 +101,26 @@ def test_unknown_keys_and_bad_values_are_rejected() -> None:
 # -- the graph ----------------------------------------------------------------
 
 
+def test_finetune_seed_can_preserve_the_split_when_epochs_change() -> None:
+    def raw_finetune(*overrides: str) -> Node:
+        return next(
+            n
+            for n in graph("experiment=self_rec", *overrides).nodes
+            if n.id == "finetune.self_rec.none"
+        )
+
+    original = raw_finetune()
+    longer = raw_finetune("elicitation.training.epochs=5")
+    assert original.seed != longer.seed
+    pinned = raw_finetune(
+        "elicitation.training.epochs=5",
+        f"elicitation.training.seed={original.seed}",
+    )
+    assert pinned.seed == original.seed
+    zero = raw_finetune("elicitation.training.seed=0")
+    assert zero.seed == 0
+
+
 def _snapshot_signatures(docs: dict[str, Any]) -> set[tuple[Any, ...]]:
     """Each run of each config make_configs.py emitted, as a comparable signature."""
     paths: dict[str, tuple[Any, ...]] = {}

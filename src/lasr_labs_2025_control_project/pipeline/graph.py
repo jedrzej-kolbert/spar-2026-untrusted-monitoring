@@ -83,7 +83,9 @@ class Node:
 
     @property
     def seed(self) -> int:
-        """This node's seed: derived from its key, which holds the run seed."""
+        """Key-derived seed, unless a fine-tune explicitly pins its data split."""
+        if self.stage == "finetune" and "seed" in self.params["training"]:
+            return self.params["training"]["seed"]
         return int(digest({"seed_for": self.hash})[:8], 16)
 
     def record(self) -> dict[str, Any]:
@@ -324,6 +326,8 @@ class GraphBuilder:
                 deps["eval_honeypots"] = self.test_input("honeypots", transform)
         else:
             hyper["n_epochs"] = training.openai_n_epochs
+        if training.seed is not None:
+            hyper["seed"] = training.seed
         base_model = provider_free(cfg.models.U)
         name = checkpoint_name(arm_name, transform)
         params = {
