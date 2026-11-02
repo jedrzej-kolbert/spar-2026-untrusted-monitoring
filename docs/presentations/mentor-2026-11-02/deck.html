@@ -1412,10 +1412,24 @@
   .bullets-text p { color: #1a1a1a; font-size: inherit; margin: .5em 0; overflow-wrap: anywhere; }
   .bullets-text .bullets { font-size: inherit; }
   .split.fig-narrow { grid-template-columns: 1fr 2.4fr; }
-  .figures { min-width: 0; }
   /* Data figures must never be cropped. */
-  .split-image { background: none; }
+  .split-image { background: none; aspect-ratio: auto; }
   .split-image img { object-fit: contain; height: auto; }
+  /* Dark theme across the deck; plots stay on their own white background. */
+  .slide.dark h2 { color: #f5f5f3; }
+  .slide.dark .bullets, .slide.dark .bullets-text, .slide.dark .bullets-text p { color: #f5f5f3; }
+  .progress { background: #f5f5f3; }
+  .nav { color: #ccc; }
+  .slide:has(.figures) { padding: 4vh 3vw; }
+  .slide-inner:has(.figures) { max-width: 1500px; width: 100%; }
+  .split:has(.figures) { grid-template-columns: 1fr 3fr; gap: 1.5rem; align-items: center; margin-top: 1rem; }
+  .split:has(.figures.two) { grid-template-columns: 1fr 2fr; }
+  .figures { min-width: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem; }
+  .figures.two { grid-template-columns: repeat(2, 1fr); }
+  .figures.one { grid-template-columns: 1fr; margin-top: 1.5rem; }
+  .figures img { display: block; margin: auto; max-width: 100%; max-height: 40vh; border-radius: 6px; background: #fff; }
+  .figures.one img { max-height: 72vh; }
+  .figures.two img { max-height: 37vh; }
 </style>
 </head>
 <body>
@@ -1425,7 +1439,7 @@
 <div class="deck">
 
   <!-- ========== 1. Meeting 02 Nov Agenda ========== -->
-  <section class="slide active">
+  <section class="slide dark active">
     <div class="slide-inner">
       <h2>Meeting 02 Nov Agenda</h2>
       <ul class="bullets">
@@ -1442,7 +1456,7 @@
   </section>
 
   <!-- ========== 2. V3.1 migration ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>V3.1 migration</h2>
       <ul class="bullets">
@@ -1454,7 +1468,7 @@
   </section>
 
   <!-- ========== 3. V3.1 vs V4.1 attack success ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>V3.1 vs V4.1 attack success</h2>
       <div class="split fig-narrow">
@@ -1475,7 +1489,7 @@
   </section>
 
   <!-- ========== 4. How do base model compare? ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>How do base model compare?</h2>
       <div class="split">
@@ -1489,13 +1503,18 @@
             <li>It looks like because selfrec is bad and V4.1 is a better monitor the safety goes up</li>
           </ul>
         </div>
-        <div class="figures"></div>
+        <div class="figures two">
+          <img src="media/untrusted_collusion_none_base.png" alt="untrusted collusion none base">
+          <img src="media/trusted_monitor_none_base.png" alt="trusted monitor none base">
+          <img src="media/untrusted_monitor_none_base.png" alt="untrusted monitor none base">
+          <img src="media/safety_usefulness_all_monitors_none_base.png" alt="safety usefulness all monitors none base">
+        </div>
       </div>
     </div>
   </section>
 
   <!-- ========== 5. How do base model compare? - minified ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>How do base model compare? - minified</h2>
       <div class="split">
@@ -1507,13 +1526,20 @@
             <li>Paraphrased works as usual</li>
           </ul>
         </div>
-        <div class="figures"></div>
+        <div class="figures">
+          <img src="media/untrusted_collusion_minified_base.png" alt="untrusted collusion minified base">
+          <img src="media/untrusted_monitor_minified_base.png" alt="untrusted monitor minified base">
+          <img src="media/safety_usefulness_all_monitors_minified_base.png" alt="safety usefulness all monitors minified base">
+          <img src="media/untrusted_collusion_paraphrased_base.png" alt="untrusted collusion paraphrased base">
+          <img src="media/untrusted_monitor_paraphrased_base.png" alt="untrusted monitor paraphrased base">
+          <img src="media/safety_usefulness_all_monitors_paraphrased_base.png" alt="safety usefulness all monitors paraphrased base">
+        </div>
       </div>
     </div>
   </section>
 
   <!-- ========== 6. How is SFT comparing ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>How is SFT comparing</h2>
       <div class="split">
@@ -1526,15 +1552,25 @@
             <li>But safety for paraphrased is higher for V4.1 since it is worse at collusion and better at monitorng</li>
           </ul>
         </div>
-        <div class="figures"></div>
+        <div class="figures">
+          <img src="media/untrusted_collusion_none_sft.png" alt="untrusted collusion none sft">
+          <img src="media/untrusted_monitor_none_sft.png" alt="untrusted monitor none sft">
+          <img src="media/safety_usefulness_all_monitors_none_sft.png" alt="safety usefulness all monitors none sft">
+          <img src="media/untrusted_collusion_paraphrased_sft.png" alt="untrusted collusion paraphrased sft">
+          <img src="media/untrusted_monitor_paraphrased_sft.png" alt="untrusted monitor paraphrased sft">
+          <img src="media/safety_usefulness_all_monitors_paraphrased_sft.png" alt="safety usefulness all monitors paraphrased sft">
+        </div>
       </div>
     </div>
   </section>
 
   <!-- ========== 7. Why did V4.1 perform worse on SFT ========== -->
-  <section class="slide">
+  <section class="slide dark">
     <div class="slide-inner">
       <h2>Why did V4.1 perform worse on SFT</h2>
+      <div class="figures one">
+          <img src="media/sft_training_loss_by_epoch.png" alt="sft training loss by epoch">
+        </div>
     </div>
   </section>
 
