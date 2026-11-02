@@ -9,6 +9,7 @@ import json
 import posixpath
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ from lasr_labs_2025_control_project.pipeline import run as pipeline_run
 from lasr_labs_2025_control_project.pipeline.execute import (
     RunContext,
     basharena_runtime_config,
+    step_artifact,
 )
 from lasr_labs_2025_control_project.pipeline.graph import (
     ConfigError,
@@ -385,6 +387,23 @@ def test_rl_arms_rewrite_attacks_and_share_negatives() -> None:
     )
     with pytest.raises(ConfigError, match="attacks only"):
         build_graph(cfg)
+
+
+def test_offline_steps_are_not_linked_as_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import lasr_labs_2025_control_project.tracking as tracking
+
+    node = graph("experiment=self_rec").by_id()["game.none.base"]
+
+    class Unlogged:
+        @property
+        def qualified_name(self) -> str:
+            raise RuntimeError("offline artifacts have no entity")
+
+    ctx = SimpleNamespace(artifacts={node.hash: Unlogged()})
+    monkeypatch.setattr(tracking, "available", lambda: False)
+    assert step_artifact(node, ctx) is None  # type: ignore[arg-type]
 
 
 def test_monitor_settings_follow_transform_and_view() -> None:
