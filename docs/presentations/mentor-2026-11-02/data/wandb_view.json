@@ -1,0 +1,7 @@
+{
+  "url": "https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/untrusted-runs?nw=qvutgro4ivy",
+  "project": "spar-untrusted-monitoring-collusion/untrusted-runs",
+  "run_ids": ["sa1m07fr", "moap3ypn", "9ysfwv07"],
+  "verified_filter": "Metric(\"ID\") in ['sa1m07fr', 'moap3ypn', '9ysfwv07']",
+  "note": "The full V3.1 reference was not logged to W&B; this view excludes unrelated V3.1 dry runs."
+}

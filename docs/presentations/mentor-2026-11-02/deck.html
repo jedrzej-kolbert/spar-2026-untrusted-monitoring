@@ -1574,6 +1574,35 @@
     </div>
   </section>
 
+  <!-- ========== 8. V4.1 SFT — 5 epochs ========== -->
+  <section class="slide dark">
+    <div class="slide-inner">
+      <h2>V4.1 SFT — 5 epochs</h2>
+      <div class="split">
+        <div class="split-text bullets-text">
+          <ul class="bullets">
+            <li>It does seem that we can reach the same ROC, AUC at 5 epochs.</li>
+          </ul>
+          <table style="width:100%; border-collapse:collapse; margin:1.5rem 0; font-size:.95rem; line-height:1.5;">
+            <caption style="text-align:left; margin-bottom:.6rem;">Test collusion AUROC</caption>
+            <thead><tr><th scope="col" style="text-align:left; padding:.4rem 0;">Checkpoint</th><th scope="col" style="text-align:right;">AUROC</th></tr></thead>
+            <tbody>
+              <tr style="border-top:1px solid #555;"><td style="padding:.5rem 0;">V3.1 · previous final<br>(3 epochs)</td><td style="text-align:right;">0.9790</td></tr>
+              <tr style="border-top:1px solid #555;"><td style="padding:.5rem 0;">V4.1 · previous final<br>(3 epochs)</td><td style="text-align:right;">0.8678</td></tr>
+              <tr style="border-top:1px solid #555;"><td style="padding:.5rem 0;">V4.1 · new run<br>epoch 2.7 (step 27)</td><td style="text-align:right;">0.8572</td></tr>
+              <tr style="border-top:1px solid #555;"><td style="padding:.5rem 0;">V4.1 · new run<br>epoch 5 (step 50)</td><td style="text-align:right;">0.9804</td></tr>
+            </tbody>
+          </table>
+          <p><a href="https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/untrusted-runs?nw=qvutgro4ivy" target="_blank" rel="noopener">W&amp;B — 3 V4.1 training runs</a></p>
+          <p style="font-size:.8rem; margin-top:1rem;">Raw code · V3.1: 114 attacks; V4.1: 309 attacks · 246 honeypots each</p>
+        </div>
+        <div class="figures one">
+          <img src="media/sft_five_epoch_roc_comparison.png" alt="Raw-code collusion ROC comparison: V3.1 previous final AUROC 0.9790; V4.1 previous final 0.8678; V4.1 new epoch 2.7 checkpoint 0.8572; V4.1 new epoch 5 final 0.9804.">
+        </div>
+      </div>
+    </div>
+  </section>
+
 </div>
 
 <div class="nav">
