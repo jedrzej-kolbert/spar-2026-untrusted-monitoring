@@ -533,7 +533,7 @@ def run_monitor(node: Node, ctx: RunContext) -> Output:
         tracker,
         seed=node.seed,
         temperature=p["temperature"],
-        max_connections=ctx.cfg.generation.max_connections,
+        max_connections=ctx.cfg.generation.monitor_max_connections,
     )
     return Output(path=str(out))
 
