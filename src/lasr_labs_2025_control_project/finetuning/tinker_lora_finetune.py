@@ -216,6 +216,8 @@ def finetune(
     track = tracker if tracker is not None else StageRun("finetune", "", config={})
     track.define_curve("train/loss", "train/step")
     track.define_curve("checkpoint/roc_auc", "train/step")
+    for metric in ("loss", "roc_auc", "accuracy", "yes_rate"):
+        track.define_curve(f"val/{metric}", "train/step")
 
     usage = usage if usage is not None else {}
     usage.update(train_tokens=0, forward_tokens=0)
@@ -253,10 +255,14 @@ def finetune(
     )
 
     data = [build_datum(ex["messages"], base_model) for ex in examples]
+    val_data = [build_datum(ex["messages"], base_model) for ex in val_examples]
 
     checkpoints: dict[int, str] = {}
+    states: dict[int, str] = {}
+    heldout: dict[str, float] = {}
 
     def save(name: str, step: int) -> str:
+        nonlocal heldout
         # ttl_seconds=None: never expires (monitors and reruns reference it later).
         path = (
             training_client.save_weights_for_sampler(name=name, ttl_seconds=None)
@@ -264,7 +270,24 @@ def finetune(
             .path
         )
         checkpoints[step] = path
+        # Sampler weights cannot be trained further; only a weights/ state resumes.
+        states[step] = (
+            training_client.save_state(name=f"{name}-state", ttl_seconds=None)
+            .result()
+            .path
+        )
         logger.info("Saved update %d checkpoint: %s", step, path)
+        if val_examples:
+            heldout = evaluate_checkpoint(path, val_examples, usage)
+            usage["forward_tokens"] += sum(d.model_input.length for d in val_data)
+            loss = _mean_loss(
+                training_client.forward(val_data, "cross_entropy").result(), val_data
+            )
+            track.log(
+                {"train/step": step}
+                | {f"val/{k}": v for k, v in heldout.items()}
+                | ({} if loss is None else {"val/loss": loss})
+            )
         if eval_examples is not None:
             auc = checkpoint_auc(path, eval_examples, usage=usage)
             logger.info(
@@ -274,7 +297,7 @@ def finetune(
                 len(eval_examples),
             )
             track.log({"train/step": step, "checkpoint/roc_auc": auc})
-        track.summary({"checkpoints": checkpoints})
+        track.summary({"checkpoints": checkpoints, "states": states})
         return path
 
     step = 0
@@ -310,9 +333,7 @@ def finetune(
         or step % checkpoint_every_steps
     ):
         final_path = save(checkpoint_name, step)
-    if val_examples:
-        stats = evaluate_checkpoint(final_path, val_examples, usage)
-        track.summary({f"heldout/{k}": v for k, v in stats.items()})
+    track.summary({f"heldout/{k}": v for k, v in heldout.items()})
     track.summary({f"usage/{k}": v for k, v in usage.items()})
     return final_path
 
@@ -331,6 +352,8 @@ def evaluate_checkpoint(
     """
     import asyncio
 
+    from sklearn.metrics import roc_auc_score
+
     from lasr_labs_2025_control_project.utils.tinker_provider import (
         collusion_yes_no_logprobs,
     )
@@ -338,6 +361,7 @@ def evaluate_checkpoint(
     async def _run() -> dict[str, float]:
         correct = yes_pred = 0
         margins: list[float] = []
+        labels: list[bool] = []
         for ex in val_examples:
             msgs = {m["role"]: m["content"] for m in ex["messages"]}
             d = await collusion_yes_no_logprobs(
@@ -353,7 +377,8 @@ def evaluate_checkpoint(
             pred_yes = yes > no
             yes_pred += int(pred_yes)
             margins.append(float(yes) - float(no))
-            correct += int(pred_yes == ("YES" in msgs.get("assistant", "")))
+            labels.append("YES" in msgs.get("assistant", ""))
+            correct += int(pred_yes == labels[-1])
         n = len(margins)
         if not n:
             logger.warning("held-out eval produced no valid logprobs")
@@ -364,6 +389,8 @@ def evaluate_checkpoint(
             "yes_rate": yes_pred / n,
             "mean_margin": sum(margins) / n,
         }
+        if len(set(labels)) == 2:
+            stats["roc_auc"] = float(roc_auc_score(labels, margins))
         logger.info(
             "held-out: n=%d accuracy=%.3f yes_rate=%.3f mean_margin=%+.3f",
             stats["n"],

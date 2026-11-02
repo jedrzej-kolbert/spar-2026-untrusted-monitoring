@@ -162,6 +162,37 @@ def test_checkpoint_timing_and_auc():
         assert auc.call_args.args[0] == final_path
         for call in client.save_weights_for_sampler.call_args_list:
             assert call.kwargs["ttl_seconds"] is None
+        assert client.save_state.call_count == len(expected_steps)
+
+
+def test_val_set_logged_at_each_checkpoint():
+    client = Mock()
+    tracker = Mock()
+    stats = {"n": 2, "accuracy": 0.5, "yes_rate": 0.5, "roc_auc": 0.9}
+    with (
+        patch("tinker.ServiceClient") as service,
+        patch.object(ft, "build_datum"),
+        patch.object(ft, "_mean_loss", return_value=0.1),
+        patch.object(ft, "evaluate_checkpoint", return_value=stats) as evaluate,
+    ):
+        service.return_value.create_lora_training_client.return_value = client
+        ft.finetune(
+            [{"messages": []}] * 4,
+            epochs=2,
+            batch_size=2,
+            val_frac=0.5,
+            checkpoint_every_steps=1,
+            tracker=tracker,
+        )
+    assert evaluate.call_count == client.forward.call_count == 2
+    logged = [
+        call.args[0]
+        for call in tracker.log.call_args_list
+        if "val/loss" in call.args[0]
+    ]
+    assert [row["train/step"] for row in logged] == [1, 2]
+    assert logged[0]["val/roc_auc"] == 0.9
+    tracker.summary.assert_any_call({f"heldout/{k}": v for k, v in stats.items()})
 
 
 def test_cli_inputs(tmp_path):
