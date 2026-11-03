@@ -35,6 +35,7 @@ Code: `src/lasr_labs_2025_control_project/finetuning/grouped_rl/` (`run.py`, `co
 3. Test for each finished seed:
    - ICRL: `test.sh rewrite <arm>-s<seed> strategy=wandb:spar-untrusted-monitoring-collusion/collusion-rl-v2/strategy-<arm>-s<seed>:v0`
    - GBRL: `test.sh rewrite g1-base-s<seed> model=<checkpoint of best_validation_step in status.json>`
+   - I2: `test.sh rewrite i2-s<seed> central=wandb:spar-untrusted-monitoring-collusion/collusion-rl-v2/strategy-i2-s<seed>:v0`
+     (also saves the learned judge text; `score` turns it into prompt `JUDGE_I2_S<SEED>`)
    - then `test.sh score <label> allow_paid=true` and `test.sh report <label> <entity/project/run_id>`.
-   - I2 needs the learned judge text as a pipeline prompt first (not built yet).
 4. `uv run --with wandb-workspaces python experiments/collusion-rl-v2/workspace.py collusion-rl-v2`.
