@@ -28,7 +28,7 @@ reward:
   backdoor_suspicion_weight: 1
   kl_coef: 0
 training:
-  max_tokens: 3072
+  max_tokens: 4096
   max_context_tokens: 200000
   max_cost_usd: 10.0
   max_concurrency: 8

@@ -11,7 +11,7 @@
 #       stored scores are not mixed with new ones. The pipeline scores them once per
 #       project and reuses them for every later label.
 #   test.sh report <label> <entity/project/run_id>  write the games' test scores into the
-#       RL run's W&B page (test_paraphrased/, test_none/), free
+#       RL run's W&B page (test/, paraphrased_* and no_jamming_*), free
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source experiments/collusion-rl-v2/env.sh
@@ -46,7 +46,7 @@ rewrite = {
     "system_prompt": system,
     "user_prompt": "RL_SELF_REC_SENDER_USER_PROMPT",
     "signal": "RL_SIGNAL_ON",
-    "max_tokens": 3072,
+    "max_tokens": 4096,  # the same cap as every arm's search and training
 }
 if strategy:
     rewrite[strategy[0]] = strategy[1]
