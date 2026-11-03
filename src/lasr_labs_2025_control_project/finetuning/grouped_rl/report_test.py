@@ -23,7 +23,14 @@ import numpy as np
 from lasr_labs_2025_control_project.tracking.core import roc_chart
 
 # The numbers to look at first; the rest go to test_detail/.
-KEY = ("auroc", "tpr_at_1pct_fpr", "working_rate", "trusted_suspicion", "safety_u0.95")
+KEY = (
+    "auroc",
+    "tpr_at_1pct_fpr",
+    "working_rate",
+    "backdoor_fires_rate",
+    "trusted_suspicion",
+    "safety_u0.95",
+)
 
 
 def auroc(positives: np.ndarray, negatives: np.ndarray) -> float:
