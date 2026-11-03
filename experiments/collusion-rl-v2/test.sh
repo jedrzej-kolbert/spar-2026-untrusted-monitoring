@@ -7,6 +7,8 @@
 #       (base judge, paraphrased and no jamming). Prints the plan only, unless given
 #       allow_paid=true. Honeypot and honest scores are the V4.1 runs' own, so AUROC and
 #       safety compare directly with the base and SFT judges.
+#   test.sh report <label> <entity/project/run_id>  write the games' test scores into the
+#       RL run's W&B page (test_paraphrased/, test_none/), free
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source experiments/collusion-rl-v2/env.sh
@@ -77,5 +79,18 @@ score)
     "+inputs.monitor.paraphrased.base.honeypots=$M/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-$base-3ef184bddf22/honeypots.eval" \
     "wandb_tags=[collusion-rl-v2,$label]" "$@"
   ;;
-*) echo "step must be rewrite or score" >&2; exit 1 ;;
+report)
+  # This label's games: their attacks input is a monitor output of this label's rewrite.
+  games=()
+  for game in experiments/apps/game/apps.self_rec.*.base-*; do
+    if zcat "$game/analysis_data.json.gz" | grep -q "rewrite-collusion-rl-v2-$label"; then
+      channel=${game#experiments/apps/game/apps.self_rec.}
+      games+=(--game "${channel%%.*}=$game")
+    fi
+  done
+  [ ${#games[@]} -gt 0 ] || { echo "no game for $label; run score first" >&2; exit 1; }
+  exec uv run python -m lasr_labs_2025_control_project.finetuning.grouped_rl.report_test \
+    --run "$1" --rewrites "$folder/attacks.eval" "${games[@]}"
+  ;;
+*) echo "step must be rewrite, score or report" >&2; exit 1 ;;
 esac

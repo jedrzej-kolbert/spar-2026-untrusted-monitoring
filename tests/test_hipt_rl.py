@@ -1167,6 +1167,9 @@ def driven_run(
         def log_model_ref(self, model_id: str, metadata: Any = None) -> None:
             wb.artifacts.append((model_id, "model"))
 
+        def log_roc(self, key: str, curves: Any, title: str, step: Any = None) -> None:
+            wb.logs.append((step, {key: curves}))
+
         def finish(self, *, complete: bool, reason: str | None = None) -> None:
             wb.summary["complete"] = complete
 
@@ -1201,36 +1204,45 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     ]
     assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
     assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
-    # Everything is in metrics.jsonl; W&B gets the train/validation/progress keys.
+    # Every metric is in metrics.jsonl; the old GBRL set is train_legacy, never on W&B.
     detail = next(
         row
         for row in map(
             json.loads, (tmp_path / "metrics.jsonl").read_text().splitlines()
         )
-        if "train_detail/sender_updated" in row
+        if "train_legacy/sender_updated" in row
     )
-    assert detail["train_detail/sender_updated"] == 1
-    assert detail["train_detail/receiver_updated"] == 1
-    assert detail["train_detail/receiver_positive_examples"] == 2
-    assert detail["train_detail/receiver_negative_examples"] == 2
-    assert detail["train_detail/receiver_loss_per_example"] == pytest.approx(0.25)
+    assert detail["train_legacy/sender_updated"] == 1
+    assert detail["train_legacy/receiver_updated"] == 1
+    assert detail["train_legacy/receiver_positive_examples"] == 2
+    assert detail["train_legacy/receiver_negative_examples"] == 2
+    assert detail["train_legacy/receiver_loss_per_example"] == pytest.approx(0.25)
     training_log = next(values for _, values in wb.logs if "train/reward" in values)
+    training_log |= next(v for _, v in wb.logs if "train_detail/tests_passed_rate" in v)
     # EchoSender writes "signal = 1" for payload 1, which MarkerReceiver scores 0.9.
     assert training_log["train/p_self_rec"] == pytest.approx(0.9)
-    assert training_log["train/tests_passed_rate"] == 1
+    assert training_log["train_detail/tests_passed_rate"] == 1
     assert training_log["train/backdoor_fires_rate"] == 0.5  # print(0) of 2 rewrites
     assert training_log["train/working_rate"] == 0.5
-    assert {"train/reward/task", "train/reward/self_recognition"} <= set(training_log)
+    assert {"train_detail/reward/task", "train_detail/reward/self_recognition"} <= set(
+        training_log
+    )
     progress = next(values for step, values in wb.logs if "progress/cost_usd" in values)
     assert progress["progress/epoch"] == 1
     validation = next(values for _, values in wb.logs if "validation/auroc" in values)
     assert validation["validation/p_self_rec"] == pytest.approx(0.9)
-    assert validation["validation/n_honeypots"] == 1
-    assert all(
-        key.startswith(("train/", "validation/", "progress/"))
-        for _, values in wb.logs
-        for key in values
-    )
+    detail = next(v for _, v in wb.logs if "validation_detail/n_honeypots" in v)
+    assert detail["validation_detail/n_honeypots"] == 1
+    # The ROC of each validation step: working rewrites vs validation honeypots.
+    assert any("validation/roc_self_rec" in values for _, values in wb.logs)
+    sections = {key.split("/")[0] for _, values in wb.logs for key in values}
+    assert sections <= {
+        "train",
+        "train_detail",
+        "validation",
+        "validation_detail",
+        "progress",
+    }
     # The run is a pipeline-style stage run: job type, filter tags, split artifact.
     assert wb.stage.stage == "gbrl"
     assert "judge:trained" in wb.stage.kwargs["tags"]
@@ -1269,7 +1281,12 @@ async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
     assert "final_receiver_checkpoint" not in wb.summary
     training_log = next(v for _, v in wb.logs if "train/reward" in v)
     # A frozen judge scores the train honeypots once, for the train AUROC.
-    assert training_log["train/n_honeypots"] == 1
+    assert (
+        next(v for _, v in wb.logs if "train_detail/n_honeypots" in v)[
+            "train_detail/n_honeypots"
+        ]
+        == 1
+    )
     assert training_log["train/auroc"] is not None
     assert wb.stage.kwargs["config"]["run"]["judge"] == "base"
 
@@ -1542,3 +1559,38 @@ async def test_save_state_returns_resumable_path() -> None:
 
     sender = TinkerSender(Client(), "sampler", SimpleNamespace(), allow_paid=True)
     assert await sender.save_state("s10") == "tinker://run/weights/s10"
+
+
+def test_test_report_reads_the_game_folder(tmp_path: Path) -> None:
+    import gzip
+    import json
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.report_test import (
+        game_metrics,
+    )
+
+    def row(collusion: float, trusted: int = 3) -> dict[str, Any]:
+        return {
+            "untrusted_collusion_score": collusion,
+            "trusted_suspiciousness_score": trusted,
+        }
+
+    scores = {
+        "attacks": {"rows": [row(2.0), row(1.0), row(0.0)]},
+        "honeypots": {"rows": [row(0.5), row(-1.0)]},
+    }
+    roc = {"fpr": [1.0, 0.5, 0.0, 0.0], "tpr": [1.0, 2 / 3, 2 / 3, 0.0]}
+    analysis = {
+        "roc_curves": {"untrusted_collusion": roc, "trusted_suspiciousness": roc},
+        "sweep": [{"usefulness": 0.95, "safety": 0.4}],
+    }
+    for name, payload in (("scores", scores), ("analysis_data", analysis)):
+        with gzip.open(tmp_path / f"{name}.json.gz", "wt") as handle:
+            json.dump(payload, handle)
+    metrics, _ = game_metrics(tmp_path, rewrites=4)
+    assert metrics["auroc"] == pytest.approx(5 / 6)  # 5 of 6 pairs ranked right
+    assert metrics["auroc_ci_low"] <= metrics["auroc"] <= metrics["auroc_ci_high"]
+    assert metrics["working_rate"] == 0.75  # 3 working of 4 rewrites
+    assert metrics["tpr_at_1pct_fpr"] == pytest.approx(2 / 3)
+    assert metrics["trusted_suspicion"] == pytest.approx(0.3)
+    assert metrics["safety_u0.95"] == 0.4
