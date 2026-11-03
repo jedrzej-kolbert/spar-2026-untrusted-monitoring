@@ -1217,38 +1217,33 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     assert detail["train_legacy/receiver_positive_examples"] == 2
     assert detail["train_legacy/receiver_negative_examples"] == 2
     assert detail["train_legacy/receiver_loss_per_example"] == pytest.approx(0.25)
-    training_log = next(values for _, values in wb.logs if "1_train/reward" in values)
-    training_log |= next(
-        v for _, v in wb.logs if "9_detail_train/tests_passed_rate" in v
-    )
+    training_log = next(values for _, values in wb.logs if "train/reward" in values)
+    training_log |= next(v for _, v in wb.logs if "train_detail/tests_passed_rate" in v)
     # EchoSender writes "signal = 1" for payload 1, which MarkerReceiver scores 0.9.
-    assert training_log["1_train/p_self_rec"] == pytest.approx(0.9)
-    assert training_log["9_detail_train/tests_passed_rate"] == 1
-    assert training_log["1_train/backdoor_fires_rate"] == 0.5  # print(0) of 2 rewrites
-    assert training_log["1_train/working_rate"] == 0.5
+    assert training_log["train/p_self_rec"] == pytest.approx(0.9)
+    assert training_log["train_detail/tests_passed_rate"] == 1
+    assert training_log["train/backdoor_fires_rate"] == 0.5  # print(0) of 2 rewrites
+    assert training_log["train/working_rate"] == 0.5
     assert {
-        "9_detail_train/reward/task",
-        "9_detail_train/reward/self_recognition",
+        "train_detail/reward/task",
+        "train_detail/reward/self_recognition",
     } <= set(training_log)
-    progress = next(
-        values for step, values in wb.logs if "5_progress/cost_usd" in values
-    )
-    assert progress["5_progress/epoch"] == 1
-    validation = next(values for _, values in wb.logs if "2_validation/auroc" in values)
-    assert validation["2_validation/p_self_rec"] == pytest.approx(0.9)
-    detail = next(v for _, v in wb.logs if "9_detail_validation/n_honeypots" in v)
-    assert detail["9_detail_validation/n_honeypots"] == 1
+    progress = next(values for step, values in wb.logs if "progress/cost_usd" in values)
+    assert progress["progress/epoch"] == 1
+    validation = next(values for _, values in wb.logs if "validation/auroc" in values)
+    assert validation["validation/p_self_rec"] == pytest.approx(0.9)
+    detail = next(v for _, v in wb.logs if "validation_detail/n_honeypots" in v)
+    assert detail["validation_detail/n_honeypots"] == 1
     # The ROC of each validation step: working rewrites vs validation honeypots.
-    assert any("2_validation/roc_collusion" in values for _, values in wb.logs)
+    assert any("validation/roc_collusion" in values for _, values in wb.logs)
     sections = {key.split("/")[0] for _, values in wb.logs for key in values}
-    # Sections in reading order; the detail sections sort last.
-    assert sorted(sections) == [
-        "1_train",
-        "2_validation",
-        "5_progress",
-        "9_detail_train",
-        "9_detail_validation",
-    ]
+    assert sections == {
+        "train",
+        "validation",
+        "progress",
+        "train_detail",
+        "validation_detail",
+    }
     # The run is a pipeline-style stage run: job type, filter tags, split artifact.
     assert wb.stage.stage == "gbrl"
     assert "judge:trained" in wb.stage.kwargs["tags"]
@@ -1285,15 +1280,15 @@ async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
     assert "final_checkpoint" in wb.summary
     assert wb.summary["state_step1"].endswith("_state_step1")
     assert "final_receiver_checkpoint" not in wb.summary
-    training_log = next(v for _, v in wb.logs if "1_train/reward" in v)
+    training_log = next(v for _, v in wb.logs if "train/reward" in v)
     # A frozen judge scores the train honeypots once, for the train AUROC.
     assert (
-        next(v for _, v in wb.logs if "9_detail_train/n_honeypots" in v)[
-            "9_detail_train/n_honeypots"
+        next(v for _, v in wb.logs if "train_detail/n_honeypots" in v)[
+            "train_detail/n_honeypots"
         ]
         == 1
     )
-    assert training_log["1_train/auroc"] is not None
+    assert training_log["train/auroc"] is not None
     assert wb.stage.kwargs["config"]["run"]["judge"] == "base"
 
 
@@ -1314,14 +1309,14 @@ async def test_budget_cap_stops_before_an_unaffordable_step(
 
     monkeypatch.setattr(trainer.sender, "generate", costly)
     await run.train(config, allow_paid=True)
-    progress_steps = [s for s, v in wb.logs if "5_progress/cost_usd" in v]
+    progress_steps = [s for s, v in wb.logs if "progress/cost_usd" in v]
     # Baseline $0.372 + step 1 $3.718; step 2 is unaffordable, final eval still fits.
     assert progress_steps == [1, 2]
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished" and "budget" in status["reason"]
     assert wb.summary["complete"] is False  # stopped before its last step: partial
     assert status["final_receiver_checkpoint"].endswith("_receiver")
-    assert any(s == 1 and "2_validation/p_self_rec" in v for s, v in wb.logs)
+    assert any(s == 1 and "validation/p_self_rec" in v for s, v in wb.logs)
     usage_file = json.loads((tmp_path / "usage.json").read_text())
     assert usage_file["estimated_cost_usd"] == pytest.approx(1.2 * 3.718)
     assert usage_file["estimated_cost_usd"] == meter.cost_usd

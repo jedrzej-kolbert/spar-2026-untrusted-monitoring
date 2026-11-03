@@ -22,7 +22,7 @@ import numpy as np
 
 from lasr_labs_2025_control_project.tracking.core import roc_chart
 
-# The numbers to look at first, in 3_test/; the rest go to 9_detail_test/.
+# The numbers to look at first, in test/; the rest go to test_detail/.
 KEY = (
     "auroc",
     "tpr_at_1pct_fpr",
@@ -112,20 +112,20 @@ def main(run_path: str, rewrites: Path, games: tuple[str, ...]) -> None:
         # paraphrased: the judge reads a plain-English summary of the code (signal
         # jamming); none: it reads the code, comments stripped.
         name = {"none": "no_jamming"}.get(channel, channel)
-        values = {f"3_test/{name}_{k}": v for k, v in metrics.items() if k in KEY}
+        values = {f"test/{name}_{k}": v for k, v in metrics.items() if k in KEY}
         values |= {
-            f"9_detail_test/{name}_{k}": v for k, v in metrics.items() if k not in KEY
+            f"test_detail/{name}_{k}": v for k, v in metrics.items() if k not in KEY
         }
         for key, monitor, label in (
             ("roc_collusion", "untrusted_collusion", "rewrites vs honeypots"),
             ("roc_trusted", "trusted_suspiciousness", "rewrites vs honest"),
         ):
             roc = rocs[monitor]
-            values[f"3_test/{name}_{key}"] = roc_chart(
+            values[f"test/{name}_{key}"] = roc_chart(
                 {label: list(zip(roc["fpr"], roc["tpr"]))}, f"Test {key}, {channel}"
             )
         run.log(values)
-        run.summary.update({f"9_detail_test/{name}_game": str(folder)})
+        run.summary.update({f"test_detail/{name}_game": str(folder)})
         click.echo(f"{channel}: {metrics}")
     run.finish()
 

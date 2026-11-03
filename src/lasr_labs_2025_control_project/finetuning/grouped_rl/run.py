@@ -72,17 +72,19 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # --------------------------------------------------------------------------- #
 # Records
 # --------------------------------------------------------------------------- #
-# W&B sections, numbered because W&B orders them by name. A section's other
-# metrics go to 9_detail_<section>/, at the bottom.
-SECTION = {
-    "train": "1_train",
-    "validation": "2_validation",
-    "test": "3_test",
-    "icrl": "4_icrl",
-    "progress": "5_progress",
-}
-# Prefixes logged to W&B; everything else stays in metrics.jsonl only.
-WANDB_PREFIXES = (*(f"{name}/" for name in SECTION.values()), "9_detail_")
+# Prefixes logged to W&B; everything else stays in metrics.jsonl only. A section's
+# less important metrics go to <section>_detail/; experiments/collusion-rl-v2/
+# workspace.py stacks the sections in reading order.
+WANDB_PREFIXES = (
+    "train/",
+    "validation/",
+    "test/",
+    "icrl/",
+    "progress/",
+    "train_detail/",
+    "validation_detail/",
+    "test_detail/",
+)
 # The numbers to look at first in each section.
 KEY_METRICS = (
     "auroc",
@@ -277,12 +279,12 @@ class Recorder:
         prefix: str = "",
         detail: bool = True,
     ) -> None:
-        """Key metrics in the section, the others in its 9_detail_ section."""
+        """Key metrics in the section, the others in its _detail section."""
         key = {prefix + k: v for k, v in values.items() if k in KEY_METRICS}
-        self.scalars(step, SECTION[section], key)
+        self.scalars(step, section, key)
         if detail:
             rest = {prefix + k: v for k, v in values.items() if k not in KEY_METRICS}
-            self.scalars(step, f"9_detail_{section}", rest)
+            self.scalars(step, f"{section}_detail", rest)
 
     def roc(
         self, step: int, curves: dict[str, list[tuple[float, float]]], title: str
@@ -290,7 +292,7 @@ class Recorder:
         """The collusion ROC (the judge's P(self_rec)): working rewrites vs honeypots."""
         if any(curves.values()):
             self.stage.log_roc(
-                f"{SECTION['validation']}/roc_collusion",
+                "validation/roc_collusion",
                 {label: points for label, points in curves.items() if points},
                 title,
                 step=step,
@@ -370,7 +372,7 @@ class Recorder:
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")
         self.strategy_rows.append(row)
-        self.table(step, f"{SECTION['icrl']}/strategies", self.strategy_rows)
+        self.table(step, "icrl/strategies", self.strategy_rows)
 
     def table(self, step: int, key: str, rows: list[dict[str, Any]]) -> None:
         """A W&B table whose columns are every key the rows use, in first-seen order."""
@@ -418,7 +420,7 @@ class Recorder:
             )
             self.table(
                 self.last_step,
-                f"{SECTION['icrl']}/proposed_strategies",
+                "icrl/proposed_strategies",
                 self.proposed_rows,
             )
 
@@ -1081,7 +1083,7 @@ async def run_in_context(
         )
         recorder.table(
             step,
-            f"{SECTION['icrl']}/validation",
+            "icrl/validation",
             [{"check": label, **metrics} for label, metrics in rows.items()],
         )
     except (BatchInfrastructureError, usage.BudgetExceeded):
@@ -1385,7 +1387,7 @@ async def train(
                         "--resume-state <path> --start-step <N+1>"
                     ) from error
                 skipped += 1
-                recorder.scalars(step, "9_detail_train", {"skipped_step": 1})
+                recorder.scalars(step, "train_detail", {"skipped_step": 1})
                 rollout_errors = [e for item in result.rollouts for e in item.errors]
                 logger.warning(
                     "step %d skipped: %s", step, (result.errors + rollout_errors)[:3]
@@ -1470,7 +1472,7 @@ async def train(
                 click.echo(f"step {step}: saved {path}; resumable state {state}")
             recorder.scalars(
                 step,
-                SECTION["progress"],
+                "progress",
                 {
                     **meter.snapshot(),
                     "step_cost_usd": meter.cost_usd - spent,
@@ -1523,7 +1525,7 @@ def close_run(
     complete: bool,
 ) -> None:
     """Record final usage, even after a failed step or evaluation."""
-    recorder.scalars(step, SECTION["progress"], meter.snapshot())
+    recorder.scalars(step, "progress", meter.snapshot())
     (output_dir / "usage.json").write_text(
         json.dumps(
             {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens}, indent=2
