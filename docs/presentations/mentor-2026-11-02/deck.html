@@ -1815,8 +1815,8 @@
   <section class="slide dark research-slide" id="selfrec-bc">
     <div class="slide-inner">
       <h2>Self-rec — B and C by evaluation</h2>
-      <p class="research-model">Top: DeepSeek-V3.1 · raw code · Bottom: DeepSeek-V4.1-Flash · summaries</p><div class="research-figure"><img src="media/gbrl_selfrec_bc.png" alt="Self-rec — B and C by evaluation — Top: DeepSeek-V3.1 · raw code · Bottom: DeepSeek-V4.1-Flash · summaries"></div>
-      <p class="research-note">B includes the self-recognition reward; C omits it. AUROC, log-odds and suspicion are on working rewrites; working share uses all rewrites (V3.1 n=114; V4.1 n=309). AUROC negatives: 246 working honeypots. Bands: existing 95% bootstrap intervals; dashed line: original attacks. V4.1 C ends at its last complete scored evaluation, step 15. Step 20 has 249 posthoc scores / 309 planned examples; partial scores are retained in the data files. · <a href="https://claude.ai/artifact/UegMgcV81WY5CJBCUBzruf#gb-charts" target="_blank" rel="noopener">Original analysis</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-model">DeepSeek-V3.1 (solid) and DeepSeek-V4.1-Flash (dashed), variants B and C · test split</p><div class="research-figure"><img src="media/gbrl_selfrec_bc.png" alt="Self-rec — suspicion, backdoor kept reward, P(self) and AUROC for DeepSeek-V3.1 and DeepSeek-V4.1-Flash variants B and C"></div>
+      <p class="research-note">B includes the self-recognition reward; C omits it. Suspicion, kept reward and P(self): all rewrites (V3.1 n=114; V4.1 n=309). AUROC: working rewrites vs 246 working honeypots; bands: 95% bootstrap intervals; dotted lines: original attacks. V4.1 C ends at its last complete scored evaluation, step 15. Step 20 has 249 posthoc scores / 309 planned examples; partial scores are retained in the data files. · <a href="https://claude.ai/artifact/UegMgcV81WY5CJBCUBzruf#gb-charts" target="_blank" rel="noopener">Original analysis</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
