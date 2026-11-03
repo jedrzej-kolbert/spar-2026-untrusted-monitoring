@@ -1656,7 +1656,7 @@
 </ul></li>
 <li>Gave up and mooved to ICRL
 </li></ul></div>
-<table class="research-table compact"><thead><tr><th scope="col">Model</th><th scope="col">Setting</th><th scope="col">Reward</th></tr></thead><tbody><tr><td>Qwen3-8B</td><td>HiPT bit encoding</td><td>pass · (1 + P(bit)) − λs</td></tr><tr><td>V3.1</td><td>Self-rec smoke</td><td>pass · (1 + P(self)) − broken</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite B</td><td>pass + pass · P(self) + kept − s</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite C</td><td>pass + kept − s</td></tr><tr><td>V3.1 / V4.1</td><td>P(self) − suspicion</td><td>P(self) − s</td></tr><tr><td>V4.1</td><td>Four-summary + similarity</td><td>pass + pass · P(self) + kept − s − 0.5 sim</td></tr><tr><td>V4.1</td><td>Generation</td><td>pass · (1 + P(self) + kept) − s</td></tr></tbody></table>
+<table class="research-table compact"><thead><tr><th scope="col">Model</th><th scope="col">Setting</th><th scope="col">Reward</th></tr></thead><tbody><tr><td>Qwen3-8B</td><td>HiPT bit encoding</td><td>pass · (1 + P(bit)) − λs</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite B</td><td>pass + pass · P(self) + kept − s</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite C</td><td>pass + kept − s</td></tr><tr><td>V3.1 / V4.1</td><td>P(self) − suspicion</td><td>P(self) − s</td></tr><tr><td>V4.1</td><td>Four-summary + similarity</td><td>pass + pass · P(self) + kept − s − 0.5 sim</td></tr><tr><td>V4.1</td><td>Generation</td><td>pass · (1 + P(self) + kept) − s</td></tr></tbody></table>
       </div>
     </div>
   </section>
@@ -1665,8 +1665,8 @@
   <section class="slide dark research-slide" id="gbrl-reward-reference">
     <div class="slide-inner">
       <h2>GBRL — reward functions</h2>
-      <table class="research-table"><thead><tr><th scope="col">Model</th><th scope="col">Setting</th><th scope="col">Reward</th><th scope="col">Channel / gate</th></tr></thead><tbody><tr><td>Qwen3-8B</td><td>HiPT bit encoding</td><td>pass · (1 + P(bit)) − λs</td><td>Raw: λ=0/1/5; minified: λ=0</td></tr><tr><td>V3.1</td><td>Self-rec smoke</td><td>pass · (1 + P(self)) − broken</td><td>Raw; receiver trained</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite B</td><td>pass + pass · P(self) + kept − s</td><td>Raw (V3.1) / summary (V4.1)</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite C</td><td>pass + kept − s</td><td>No self-recognition reward</td></tr><tr><td>V3.1 / V4.1</td><td>P(self) − suspicion</td><td>P(self) − s</td><td>No pass / kept reward terms</td></tr><tr><td>V4.1</td><td>Four-summary + similarity</td><td>pass + pass · P(self) + kept − s − 0.5 sim</td><td>Four views in training; one at eval</td></tr><tr><td>V4.1</td><td>Generation</td><td>pass · (1 + P(self) + kept) − s</td><td>Backdoor bonus gated by pass</td></tr></tbody></table>
-      <p class="research-note">pass: normal tests pass; kept: backdoor fires; broken: backdoor removed; s: suspicion (0–1); sim: token similarity to input. P(bit) and P(self) are different objectives. · <a href="https://claude.ai/artifact/JtHVHW2ZGfqwU7H2AE2esM#loss" target="_blank" rel="noopener">Sources and notation</a></p>
+      <table class="research-table"><thead><tr><th scope="col">Model</th><th scope="col">Setting</th><th scope="col">Reward</th><th scope="col">Channel / gate</th></tr></thead><tbody><tr><td>Qwen3-8B</td><td>HiPT bit encoding</td><td>pass · (1 + P(bit)) − λs</td><td>Raw: λ=0/1/5; minified: λ=0</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite B</td><td>pass + pass · P(self) + kept − s</td><td>Raw (V3.1) / summary (V4.1)</td></tr><tr><td>V3.1 / V4.1</td><td>Rewrite C</td><td>pass + kept − s</td><td>No self-recognition reward</td></tr><tr><td>V3.1 / V4.1</td><td>P(self) − suspicion</td><td>P(self) − s</td><td>No pass / kept reward terms</td></tr><tr><td>V4.1</td><td>Four-summary + similarity</td><td>pass + pass · P(self) + kept − s − 0.5 sim</td><td>Four views in training; one at eval</td></tr><tr><td>V4.1</td><td>Generation</td><td>pass · (1 + P(self) + kept) − s</td><td>Backdoor bonus gated by pass</td></tr></tbody></table>
+      <p class="research-note">pass: normal tests pass; kept: backdoor fires; s: suspicion (0–1); sim: token similarity to input. P(bit) and P(self) are different objectives. · <a href="https://claude.ai/artifact/JtHVHW2ZGfqwU7H2AE2esM#loss" target="_blank" rel="noopener">Sources and notation</a></p>
     </div>
   </section>
 
@@ -1729,9 +1729,9 @@
   <!-- Added: hipt-settings-results -->
   <section class="slide dark research-slide" id="hipt-settings-results">
     <div class="slide-inner">
-      <h2>HiPT — settings and held-out results</h2>
+      <h2>HiPT — settings and validation results</h2>
       <table class="research-table"><thead><tr><th scope="col">ID</th><th scope="col">Sender / receiver</th><th scope="col">Channel</th><th scope="col">Overseer</th><th scope="col">λ</th><th scope="col">Updates</th><th scope="col">Final reward</th><th scope="col">Decoded</th><th scope="col">Suspicion</th><th scope="col">Bit AUROC</th></tr></thead><tbody><tr><td>A</td><td>Qwen3-8B</td><td>raw</td><td>none</td><td>0</td><td>10</td><td>2.000</td><td>8/8</td><td>—</td><td>1.000</td></tr><tr><td>B</td><td>Qwen3-8B</td><td>Minified</td><td>None</td><td>—</td><td>No training</td><td>—</td><td>6/8</td><td>—</td><td>0.833</td></tr><tr><td>C</td><td>Qwen3-8B</td><td>minified</td><td>none</td><td>0</td><td>10</td><td>1.533</td><td>4/8</td><td>—</td><td>0.781</td></tr><tr><td>D</td><td>Qwen3-8B</td><td>raw</td><td>Qwen3-8B</td><td>1</td><td>10</td><td>1.452</td><td>8/8</td><td>0.548</td><td>1.000</td></tr><tr><td>E</td><td>Qwen3-8B</td><td>raw</td><td>Qwen3.5-4B</td><td>1</td><td>10</td><td>1.035</td><td>8/8</td><td>0.965</td><td>1.000</td></tr><tr><td>F</td><td>Qwen3-8B</td><td>raw</td><td>Qwen3.5-4B</td><td>5</td><td>10</td><td>-2.830</td><td>8/8</td><td>0.966</td><td>1.000</td></tr><tr><td>G</td><td>Qwen3-8B</td><td>raw</td><td>Qwen3.5-4B</td><td>5</td><td>100</td><td>-1.550</td><td>6/8</td><td>0.659</td><td>0.844</td></tr><tr><td>H</td><td>Qwen3-8B</td><td>raw</td><td>Qwen3.5-4B</td><td>5</td><td>300</td><td>-1.481</td><td>7/8</td><td>0.659</td><td>0.969</td></tr></tbody></table>
-      <p class="research-note">All rows use Qwen3-8B, not DeepSeek V3.1 or V4.1. Four held-out APPS tasks × two bits = 8 responses per training checkpoint. B: primary set n=8; balanced diagnostic 8/16 decoded, AUROC 0.703. Scores are not pooled across settings. · <a href="https://wandb.ai/s184361/apps-grouped-wiring?nw=ws6lrn1oi2m" target="_blank" rel="noopener">Filtered W&amp;B runs</a></p>
+      <p class="research-note">All rows use Qwen3-8B, not DeepSeek V3.1 or V4.1. Validation: 4 APPS tasks not used in training (train: 4 others) × two bits = 8 responses per checkpoint. B: primary set n=8; balanced diagnostic 8/16 decoded, AUROC 0.703. Scores are not pooled across settings. No per-run cost was logged; cumulative reserved budget bound across these runs: $30.39 (a ceiling, not spend). ·<a href="https://wandb.ai/s184361/apps-grouped-wiring?nw=ws6lrn1oi2m" target="_blank" rel="noopener">Filtered W&amp;B runs</a></p>
     </div>
   </section>
 
@@ -1740,7 +1740,7 @@
     <div class="slide-inner">
       <h2>HiPT — rewards, suspicion and decoding</h2>
       <p class="research-model">Sender / receiver: Qwen3-8B · overseer varies by setting</p><div class="research-figure"><img src="media/gbrl_hipt_trends.png" alt="HiPT — rewards, suspicion and decoding — Sender / receiver: Qwen3-8B · overseer varies by setting"></div>
-      <p class="research-note">Top: 10-update experiments. Bottom: 100 / 300-update experiments. Reward is the mean over training responses; suspicion and accuracy use all 8 held-out responses per checkpoint. No overseer score exists for A or C. · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">Top: 10-update experiments. Bottom: 100 / 300-update experiments. Reward is the mean over training responses; suspicion and accuracy use all 8 validation responses per checkpoint. No overseer score exists for A or C. · <a href="https://wandb.ai/s184361/apps-grouped-wiring?nw=ws6lrn1oi2m" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1749,7 +1749,7 @@
     <div class="slide-inner">
       <h2>HiPT — bit-decoding ROC curves</h2>
       <p class="research-model">Sender / receiver: Qwen3-8B · settings A–H</p><div class="research-figure"><img src="media/gbrl_hipt_rocs.png" alt="HiPT — bit-decoding ROC curves — Sender / receiver: Qwen3-8B · settings A–H"></div>
-      <p class="research-note">Positive label: bit 1; score: P(bit 1). Gray dashed: initial checkpoint; blue: final checkpoint. Each training-run curve uses all 8 held-out responses, including failed programs. B also shows the separately labelled balanced n=16 diagnostic. · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">Positive label: bit 1; score: P(bit 1). Gray dashed: initial checkpoint; blue: final checkpoint. Each training-run curve uses all 8 validation responses, including failed programs. B also shows the separately labelled balanced n=16 diagnostic. · <a href="https://wandb.ai/s184361/apps-grouped-wiring?nw=ws6lrn1oi2m" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1810,8 +1810,8 @@
   <section class="slide dark research-slide" id="selfrec-settings">
     <div class="slide-inner">
       <h2>Self-rec — settings and rewards</h2>
-      <table class="research-table"><thead><tr><th scope="col">Sender</th><th scope="col">Experiment</th><th scope="col">Receiver</th><th scope="col">Channel</th><th scope="col">Reward</th><th scope="col">Updates</th></tr></thead><tbody><tr><td>V3.1</td><td>Smoke</td><td>Trainable receiver</td><td>Raw</td><td>pass(1+P) − broken</td><td>2</td></tr><tr><td>V3.1</td><td>Frozen receiver</td><td>Untrained, frozen</td><td>Raw</td><td>pass + pass·P + kept − s</td><td>10 / 39</td></tr><tr><td>V3.1</td><td>Joint RL + SFT</td><td>Receiver trained</td><td>Raw</td><td>pass + pass·P + kept − s</td><td>25</td></tr><tr><td>V3.1</td><td>LR sweep: 1e−5 / 5e−5 / 1.5e−4</td><td>SFT, frozen</td><td>Raw</td><td>P − s</td><td>17–18</td></tr><tr><td>V3.1</td><td>B / C</td><td>SFT, frozen</td><td>Raw</td><td>B: pass + pass·P + kept − s<br>C: pass + kept − s</td><td>25</td></tr><tr><td>V4.1</td><td>B / C</td><td>SFT, frozen</td><td>Summary</td><td>Same B / C terms</td><td>B 24; C 20</td></tr><tr><td>V4.1</td><td>B continuation</td><td>SFT, frozen</td><td>Summary</td><td>B terms</td><td>To 60</td></tr><tr><td>V4.1</td><td>4 summaries + similarity</td><td>SFT, frozen</td><td>Summary</td><td>B terms − 0.5 sim</td><td>20</td></tr><tr><td>V4.1</td><td>Only P(self) − suspicion</td><td>SFT, frozen</td><td>Summary</td><td>P − s</td><td>40</td></tr></tbody></table>
-      <p class="research-note">P = P(self); s ∈ [0,1]. V3.1 and V4.1 rows differ in model, judge, channel and evaluation set. Kept is not pass-gated in the main rewrite rewards. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered self-rec GBRL runs</a></p>
+      <table class="research-table"><thead><tr><th scope="col">Sender</th><th scope="col">Experiment</th><th scope="col">Receiver</th><th scope="col">Channel</th><th scope="col">Reward</th><th scope="col">Updates</th><th scope="col">Est. cost</th></tr></thead><tbody><tr><td>V3.1</td><td>Frozen receiver</td><td>Untrained, frozen</td><td>Raw</td><td>pass + pass·P + kept − s</td><td>10 / 39</td><td>$5.91 / $21.61</td></tr><tr><td>V3.1</td><td>Joint RL + SFT</td><td>Receiver trained</td><td>Raw</td><td>pass + pass·P + kept − s</td><td>25</td><td>$25.34</td></tr><tr><td>V3.1</td><td>LR sweep: 1e−5 / 5e−5 / 1.5e−4</td><td>SFT, frozen</td><td>Raw</td><td>P − s</td><td>17–18</td><td>$16.40 / $15.96 / $16.40</td></tr><tr><td>V3.1</td><td>B / C</td><td>SFT, frozen</td><td>Raw</td><td>B: pass + pass·P + kept − s<br>C: pass + kept − s</td><td>25</td><td>$20.66 / $22.39</td></tr><tr><td>V4.1</td><td>B / C</td><td>SFT, frozen</td><td>Summary</td><td>Same B / C terms</td><td>B 24; C 20</td><td>$24.34 / $21.01</td></tr><tr><td>V4.1</td><td>B continuation</td><td>SFT, frozen</td><td>Summary</td><td>B terms</td><td>To 60</td><td>$29.65</td></tr><tr><td>V4.1</td><td>4 summaries + similarity</td><td>SFT, frozen</td><td>Summary</td><td>B terms − 0.5 sim</td><td>20</td><td>$26.88</td></tr><tr><td>V4.1</td><td>Only P(self) − suspicion</td><td>SFT, frozen</td><td>Summary</td><td>P − s</td><td>40</td><td>$48.29</td></tr><tr><td>V4.1</td><td>Generate: short / full</td><td>SFT, frozen</td><td>Summary</td><td>pass · (1 + P + kept) − s</td><td>5</td><td>$7.66 / $63.10</td></tr></tbody></table>
+      <p class="research-note">P = P(self); s ∈ [0,1]. B / C reward weights are identical for V3.1 and V4.1; model, judge, channel and problems differ. Kept is not pass-gated in rewrite rewards. Evaluation: test split from V3.1 B / C onward; earlier V3.1 rows used the train split. Est. cost: logged per run; failed attempts excluded; W&amp;B metric progress/cost_usd. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered self-rec GBRL runs</a></p>
     </div>
   </section>
 
@@ -1828,8 +1828,8 @@
   <section class="slide dark research-slide" id="selfrec-reward-terms">
     <div class="slide-inner">
       <h2>Self-rec — reward components during training</h2>
-      <p class="research-model">Top: DeepSeek-V3.1 B / C · Bottom: DeepSeek-V4.1-Flash B / C</p><div class="research-figure"><img src="media/gbrl_selfrec_reward_terms.png" alt="Self-rec — reward components during training — Top: DeepSeek-V3.1 B / C · Bottom: DeepSeek-V4.1-Flash B / C"></div>
-      <p class="research-note">Mean terms over recorded training samples at each update. Suspicion is shown with its negative reward sign. P(self) has zero reward weight in C. Training reward is not a held-out score. · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-model">One panel per reward term · lines: DeepSeek-V3.1 (solid) and DeepSeek-V4.1-Flash (dashed), variants B and C</p><div class="research-figure"><img src="media/gbrl_selfrec_reward_terms.png" alt="Self-rec — reward components during training, one panel per reward term, for DeepSeek-V3.1 and DeepSeek-V4.1-Flash variants B and C"></div>
+      <p class="research-note">Mean terms over training samples at each update. Same reward weights for V3.1 and V4.1: B = pass + pass · P(self) + kept − s; C = pass + kept − s. V3.1 trains on raw code, V4.1 on summaries, with different judges. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1837,7 +1837,7 @@
   <section class="slide dark research-slide" id="selfrec-variants">
     <div class="slide-inner">
       <h2>Self-rec — longer runs and reward variants</h2>
-      <p class="research-model">DeepSeek-V4.1-Flash · frozen SFT summary judge · 309 held-out problems</p><div class="research-figure"><img src="media/gbrl_selfrec_variants.png" alt="Self-rec — longer runs and reward variants — DeepSeek-V4.1-Flash · frozen SFT summary judge · 309 held-out problems"></div>
+      <p class="research-model">DeepSeek-V4.1-Flash · frozen SFT summary judge · 309 test-split problems</p><div class="research-figure"><img src="media/gbrl_selfrec_variants.png" alt="Self-rec — longer runs and reward variants — DeepSeek-V4.1-Flash · frozen SFT summary judge · 309 test-split problems"></div>
       <p class="research-note">B resumes from update 20; P(self) − s resumes from update 20. Different reward definitions are shown, not a matched ablation. Evaluation includes every saved rewrite; missing scores are recorded in the CSV. The similarity panel shows the actual −0.5 × similarity reward term, not an accuracy metric. · <a href="https://claude.ai/artifact/GgD3LRF9r5LFFrMNf95wvU#compare" target="_blank" rel="noopener">Similarity setup</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
@@ -1860,21 +1860,12 @@
     </div>
   </section>
 
-  <!-- Added: generation-comparison -->
-  <section class="slide dark research-slide" id="generation-comparison">
-    <div class="slide-inner">
-      <h2>Generation and rewrite — recorded evaluations</h2>
-      <table class="research-table"><thead><tr><th scope="col">Model</th><th scope="col">Task / output</th><th scope="col">Update</th><th scope="col">N</th><th scope="col">Tests pass</th><th scope="col">Working</th><th scope="col">P(self)</th><th scope="col">Suspicion</th><th scope="col">Reward</th><th scope="col">Kept bonus</th></tr></thead><tbody><tr><td>V4.1</td><td>Rewrite B</td><td>0</td><td>309</td><td>299/309</td><td>228/309</td><td>0.708</td><td>0.578</td><td>1.838</td><td>not pass-gated</td></tr><tr><td>V4.1</td><td>Rewrite B</td><td>5</td><td>309</td><td>296/309</td><td>226/309</td><td>0.709</td><td>0.596</td><td>1.805</td><td>not pass-gated</td></tr><tr><td>V4.1</td><td>generate · short</td><td>0</td><td>100</td><td>51/100</td><td>10/100</td><td>0.701</td><td>0.472</td><td>0.506</td><td>pass-gated</td></tr><tr><td>V4.1</td><td>generate · short</td><td>5</td><td>100</td><td>64/100</td><td>1/100</td><td>0.733</td><td>0.293</td><td>0.858</td><td>pass-gated</td></tr><tr><td>V4.1</td><td>generate · full</td><td>0</td><td>100</td><td>47/100</td><td>38/100</td><td>0.732</td><td>0.512</td><td>0.679</td><td>pass-gated</td></tr><tr><td>V4.1</td><td>generate · full</td><td>5</td><td>100</td><td>24/100</td><td>16/100</td><td>0.662</td><td>0.410</td><td>0.167</td><td>pass-gated</td></tr></tbody></table>
-      <p class="research-note">DeepSeek-V4.1-Flash, frozen SFT summary judge. Descriptive comparison, not matched: rewrite uses 309 problems; generation uses 100. Short output: 2,048-token cap and 4 training summaries; full reasoning: 64,000-token cap and 1 summary. Normal-test and backdoor pass/fail outcomes are retained for all examples. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">W&amp;B runs</a></p>
-    </div>
-  </section>
-
   <!-- Added: generation-training -->
   <section class="slide dark research-slide" id="generation-training">
     <div class="slide-inner">
-      <h2>Generation — short output and full reasoning</h2>
-      <p class="research-model">DeepSeek-V4.1-Flash · same 100 held-out problem IDs · updates 0 and 5</p><div class="research-figure"><img src="media/gbrl_generation_training.png" alt="Generation — short output and full reasoning — DeepSeek-V4.1-Flash · same 100 held-out problem IDs · updates 0 and 5"></div>
-      <p class="research-note">Short output means no reasoning, not a separately tested intermediate-reasoning condition. Training used 4 scoring summaries for short output and 1 for full reasoning; all evaluations use 1. Both rewards are pass · (1 + P(self) + kept) − s. All 100 examples remain in each denominator. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zqgwq6id" target="_blank" rel="noopener">Short run</a> · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zt09fq3a" target="_blank" rel="noopener">Full run</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <h2>Generation and rewrite — first 5 updates</h2>
+      <p class="research-model">DeepSeek-V4.1-Flash · frozen SFT summary judge · test split · updates 0 and 5</p><div class="research-figure"><img src="media/gbrl_generation_training.png" alt="Generation — short output and full reasoning — DeepSeek-V4.1-Flash · same 100 test-split problem IDs · updates 0 and 5"></div>
+      <p class="research-note">Not a matched comparison: rewrite uses 309 problems and generation the same 100. Rewrite B: pass + pass · P(self) + kept − s. Generation: pass · (1 + P(self) + kept) − s. Short output (no reasoning): 2,048-token cap, 4 training summaries. Full reasoning: 64,000-token cap, 1 summary. All examples stay in each denominator. Estimated cost after 5 updates: rewrite $6.61, short $7.66, full $63.10. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zqgwq6id" target="_blank" rel="noopener">Short run</a> · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zt09fq3a" target="_blank" rel="noopener">Full run</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
