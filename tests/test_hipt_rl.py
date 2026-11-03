@@ -1239,7 +1239,7 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     detail = next(v for _, v in wb.logs if "9_detail_validation/n_honeypots" in v)
     assert detail["9_detail_validation/n_honeypots"] == 1
     # The ROC of each validation step: working rewrites vs validation honeypots.
-    assert any("2_validation/roc_self_rec" in values for _, values in wb.logs)
+    assert any("2_validation/roc_collusion" in values for _, values in wb.logs)
     sections = {key.split("/")[0] for _, values in wb.logs for key in values}
     # Sections in reading order; the detail sections sort last.
     assert sorted(sections) == [

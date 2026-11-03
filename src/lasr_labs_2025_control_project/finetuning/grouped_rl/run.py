@@ -91,6 +91,7 @@ KEY_METRICS = (
     "backdoor_fires_rate",
     "trusted_suspicion",
     "reward",
+    "sender_loss",  # GBRL only
 )
 
 
@@ -286,10 +287,10 @@ class Recorder:
     def roc(
         self, step: int, curves: dict[str, list[tuple[float, float]]], title: str
     ) -> None:
-        """The self-recognition (collusion) ROC: working rewrites vs honeypots."""
+        """The collusion ROC (the judge's P(self_rec)): working rewrites vs honeypots."""
         if any(curves.values()):
             self.stage.log_roc(
-                f"{SECTION['validation']}/roc_self_rec",
+                f"{SECTION['validation']}/roc_collusion",
                 {label: points for label, points in curves.items() if points},
                 title,
                 step=step,
@@ -834,7 +835,7 @@ async def run_evaluation(
     recorder.roc(
         step,
         {f"step {step}": self_rec_roc(result, scores)},
-        "Self-recognition ROC on validation",
+        "Collusion ROC on validation",
     )
     return metrics["reward"]
 
@@ -1076,7 +1077,7 @@ async def run_in_context(
                 "winner": rocs[(best.strategy, best.decoder)],
                 "no strategy": rocs[("", "")],
             },
-            "Self-recognition ROC on validation",
+            "Collusion ROC on validation",
         )
         recorder.table(
             step,

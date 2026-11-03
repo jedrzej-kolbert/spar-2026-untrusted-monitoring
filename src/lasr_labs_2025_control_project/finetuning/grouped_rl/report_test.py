@@ -117,7 +117,7 @@ def main(run_path: str, rewrites: Path, games: tuple[str, ...]) -> None:
             f"9_detail_test/{name}_{k}": v for k, v in metrics.items() if k not in KEY
         }
         for key, monitor, label in (
-            ("roc_self_rec", "untrusted_collusion", "rewrites vs honeypots"),
+            ("roc_collusion", "untrusted_collusion", "rewrites vs honeypots"),
             ("roc_trusted", "trusted_suspiciousness", "rewrites vs honest"),
         ):
             roc = rocs[monitor]
