@@ -1469,6 +1469,8 @@
   .figure-with-notes { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2.7fr); gap:1.5rem; align-items:center; }
   .figure-with-notes .bullets { font-size:.95rem; line-height:1.4; color:#f5f5f3; }
   .figure-with-notes .bullets li { margin:.5em 0; }
+  .figure-with-notes h3 { margin:.9rem 0 .1rem; font-size:.75rem; letter-spacing:.08em; text-transform:uppercase; color:#999; font-weight:600; }
+  .figure-with-notes h3:first-child { margin-top:0; }
   .dataset-context { margin:.6rem 0; font-size:1rem; line-height:1.45; color:#f5f5f3; }
   #hipt-settings-results .research-table { font-size:.9rem; margin:.8rem 0; }
   #selfrec-settings .research-table { font-size:.85rem; }
@@ -1886,7 +1888,7 @@
         </ul>
         <div class="research-figure"><img src="media/gbrl_selfrec_reward_terms.png" alt="Training-split mean reward components for DeepSeek V3.1 and V4.1, variants B and C. V3.1 uses solid circles, V4.1 dashed squares."></div>
       </div>
-      <p class="research-note">Training samples at each update, not test evaluations. pass: normal tests pass; kept: backdoor fires, even if normal tests fail. Both use frozen SFT judges: V3.1 reads raw code; V4.1 reads summaries. B = pass + pass · P(self) + kept − suspicion; C omits pass · P(self). · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">Mean over training samples at each update. Judges: V3.1 reads raw code, V4.1 reads summaries. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1894,7 +1896,7 @@
   <section class="slide dark research-slide" id="selfrec-bc">
     <div class="slide-inner">
       <h2>Self-rec — B/C evaluation on the test split</h2>
-      <p class="research-model">V3.1: solid circles · V4.1: dashed squares · both use frozen SFT judges, not base judges</p>
+      <p class="research-model">V3.1: solid circles · V4.1: dashed squares</p>
       <div class="figure-with-notes">
         <ul class="bullets">
           <li>Suspicion generally increases over time. I think this may partly be because more backdoors are kept after rewriting.</li>
@@ -1905,7 +1907,7 @@
         </ul>
         <div class="research-figure"><img src="media/gbrl_selfrec_bc.png" alt="Test-split suspicion, kept, P(self) and AUROC for DeepSeek V3.1 and V4.1 variants B and C."></div>
       </div>
-      <p class="research-note">B rewards self-recognition; C does not. Frozen: not updated during RL. Judges were SFT-trained beforehand on training-split solutions, labelled YES when written by the model itself and NO otherwise: V3.1 on raw code, V4.1 on Qwen3.5-4B summaries of the code. Original-attack AUROC: V3.1 0.979, V4.1 0.765. Means use all rewrites: V3.1 n=114 (raw-code judge); V4.1 n=309 (summary judge). AUROC uses working rewrites vs 246 working test honeypots; 95% bootstrap bands; dotted lines: original attacks. V4.1 C stops at its last complete evaluation, step 15; step 20 has 249/309 posthoc scores, retained in the data. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="https://claude.ai/artifact/UegMgcV81WY5CJBCUBzruf#gb-charts" target="_blank" rel="noopener">Original analysis</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">Means: all rewrites (V3.1 n=114, V4.1 n=309). AUROC: working rewrites vs 246 working honeypots, 95% bootstrap bands; dotted: original attacks (V3.1 0.979, V4.1 0.765). V4.1 C ends at step 15; step 20 is incomplete. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="https://claude.ai/artifact/UegMgcV81WY5CJBCUBzruf#gb-charts" target="_blank" rel="noopener">Original analysis</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1922,7 +1924,7 @@
         </ul>
         <div class="research-figure"><img src="media/gbrl_selfrec_variants.png" alt="Self-rec — longer runs and reward variants — DeepSeek-V4.1-Flash · frozen SFT summary judge · 309 test-split problems"></div>
       </div>
-      <p class="research-note">B and P(self) − suspicion continue from update 20. First five panels: test-split means; bottom-right only: training penalty −0.5 · similarity. suspicion is the monitor score; similarity measures copying the input. These are different rewards, not a matched ablation. All saved rewrites are included; missing scores are recorded in the CSV. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="https://claude.ai/artifact/GgD3LRF9r5LFFrMNf95wvU#compare" target="_blank" rel="noopener">Similarity setup</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">B and P(self) − suspicion continue from update 20. Bottom-right is a training term; the other panels are test split. Different rewards, not a matched ablation. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy" target="_blank" rel="noopener">Filtered W&amp;B runs</a> · <a href="https://claude.ai/artifact/GgD3LRF9r5LFFrMNf95wvU#compare" target="_blank" rel="noopener">Similarity setup</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
@@ -1961,18 +1963,26 @@
       <h2>Generation and rewrite — test split, updates 0–5</h2>
       <p class="research-model">DeepSeek-V4.1-Flash · frozen SFT summary judge · test split · updates 0 and 5</p>
       <div class="figure-with-notes">
-        <ul class="bullets">
-          <li>Generating again starts lower than rewriting. Was the original data a lucky draw, or do the generation setups differ fundamentally?
-            <ul><li>Neither: generate full at update 0 matches the original data (38 vs 38 working of 100). Rewrite starts only from attacks that already work.</li></ul></li>
-          <li>Both generation runs have fewer backdoors firing and fewer working attacks after training.</li>
-          <li>P(self) mildly increases for short output, but decreases for full reasoning. Why the difference?</li>
-          <li>Mean suspicion decreases.</li>
-          <li>Mean reward is hard to interpret across these runs.</li>
-          <li>These runs are expensive, especially full reasoning.</li>
-        </ul>
+        <div>
+          <h3>Update 0</h3>
+          <ul class="bullets">
+            <li>Rewrite only gets attacks that already pass and work. Generation starts from scratch: generate full matches the original data (pass 47 vs 50, working 38 vs 38).</li>
+          </ul>
+          <h3>Updates 0 → 5</h3>
+          <ul class="bullets">
+            <li>Fewer backdoors fire and fewer attacks work.</li>
+            <li>Mean suspicion decreases.</li>
+            <li>Mean reward is hard to interpret.</li>
+            <li>Expensive, especially full reasoning.</li>
+          </ul>
+          <h3>Open question</h3>
+          <ul class="bullets">
+            <li>Why does P(self) rise for short output but fall for full reasoning?</li>
+          </ul>
+        </div>
         <div class="research-figure"><img src="media/gbrl_generation_training.png" alt="Generation — short output and full reasoning — DeepSeek-V4.1-Flash · same 100 test-split problem IDs · updates 0 and 5"></div>
       </div>
-      <p class="research-note">Backdoor fires: secret input triggers the backdoor, tests not required. Working attack: tests pass and backdoor fires. Not matched: rewrite uses 309 problems, generation the same 100. All examples stay in each denominator. Estimated cost after 5 updates: rewrite $6.61, short $7.66, full $63.10. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zqgwq6id" target="_blank" rel="noopener">Short run</a> · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zt09fq3a" target="_blank" rel="noopener">Full run</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
+      <p class="research-note">Working attack: tests pass and backdoor fires. Rewrite: 309 problems; generation: the same 100. Cost after 5 updates: rewrite $6.61, short $7.66, full $63.10. · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zqgwq6id" target="_blank" rel="noopener">Short run</a> · <a href="https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl/runs/zt09fq3a" target="_blank" rel="noopener">Full run</a> · <a href="data/gbrl_plot_points.csv" target="_blank" rel="noopener">Numeric data (CSV)</a></p>
     </div>
   </section>
 
