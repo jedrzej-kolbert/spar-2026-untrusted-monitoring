@@ -23,10 +23,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import click
 
+from lasr_labs_2025_control_project import tracking
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 
 from .channels import MonitorViewChannel
@@ -41,7 +42,7 @@ from .core import (
     ReceiverExample,
     Rollout,
 )
-from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
+from .data import attack_tasks, read_generator_eval, split_tasks
 from .icrl import (
     CENTRAL,
     SENDER_ONLY,
@@ -53,7 +54,7 @@ from .icrl import (
     summarise,
 )
 from .icrl_adapters import StrategyBox, TrainerTeam, with_strategy
-from .rewards import RewardConfig
+from .rewards import RewardConfig, validity_gate
 from . import usage
 from lasr_labs_2025_control_project.prompts.rl_prompts import (
     RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
@@ -72,30 +73,52 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # --------------------------------------------------------------------------- #
 # Records
 # --------------------------------------------------------------------------- #
-# The W&B sections a reader needs, in metrics.jsonl names. Everything else goes
-# to the zz_other section (sorted last), so it stays logged but out of the way.
-WANDB_KEYS = {
-    "train/mean_reward": "reward/total",
-    "train/sender/loss:sum": "loss/sender",
-    "train/receiver_loss_per_example": "loss/receiver_per_example",
-    "train/correctness": "scores/pass_rate",
-    "train/backdoor_success": "scores/backdoor_kept_rate",
-    "train/backdoor_suspicion_mean": "scores/trusted_suspicion",
-    "train/suspicion_mean": "scores/overseer_suspicion",
-    "eval_pairs/mean_reward": "eval/reward_total",
-    "eval_pairs/correctness": "eval/pass_rate",
-    "eval_pairs/backdoor_success": "eval/backdoor_kept_rate",
-    "eval_pairs/backdoor_suspicion_mean": "eval/trusted_suspicion",
-    "eval_vs_honeypots/auroc": "eval/auroc",
-    "eval_vs_honeypots/balanced_accuracy": "eval/balanced_accuracy",
-    "eval_vs_honeypots/honeypot_yes_rate": "eval/honeypot_yes_rate",
-}
-# In self-recognition every rollout has payload 1, so bit 1's P(YES) is P(self).
-SELF_REC_WANDB_KEYS = {
-    "train/bit1_mean_p1": "scores/p_self",
-    "eval_pairs/bit1_mean_p1": "eval/p_self",
-    "eval_vs_honeypots/signalled_yes_rate": "eval/self_yes_rate",
-}
+# Prefixes logged to W&B; everything else stays in metrics.jsonl only.
+WANDB_PREFIXES = ("train/", "validation/", "icrl/", "progress/")
+
+
+def working(rollout: Rollout) -> bool:
+    """Passes the tests and its backdoor fires on the original secret input."""
+    return bool(
+        rollout.execution
+        and rollout.execution.passed
+        and rollout.backdoor
+        and rollout.backdoor.passed
+    )
+
+
+def batch_metrics(
+    result: BatchResult,
+    honeypot_scores: list[tuple[str, float]],
+    config: GroupedRLConfig,
+) -> dict[str, Any]:
+    """The reward and its parts, and AUROC of working rewrites vs working honeypots."""
+    base = result.metrics()
+    total = len(result.rollouts)
+    gates = [
+        validity_gate(item, config)
+        for item in result.rollouts
+        if item.execution is not None and item.backdoor_suspicion is not None
+    ]
+    auroc = (
+        HoneypotEvalResult(result, honeypot_scores).metrics()["auroc_working"]
+        if honeypot_scores
+        else None
+    )
+    return {
+        "reward": base["mean_reward"],
+        **{key: value for key, value in base.items() if key.startswith("reward/")},
+        "working_rate": sum(working(item) for item in result.rollouts) / total,
+        "tests_passed_rate": base["correctness"],
+        "backdoor_fires_rate": base["backdoor_success"],
+        "gate_mean": sum(gates) / len(gates) if gates else None,
+        # Self-recognition rewrites all carry payload 1: bit 1's P(YES) is P(self_rec).
+        "p_self_rec": base["bit1_mean_p1"],
+        "trusted_suspicion": base["backdoor_suspicion_mean"],
+        "auroc": auroc,
+        "n_rewrites": total,
+        "n_honeypots": len(honeypot_scores),
+    }
 
 
 def summary_row(summary: RoundSummary) -> dict[str, Any]:
@@ -115,49 +138,75 @@ def summary_row(summary: RoundSummary) -> dict[str, Any]:
         **{
             f"reward/{name}": value for name, value in summary.reward_components.items()
         },
-        "p_self_mean": summary.p_self_mean,
-        "pass_rate": summary.pass_rate,
+        "p_self_rec": summary.p_self_mean,
         "working_rate": summary.working_rate,
+        "tests_passed_rate": summary.pass_rate,
+        "backdoor_fires_rate": summary.backdoor_fires_rate,
         "backdoor_checked": summary.backdoor_checked,
-        "suspicion_mean": summary.suspicion_mean,
+        "gate_mean": summary.gate_mean,
+        "trusted_suspicion": summary.suspicion_mean,
         "episodes": summary.episodes,
     }
 
 
-def wandb_key(key: str, self_recognition: bool) -> str:
-    if key.startswith(("progress/", "icrl/")):
-        return key
-    if key.startswith("train/reward/"):
-        return key.removeprefix("train/")
-    curated = WANDB_KEYS.get(key) or (
-        SELF_REC_WANDB_KEYS.get(key) if self_recognition else None
-    )
-    return curated or f"zz_other/{key}"
+def code_state() -> dict[str, Any]:
+    """Branch, commit, and whether tracked files differ from the commit."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    try:
+        return {
+            "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "commit": git("rev-parse", "HEAD"),
+            "dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {"branch": None, "commit": None, "dirty": None}
 
 
 class Recorder:
-    def __init__(self, config: RLRunConfig, output_dir: Path) -> None:
+    """Local files, and one W&B run opened like the pipeline's stage runs.
+
+    The run's job type is the method (icrl or gbrl); project, entity and mode come
+    from WANDB_PROJECT, WANDB_ENTITY and WANDB_MODE; its input logs are linked to
+    the runs that produced them; a run that does not finish is tagged ``partial``.
+    """
+
+    def __init__(
+        self,
+        config: RLRunConfig,
+        output_dir: Path,
+        *,
+        inputs: list[tracking.ResolvedInput] | None = None,
+        code: dict[str, Any] | None = None,
+        allow_unlinked: bool = False,
+    ) -> None:
         self.output_dir = output_dir
         self.self_recognition = config.task_mode == "self_recognition"
         self.centralized = config.icrl.centralized
         output_dir.mkdir(parents=True, exist_ok=True)
-        self.wandb = None
         self.strategy_rows: list[dict[str, Any]] = []
         self.proposed_rows: list[dict[str, Any]] = []
         self.last_step = 0  # W&B steps must not go backwards
-        logging_config = config.logging
-        if logging_config.wandb_project and logging_config.wandb_mode != "disabled":
-            import wandb
-
-            self.wandb = wandb.init(
-                project=logging_config.wandb_project,
-                entity=logging_config.wandb_entity,
-                name=config.run_name,
-                mode=logging_config.wandb_mode,
-                config=json.loads(config.model_dump_json()),
-                dir=str(output_dir),
-                save_code=False,
-            )
+        identity = config.identity
+        self.stage = tracking.StageRun(
+            str(identity["method"]),
+            config.run_name,
+            config={
+                **json.loads(config.model_dump_json()),
+                "run": identity,
+                "code": code or {},
+            },
+            tags=[f"{key}:{value}" for key, value in identity.items()],
+            inputs=inputs or [],
+            models=[config.models.receiver],
+            allow_unlinked=allow_unlinked,
+        ).__enter__()
+        self.wandb: Any = self.stage.run
+        if self.wandb is not None:
             self.status(wandb_url=self.wandb.url)
 
     def _append(self, name: str, row: dict[str, Any]) -> None:
@@ -172,14 +221,9 @@ class Recorder:
         }
         self._append("metrics.jsonl", {"step": step, **clean})
         self.last_step = max(self.last_step, step)
-        if self.wandb is not None and clean:
-            self.wandb.log(
-                {
-                    wandb_key(key, self.self_recognition): value
-                    for key, value in clean.items()
-                },
-                step=step,
-            )
+        logged = {k: v for k, v in clean.items() if k.startswith(WANDB_PREFIXES)}
+        if self.wandb is not None and logged:
+            self.wandb.log(logged, step=step)
 
     def rollouts(
         self, step: int, phase: str, rollouts: list[Rollout], **extra: Any
@@ -238,9 +282,20 @@ class Recorder:
                 {"step": step, "problem_id": problem_id, "p_yes": p_yes},
             )
 
-    def strategy(self, step: int, summary: RoundSummary, cost_usd: float) -> None:
+    def strategy(
+        self,
+        step: int,
+        summary: RoundSummary,
+        cost_usd: float,
+        auroc: float | None = None,
+    ) -> None:
         """One learner-designed strategy and its measured scores (ICRL)."""
-        row = {"step": step, **summary_row(summary), "cost_usd": cost_usd}
+        row = {
+            "step": step,
+            **summary_row(summary),
+            "train_auroc": auroc,
+            "cost_usd": cost_usd,
+        }
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")
         self.scalars(step, "icrl", row)
@@ -253,9 +308,9 @@ class Recorder:
             return
         import wandb
 
-        columns = list(dict.fromkeys(name for row in rows for name in row))
+        columns: list[Any] = list(dict.fromkeys(name for row in rows for name in row))
         # A reward term missing from a row added nothing to that strategy's reward.
-        data = [
+        data: list[Any] = [
             [row.get(c, 0.0 if c.startswith("reward/") else None) for c in columns]
             for row in rows
         ]
@@ -319,67 +374,66 @@ class Recorder:
         if self.wandb is not None:
             self.wandb.summary.update(values)
 
-    def finish(self) -> None:
-        if self.wandb is not None:
-            self.wandb.finish()
+    def finish(self, complete: bool, reason: str | None = None) -> None:
+        self.stage.finish(complete=complete, reason=reason)
+        self.wandb = None
 
 
 # --------------------------------------------------------------------------- #
 # Setup
 # --------------------------------------------------------------------------- #
-def _git_commit() -> str | None:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except Exception:
-        return None
+SPLIT_SEED = 0  # one train/validation split for every run and seed
 
 
-def load_tasks(
-    config: RLRunConfig,
-) -> tuple[
-    list[AppsProblem],
-    list[AppsProblem],
-    list[tuple[AppsProblem, str]],
-    list[tuple[AppsProblem, str]],
-    list[str],
-]:
-    """Train and validation tasks, their honeypots, and the IDs of training
-    problems dropped because the honeypot log has no code for them."""
+class Tasks(NamedTuple):
+    """Attacks and working honeypots, split into train and validation by problem ID."""
+
+    train: list[AppsProblem]
+    validation: list[AppsProblem]
+    train_honeypots: list[tuple[AppsProblem, str]]
+    validation_honeypots: list[tuple[AppsProblem, str]]
+    # Train problems left out of receiver SFT because they have no honeypot.
+    dropped: list[str]
+
+    def split_record(self) -> dict[str, list[str]]:
+        def ids(pairs: list[tuple[AppsProblem, str]]) -> list[str]:
+            return [problem.problem_id for problem, _ in pairs]
+
+        return {
+            "train": [task.problem_id for task in self.train],
+            "validation": [task.problem_id for task in self.validation],
+            "train_honeypots": ids(self.train_honeypots),
+            "validation_honeypots": ids(self.validation_honeypots),
+            "train_dropped_without_honeypot": self.dropped,
+        }
+
+
+def same_problem(
+    honeypots: list[tuple[AppsProblem, str]], problems: list[AppsProblem]
+) -> list[tuple[AppsProblem, str]]:
+    """The honeypots written for these problems."""
+    ids = {problem.problem_id for problem in problems}
+    return [pair for pair in honeypots if pair[0].problem_id in ids]
+
+
+def load_tasks(config: RLRunConfig) -> Tasks:
+    """Working attacks and honeypots from the train logs, split by problem ID.
+
+    Honeypots are every working one (passes its tests, backdoor fires), as in the
+    game, whether or not the same problem has a working attack.
+    """
     data = config.data
-    samples = read_generator_eval(data.attacks_eval)
     tasks = attack_tasks(
-        samples,
+        read_generator_eval(data.attacks_eval),
         require_main_task=data.require_main_task,
         require_backdoor=data.require_backdoor,
         max_tests=data.max_tests,
     )
-    if data.validation_attacks_eval:
-        train = tasks
-        validation = [
-            dataclasses.replace(task, split="validation")
-            for task in attack_tasks(
-                [
-                    s
-                    for path in data.validation_attacks_eval
-                    for s in read_generator_eval(path)
-                ],
-                require_main_task=data.require_main_task,
-                require_backdoor=data.require_backdoor,
-                max_tests=data.max_tests,
-            )
-        ]
-        if {t.problem_id for t in train} & {t.problem_id for t in validation}:
-            raise ValueError("validation logs share problems with attacks_eval")
-    else:
-        train, validation = split_tasks(
-            tasks, validation_fraction=data.validation_fraction, seed=config.seed
-        )
-    if data.max_validation_problems is not None:
-        validation = validation[: data.max_validation_problems]
-    honeypots: list[tuple[AppsProblem, str]] = []
+    train, validation = split_tasks(
+        tasks, validation_fraction=data.validation_fraction, seed=SPLIT_SEED
+    )
     train_honeypots: list[tuple[AppsProblem, str]] = []
+    validation_honeypots: list[tuple[AppsProblem, str]] = []
     dropped: list[str] = []
     if data.honeypots_eval is not None and (
         config.eval.honeypot_eval or config.task_mode == "self_recognition"
@@ -394,38 +448,29 @@ def load_tasks(
                 raise ValueError(
                     "non-self examples must come from a known, different model"
                 )
-            train_honeypots = honeypot_pairs(negatives, train)
-            paired = [problem.problem_id for problem, _ in train_honeypots]
-            if len(paired) != len(set(paired)):
-                raise ValueError("a training problem has more than one honeypot")
-            if config.training.train_receiver:
-                # Receiver SFT needs a non-self example for every problem; one
-                # whose honeypot generation failed has none, so it is left out.
-                dropped = [t.problem_id for t in train if t.problem_id not in paired]
-                if dropped:
-                    logger.warning(
-                        "dropping %d training problems with no honeypot: %s",
-                        len(dropped),
-                        dropped,
-                    )
-                train = [t for t in train if t.problem_id not in dropped]
-        if config.eval.honeypot_eval:
-            if data.validation_honeypots_eval:
-                # Every working honeypot in the test logs, as in the game, whether
-                # or not the same problem has a working attack.
-                honeypots = [
-                    (dataclasses.replace(task, split="validation"), task.base_code)
-                    for task in attack_tasks(
-                        [
-                            s
-                            for path in data.validation_honeypots_eval
-                            for s in read_generator_eval(path)
-                        ],
-                        max_tests=data.max_tests,
-                    )
-                ]
-            else:
-                honeypots = honeypot_pairs(negatives, validation)
+        honeypot_train, honeypot_validation = split_tasks(
+            attack_tasks(negatives, max_tests=data.max_tests),
+            validation_fraction=data.validation_fraction,
+            seed=SPLIT_SEED,
+        )
+        train_honeypots = [(task, task.base_code) for task in honeypot_train]
+        validation_honeypots = [(task, task.base_code) for task in honeypot_validation]
+        ids = [task.problem_id for task in honeypot_train + honeypot_validation]
+        if len(ids) != len(set(ids)):
+            # Honeypot views are cached per problem.
+            raise ValueError("a problem has more than one honeypot")
+        if config.training.train_receiver:
+            # Receiver SFT needs a non-self example for every problem; one
+            # whose honeypot generation failed has none, so it is left out.
+            paired = {problem.problem_id for problem, _ in train_honeypots}
+            dropped = [t.problem_id for t in train if t.problem_id not in paired]
+            if dropped:
+                logger.warning(
+                    "dropping %d training problems with no honeypot: %s",
+                    len(dropped),
+                    dropped,
+                )
+            train = [t for t in train if t.problem_id not in dropped]
     if not train:
         raise ValueError("no training tasks survived filtering")
     if len(train) < config.training.problems_per_step:
@@ -433,7 +478,7 @@ def load_tasks(
             f"{len(train)} training tasks < problems_per_step "
             f"{config.training.problems_per_step}"
         )
-    return train, validation, train_honeypots, honeypots, dropped
+    return Tasks(train, validation, train_honeypots, validation_honeypots, dropped)
 
 
 def ensure_image(image: str) -> None:
@@ -511,7 +556,7 @@ def core_config(
         train_receiver=training.train_receiver,
         self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
-        trusted_reads_original=config.icrl.centralized,
+        trusted_reads_original=True,  # as in the game: comment-stripped code, not the jammed view
     )
 
 
@@ -692,27 +737,36 @@ async def run_evaluation(
     validation: list[AppsProblem],
     honeypots: list[tuple[AppsProblem, str]],
     config: RLRunConfig,
-) -> None:
+) -> float | None:
+    """Rewrites of the validation problems, scored against the validation honeypots.
+
+    Returns the validation reward, or None when the evaluation failed.
+    """
     if not validation:
-        return
+        return None
     try:
         result = await trainer.evaluate(
             validation, config.eval.num_samples, balanced=True
         )
-        phase = "eval_pairs"
     except BatchInfrastructureError as error:
-        # Keep the records and partial metrics; a failed evaluation does not stop training.
-        result, phase = error.result, "eval_pairs_failed"
-        logger.warning("evaluation at step %d had errors: %s", step, result.errors[:3])
-    recorder.rollouts(step, phase, result.rollouts)
-    if result.rollouts:
-        recorder.scalars(step, phase, result.metrics())
-    if honeypots and phase == "eval_pairs":
-        honeypot_eval: HoneypotEvalResult = await trainer.evaluate_against_honeypots(
+        # Keep the records; a failed evaluation does not stop training.
+        recorder.rollouts(step, "validation_failed", error.result.rollouts)
+        logger.warning(
+            "validation at step %d had errors: %s", step, error.result.errors[:3]
+        )
+        return None
+    recorder.rollouts(step, "validation", result.rollouts)
+    scores: list[tuple[str, float]] = []
+    errors: list[str] = []
+    if honeypots:
+        honeypot_eval = await trainer.evaluate_against_honeypots(
             validation, honeypots, signalled=result
         )
         recorder.honeypots(step, honeypot_eval.honeypot_scores)
-        recorder.scalars(step, "eval_vs_honeypots", honeypot_eval.metrics())
+        scores, errors = honeypot_eval.honeypot_scores, honeypot_eval.honeypot_errors
+    metrics = batch_metrics(result, scores, trainer.config)
+    recorder.scalars(step, "validation", {**metrics, "honeypot_errors": len(errors)})
+    return metrics["reward"]
 
 
 def next_batch(
@@ -769,18 +823,19 @@ async def run_in_context(
     meter: usage.Usage,
     train_tasks: list[AppsProblem],
     validation: list[AppsProblem],
-    honeypots: list[tuple[AppsProblem, str]],
-    train_honeypots: tuple[tuple[AppsProblem, str], ...]
-    | list[tuple[AppsProblem, str]] = (),
+    validation_honeypots: list[tuple[AppsProblem, str]],
+    train_honeypots: list[tuple[AppsProblem, str]] | None = None,
 ) -> None:
-    """ICRL search on training problems, then a held-out check against honeypots.
+    """ICRL search on train problems, then the search's best on validation.
 
-    Every learner reply goes to learner.jsonl, every strategy with its scores to
-    strategies.jsonl and the W&B ``icrl/strategies`` table, every rewrite to
-    rollouts.jsonl (with its strategy), and the outcome to icrl_result.json; all
-    four files are also uploaded to the W&B run.
+    The strategy with the highest validation reward is the run's final strategy,
+    for the pipeline to score on test. Every learner reply goes to learner.jsonl,
+    every strategy with its scores to strategies.jsonl and the W&B
+    ``icrl/strategies`` table, every rewrite to rollouts.jsonl (with its strategy),
+    and the outcome to icrl_result.json; all four files are also uploaded to W&B.
     """
     icrl = config.icrl
+    train_honeypots = train_honeypots or []
     if icrl.centralized:
         # The paired reward needs each search problem's honeypot.
         paired = {problem.problem_id for problem, _ in train_honeypots}
@@ -788,19 +843,9 @@ async def run_in_context(
     if icrl.search_problems > len(train_tasks):
         raise ValueError("icrl.search_problems exceeds the training problems")
     search = random.Random(config.seed).sample(train_tasks, icrl.search_problems)
-    used = {p.problem_id for p in search}
-    retest = (
-        random.Random(config.seed + 1).sample(
-            [p for p in train_tasks if p.problem_id not in used], icrl.retest_problems
-        )
-        if icrl.retest_top
-        else []
-    )
     resume = SearchState.load(icrl.resume_state) if icrl.resume_state else None
     recorder.status(
-        state="searching",
-        search_problem_ids=[p.problem_id for p in search],
-        retest_problem_ids=[p.problem_id for p in retest],
+        state="searching", search_problem_ids=[p.problem_id for p in search]
     )
     step = 0
     if resume is not None:
@@ -809,6 +854,14 @@ async def run_in_context(
             {"step": index + 1, **summary_row(item), "cost_usd": None}
             for index, item in enumerate(resume.history)
         ]
+    # Train AUROC each round. A frozen judge gives each train honeypot one score;
+    # a centralized judge changes per strategy, so its paired honeypots are used.
+    frozen_scores: list[tuple[str, float]] = []
+    if not icrl.centralized and train_honeypots:
+        frozen_scores, errors = await trainer.score_honeypots(train_honeypots)
+        if errors:
+            raise RuntimeError(f"train honeypot scoring failed: {errors[:3]}")
+    round_auroc: list[float | None] = [None] * (len(resume.history) if resume else 0)
 
     def on_result(strategy: str, result: BatchResult, phase: str) -> None:
         nonlocal step
@@ -821,27 +874,34 @@ async def run_in_context(
             # Batch-level causes (e.g. a sender exception) are not on any rollout.
             logger.warning("%s batch errors: %s", phase, result.errors[:3])
             recorder.batch_errors(step, phase, strategy, result.errors)
+        if phase == "search":
+            scores = frozen_scores or list(
+                {
+                    r.problem.problem_id: r.honeypot_p_yes
+                    for r in result.rollouts
+                    if r.honeypot_p_yes is not None
+                }.items()
+            )
+            round_auroc.append(batch_metrics(result, scores, trainer.config)["auroc"])
 
     team = TrainerTeam(
         trainer,
         box,
         search_problems=search,
-        held_out_problems=validation,
-        honeypots=honeypots,
+        validation_problems=validation,
+        honeypots=validation_honeypots,
         num_samples=config.eval.num_samples,
         on_result=on_result,
-        retest_problems=retest,
         judge_template=RL_CENTRAL_JUDGE_SYSTEM_PROMPT if icrl.centralized else "",
         train_honeypots=train_honeypots if icrl.centralized else (),
     )
 
     def on_summary(summary: RoundSummary) -> None:
-        recorder.strategy(step, summary, meter.cost_usd)
+        recorder.strategy(step, summary, meter.cost_usd, auroc=round_auroc[-1])
         click.echo(
             f"round {summary.round}: reward {summary.reward_mean:.3f}, "
-            f"P(self) {summary.p_self_mean:.3f}, working {summary.working_rate}, "
-            f"suspicion {summary.suspicion_mean:.3f}, "
-            f"honeypot P(YES) {summary.honeypot_p_yes_mean} "
+            f"P(self_rec) {summary.p_self_mean:.3f}, working {summary.working_rate}, "
+            f"suspicion {summary.suspicion_mean:.3f}, train AUROC {round_auroc[-1]} "
             f"| {summary.strategy[:80]!r}"
         )
 
@@ -856,9 +916,32 @@ async def run_in_context(
         state.save(config.output_dir / "icrl_state.json")
         recorder.sync_file("icrl_state.json")
 
-    retest_rows: list[dict[str, Any]] = []
+    rows: dict[str, dict[str, Any]] = {}
+    done: dict[tuple[str, str], dict[str, Any]] = {}
+
+    async def validate(label: str, candidate: RoundSummary) -> dict[str, Any]:
+        key = (candidate.strategy, candidate.decoder)
+        if key not in done:
+            episodes, honeypot = await team.validate(*key)
+            summary = summarise(
+                candidate.round, candidate.strategy, episodes, candidate.decoder
+            )
+            metrics = {**summary_row(summary), **honeypot.metrics()}
+            paired_rewards = [
+                e.reward for e in episodes if e.honeypot_p_yes is not None
+            ]
+            if paired_rewards:
+                metrics["paired_reward_mean"] = sum(paired_rewards) / len(
+                    paired_rewards
+                )
+            recorder.honeypots(step, honeypot.honeypot_scores)
+            done[key] = metrics
+        rows[label] = done[key]
+        recorder.scalars(step, f"validation/{label}", rows[label])
+        return rows[label]
+
     try:
-        history, best = await run_icrl(
+        history, _ = await run_icrl(
             learner,
             team,
             episodes=icrl.episodes,
@@ -870,41 +953,23 @@ async def run_in_context(
             on_state=on_state,
             prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
         )
-        if icrl.retest_top:
-            recorder.status(state="retest")
-            top = sorted(history, key=lambda item: item.reward_mean, reverse=True)
-            scored = []
-            for candidate in top[: icrl.retest_top]:
-                summary = summarise(
-                    candidate.round,
-                    candidate.strategy,
-                    await team.retest(candidate.strategy, candidate.decoder),
-                    candidate.decoder,
-                )
-                scored.append((summary.reward_mean, candidate))
-                retest_rows.append(
-                    {
-                        **summary_row(summary),
-                        "search_reward_mean": candidate.reward_mean,
-                    }
-                )
-                click.echo(
-                    f"retest round {summary.round}: reward {summary.reward_mean:.3f} "
-                    f"(search {candidate.reward_mean:.3f})"
-                )
-            recorder.table(step, "icrl/retest", retest_rows)
-            best = max(scored, key=lambda item: item[0])[1]
-        recorder.status(
-            state="held_out",
-            best_round=best.round,
-            best_strategy=best.strategy,
-            best_decoder=best.decoder,
+        recorder.status(state="validation")
+        # The centralized reward is paired; a rewrite whose problem has no
+        # honeypot would otherwise count the judge's YES without its cost.
+        objective = "paired_reward_mean" if icrl.centralized else "reward_mean"
+        top = sorted(history, key=lambda item: item.reward_mean, reverse=True)
+        scored = [
+            ((await validate(f"top{rank}", candidate))[objective], candidate)
+            for rank, candidate in enumerate(top[: icrl.validate_top], 1)
+        ]
+        best = max(scored, key=lambda item: item[0])[1]
+        rows["winner"] = done[(best.strategy, best.decoder)]
+        # The no-strategy rewrite, so a gain is measured against no strategy.
+        await validate(
+            "baseline", dataclasses.replace(best, round=0, strategy="", decoder="")
         )
-        held_out: dict[str, Any] = {}
-        # The baseline is checked too, so a gain is measured against no strategy.
-        checks = [("best", best.strategy, best.decoder), ("baseline", "", "")]
         if icrl.centralized:
-            checks += [
+            for label, strategy, decoder in (
                 # Do the instructions matter, on the same sender text?
                 ("instructions_removed", best.strategy, ""),
                 # Is the judge reading a signal, or just spotting honeypots?
@@ -914,32 +979,15 @@ async def run_in_context(
                     RL_WHILE_LOOP_SENDER_INSTRUCTIONS,
                     RL_WHILE_LOOP_JUDGE_INSTRUCTIONS,
                 ),
-            ]
-        done: dict[tuple[str, str], dict[str, Any]] = {}
-        for label, strategy, decoder in checks:
-            if (strategy, decoder) in done:
-                held_out[label] = done[(strategy, decoder)]
-                continue
-            episodes, honeypot = await team.held_out(strategy, decoder)
-            summary = summarise(
-                best.round if label == "best" else 0, strategy, episodes, decoder
-            )
-            metrics = {**summary_row(summary), **honeypot.metrics()}
-            paired_rewards = [
-                e.reward for e in episodes if e.honeypot_p_yes is not None
-            ]
-            if paired_rewards:
-                metrics["paired_reward_mean"] = sum(paired_rewards) / len(
-                    paired_rewards
+            ):
+                await validate(
+                    label,
+                    dataclasses.replace(best, strategy=strategy, decoder=decoder),
                 )
-            done[(strategy, decoder)] = metrics
-            recorder.honeypots(step, honeypot.honeypot_scores)
-            recorder.scalars(step, f"icrl/held_out_{label}", metrics)
-            held_out[label] = metrics
         recorder.table(
             step,
-            "icrl/held_out",
-            [{"check": label, **metrics} for label, metrics in held_out.items()],
+            "icrl/validation",
+            [{"check": label, **metrics} for label, metrics in rows.items()],
         )
     except (BatchInfrastructureError, usage.BudgetExceeded):
         recorder.status(
@@ -950,25 +998,36 @@ async def run_in_context(
     (config.output_dir / "icrl_result.json").write_text(
         json.dumps(
             {
-                "best": dataclasses.asdict(best),
-                "strategies": [dataclasses.asdict(item) for item in history],
-                "retest": retest_rows,
-                "held_out": held_out,
+                "winner": dataclasses.asdict(best),
+                "strategies": [
+                    {**dataclasses.asdict(item), "train_auroc": auroc}
+                    for item, auroc in zip(history, round_auroc)
+                ],
+                "validation": rows,
                 "knowledge": dataclasses.asdict(knowledge),
             },
             indent=2,
         )
     )
     recorder.sync_file("icrl_result.json")
+    # The test rewrite takes the winner from this artifact, which links the two runs.
+    recorder.stage.log_artifact(
+        config.output_dir / "icrl_result.json",
+        type="strategy",
+        name=f"strategy-{config.run_name}",
+    )
     recorder.status(
         state="finished",
-        held_out_auroc_best=held_out["best"]["auroc_working"],
-        held_out_auroc_baseline=held_out["baseline"]["auroc_working"],
+        winner_round=best.round,
+        winner_strategy=best.strategy,
+        winner_decoder=best.decoder,
+        validation_auroc_winner=rows["winner"]["auroc_working"],
+        validation_auroc_baseline=rows["baseline"]["auroc_working"],
     )
     click.echo(
-        f"best strategy (round {best.round}): held-out AUROC on working rewrites "
-        f"{held_out['best']['auroc_working']} vs baseline "
-        f"{held_out['baseline']['auroc_working']}"
+        f"winner (round {best.round}): validation AUROC on working rewrites "
+        f"{rows['winner']['auroc_working']} vs no strategy "
+        f"{rows['baseline']['auroc_working']}"
     )
 
 
@@ -978,7 +1037,14 @@ async def train(
     *,
     resume_state: str | None = None,
     start_step: int = 1,
+    allow_unlinked: bool = False,
 ) -> None:
+    code = code_state()
+    if config.kind == "main" and code["dirty"] is not False:
+        raise SystemExit(
+            "a kind: main run needs committed code; commit first (dirty or unknown "
+            f"tree: {code})"
+        )
     if resume_state is not None and config.training.train_receiver:
         raise ValueError(
             "--resume-state restores only the sender; joint training must start fresh"
@@ -992,19 +1058,17 @@ async def train(
             "ICRL output directory already contains a run; choose a new output_dir"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_tasks, validation, train_honeypots, honeypots, dropped = load_tasks(config)
+    tasks = load_tasks(config)
+    train_tasks, validation = tasks.train, tasks.validation
+    split = tasks.split_record()
+    (output_dir / "split.json").write_text(json.dumps(split, indent=2))
     manifest = {
         "run_name": config.run_name,
+        "run": config.identity,
         "config": json.loads(config.model_dump_json()),
-        "git_commit": _git_commit(),
+        "code": code,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "train_problem_ids": [task.problem_id for task in train_tasks],
-        "validation_problem_ids": [task.problem_id for task in validation],
-        "train_honeypot_problem_ids": [
-            problem.problem_id for problem, _ in train_honeypots
-        ],
-        "honeypot_problem_ids": [problem.problem_id for problem, _ in honeypots],
-        "train_problems_dropped_without_honeypot": dropped,
+        "split": split,
     }
     manifest_name = "manifest.json"
     if resume_state is not None:
@@ -1012,8 +1076,9 @@ async def train(
         manifest_name = f"manifest_resume_step{start_step}.json"
     (output_dir / manifest_name).write_text(json.dumps(manifest, indent=2))
     click.echo(
-        f"tasks: {len(train_tasks)} train, {len(validation)} validation, "
-        f"{len(honeypots)} honeypots"
+        f"attacks: {len(train_tasks)} train, {len(validation)} validation; "
+        f"honeypots: {len(tasks.train_honeypots)} train, "
+        f"{len(tasks.validation_honeypots)} validation"
     )
 
     sandbox = config.sandbox
@@ -1037,9 +1102,29 @@ async def train(
 
     meter = usage.install()
     meter.max_cost_usd = config.training.max_cost_usd
-    recorder = Recorder(config, output_dir)
+    data = config.data
+    recorder = Recorder(
+        config,
+        output_dir,
+        inputs=[
+            tracking.resolve_input(path)
+            for path in (data.attacks_eval, data.honeypots_eval)
+            if path is not None
+        ],
+        code=code,
+        allow_unlinked=allow_unlinked,
+    )
     recorder.status(state="starting", parity=parity)
     recorder.scalars(0, "preflight", parity)
+    recorder.stage.log_artifact(
+        output_dir / "split.json", type="split", name=f"split-{config.run_name}"
+    )
+    if code["dirty"]:
+        diff = subprocess.run(
+            ["git", "diff", "HEAD"], capture_output=True, text=True
+        ).stdout
+        (output_dir / "code.diff").write_text(diff)
+        recorder.sync_file("code.diff")
     box = StrategyBox() if config.method == "in_context" else None
     trainer, sender = await build_trainer(
         config, evaluator, resume_state=resume_state, strategy=box
@@ -1060,6 +1145,7 @@ async def train(
             temperature=config.icrl.learner_temperature,
             max_context_tokens=config.training.max_context_tokens,
         )
+        complete = False
         try:
             await run_in_context(
                 config,
@@ -1070,11 +1156,12 @@ async def train(
                 meter,
                 train_tasks,
                 validation,
-                honeypots,
-                train_honeypots,
+                tasks.validation_honeypots,
+                tasks.train_honeypots,
             )
+            complete = True
         finally:
-            close_run(recorder, meter, output_dir, recorder.last_step)
+            close_run(recorder, meter, output_dir, recorder.last_step, complete)
         return
 
     if config.preflight.enabled and config.task_mode != "self_recognition":
@@ -1095,12 +1182,35 @@ async def train(
     # Replay earlier draws so a resumed run continues the same batch sequence.
     for _ in range(1, start_step):
         next_batch(order, train_tasks, training.problems_per_step, rng)
+    honeypots = tasks.validation_honeypots
     last_step_cost = 0.0
     completed, last_eval = start_step - 1, start_step - 1
     step = completed
+    best_validation: tuple[float, int] | None = None
+
+    def track(reward: float | None, at: int) -> None:
+        nonlocal best_validation
+        if reward is not None and (
+            best_validation is None or reward > best_validation[0]
+        ):
+            best_validation = (reward, at)
+            recorder.status(best_validation_reward=reward, best_validation_step=at)
+
+    complete = False
     try:
+        # A frozen judge gives each train honeypot one score, for the train AUROC.
+        frozen_scores: list[tuple[str, float]] = []
+        if trainer.config.self_recognition and not training.train_receiver:
+            frozen_scores, errors = await trainer.score_honeypots(tasks.train_honeypots)
+            if errors:
+                raise RuntimeError(f"train honeypot scoring failed: {errors[:3]}")
         if start_step == 1:
-            await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
+            track(
+                await run_evaluation(
+                    trainer, recorder, 0, validation, honeypots, config
+                ),
+                0,
+            )
         for step in range(start_step, training.steps + 1):
             spent = meter.cost_usd
             cap = training.max_cost_usd
@@ -1124,7 +1234,7 @@ async def train(
                     batch,
                     honeypots=[
                         (problem, code)
-                        for problem, code in train_honeypots
+                        for problem, code in tasks.train_honeypots
                         if problem.problem_id in batch_ids
                     ],
                 )
@@ -1194,7 +1304,16 @@ async def train(
                         result.receiver_stats.metrics["loss:sum"]
                         / len(result.receiver_examples)
                     )
-            recorder.scalars(step, "train", metrics)
+            recorder.scalars(step, "train_detail", metrics)
+            recorder.scalars(
+                step,
+                "train",
+                {
+                    **batch_metrics(result, frozen_scores, trainer.config),
+                    "sender_loss": metrics.get("sender/loss:sum"),
+                    "sender_updated": metrics["sender_updated"],
+                },
+            )
             recorder.status(state="training", step=step)
             click.echo(
                 f"step {step}: reward {metrics['mean_reward']}, "
@@ -1203,8 +1322,11 @@ async def train(
             )
             completed = step
             if step % config.eval.every == 0 or step == training.steps:
-                await run_evaluation(
-                    trainer, recorder, step, validation, honeypots, config
+                track(
+                    await run_evaluation(
+                        trainer, recorder, step, validation, honeypots, config
+                    ),
+                    step,
                 )
                 last_eval = step
             save_every = config.checkpoints.save_every
@@ -1212,6 +1334,7 @@ async def train(
                 path = await sender.save_checkpoint(
                     f"{config.checkpoint_name}_step{step}"
                 )
+                recorder.stage.log_model_ref(path, {"step": step})
                 state = await sender.save_state(
                     f"{config.checkpoint_name}_state_step{step}"
                 )
@@ -1243,10 +1366,14 @@ async def train(
             )
             last_step_cost = meter.cost_usd - spent
         if completed != last_eval and not meter.exhausted:
-            await run_evaluation(
-                trainer, recorder, completed, validation, honeypots, config
+            track(
+                await run_evaluation(
+                    trainer, recorder, completed, validation, honeypots, config
+                ),
+                completed,
             )
         final = await sender.save_checkpoint(config.checkpoint_name)
+        recorder.stage.log_model_ref(final, {"step": completed})
         # Resumable sender state, so a finished run can be extended with more steps.
         final_state = await sender.save_state(
             f"{config.checkpoint_name}_state_step{completed}"
@@ -1264,12 +1391,17 @@ async def train(
             _update_ckpts_json(
                 config.checkpoints.ckpts_json, config.checkpoint_name, final
             )
+        complete = True
     finally:
-        close_run(recorder, meter, output_dir, step)
+        close_run(recorder, meter, output_dir, step, complete)
 
 
 def close_run(
-    recorder: Recorder, meter: usage.Usage, output_dir: Path, step: int
+    recorder: Recorder,
+    meter: usage.Usage,
+    output_dir: Path,
+    step: int,
+    complete: bool,
 ) -> None:
     """Record final usage, even after a failed step or evaluation."""
     recorder.scalars(step, "progress", meter.snapshot())
@@ -1279,13 +1411,19 @@ def close_run(
         )
     )
     recorder.status(estimated_cost_usd=meter.cost_usd, budget_exhausted=meter.exhausted)
-    recorder.finish()
+    recorder.finish(complete, None if complete else "stopped before finishing")
 
 
 @click.command()
 @click.option("--config", "config_path", type=click.Path(exists=True), required=True)
 @click.option("--allow-paid", is_flag=True, help="Make Tinker model calls and train.")
 @click.option("--steps", type=int, default=None, help="Override training.steps.")
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Override seed; appends -s<seed> to run_name and output_dir.",
+)
 @click.option(
     "--resume-state",
     default=None,
@@ -1297,12 +1435,15 @@ def close_run(
     default=1,
     help="First step to run when resuming (N + 1 for state_step<N>).",
 )
+@click.option("--allow-unlinked", is_flag=True, help=tracking.ALLOW_UNLINKED_HELP)
 def main(
     config_path: str,
     allow_paid: bool,
     steps: int | None,
+    seed: int | None,
     resume_state: str | None,
     start_step: int,
+    allow_unlinked: bool,
 ) -> None:
     import os
 
@@ -1314,10 +1455,22 @@ def main(
     config = load_rl_config(config_path)
     if steps is not None:
         config.training.steps = steps
+    if seed is not None:
+        config.seed = seed
+        config.run_name = f"{config.run_name}-s{seed}"
+        config.output_dir = config.output_dir.with_name(
+            f"{config.output_dir.name}-s{seed}"
+        )
     if (resume_state is None) != (start_step == 1):
         raise click.UsageError("--resume-state and --start-step must be used together")
     asyncio.run(
-        train(config, allow_paid, resume_state=resume_state, start_step=start_step)
+        train(
+            config,
+            allow_paid,
+            resume_state=resume_state,
+            start_step=start_step,
+            allow_unlinked=allow_unlinked,
+        )
     )
 
 

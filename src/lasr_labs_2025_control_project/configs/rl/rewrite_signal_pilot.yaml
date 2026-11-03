@@ -36,7 +36,6 @@ data:
   require_backdoor: true
   max_tests: 10
   validation_fraction: 0.2
-  max_validation_problems: 20
 
 channel:
   kind: none               # none | minify | paraphrase (signal jamming)
@@ -76,9 +75,7 @@ preflight:
   enabled: true
   require_overseer_gap: 0.0   # log only
 
-logging:
-  wandb_project: hipt-collusion-rl
-  wandb_mode: offline   # upload later: wandb sync <output_dir>/wandb/offline-run-*
+# W&B: set WANDB_PROJECT and WANDB_ENTITY (and WANDB_MODE=offline to log locally).
 
 checkpoints:
   save_every: 10

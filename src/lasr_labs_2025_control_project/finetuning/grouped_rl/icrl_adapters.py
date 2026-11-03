@@ -15,6 +15,7 @@ from .core import (
     AppsProblem,
     BatchInfrastructureError,
     BatchResult,
+    GroupedRLConfig,
     GroupedRLTrainer,
     HoneypotEvalResult,
     Rollout,
@@ -55,8 +56,11 @@ def with_strategy(
     return messages
 
 
-def episode_from(rollout: Rollout) -> Episode:
-    """Turn one graded rollout into an episode. Missing scores are errors, not defaults."""
+def episode_from(rollout: Rollout, config: GroupedRLConfig | None = None) -> Episode:
+    """Turn one graded rollout into an episode. Missing scores are errors, not defaults.
+
+    With ``config``, the episode also records its validity gate V * g(s).
+    """
     if rollout.probabilities is None or rollout.execution is None:
         raise ValueError("rollout has no judge or execution result")
     if rollout.reward is None:
@@ -80,6 +84,7 @@ def episode_from(rollout: Rollout) -> Episode:
         execution_detail=rollout.execution.detail,
         honeypot_p_yes=rollout.honeypot_p_yes,
         honeypot_code=rollout.honeypot_code or "",
+        gate=None if config is None else validity_gate(rollout, config),
     )
 
 
@@ -88,8 +93,8 @@ class TrainerTeam:
     """Runs strategies through the trainer's evaluation on fixed problem sets.
 
     ``box`` must be the one wrapped into the sender's ``messages_fn`` with
-    ``with_strategy``. Search problems choose the strategy; held-out problems and
-    honeypots only check the chosen one, so they must not overlap the search set.
+    ``with_strategy``. Search problems choose the strategy; validation problems and
+    honeypots only rank the search's best, so they must not overlap the search set.
     ``on_result(strategy, result, phase)`` sees every evaluated batch, including one
     that hit a sandbox infrastructure error; such a batch is run once more.
     """
@@ -97,12 +102,10 @@ class TrainerTeam:
     trainer: GroupedRLTrainer
     box: StrategyBox
     search_problems: Sequence[AppsProblem]
-    held_out_problems: Sequence[AppsProblem]
+    validation_problems: Sequence[AppsProblem]
     honeypots: Sequence[tuple[AppsProblem, str]]
     num_samples: int = 1
     on_result: Callable[[str, BatchResult, str], None] | None = None
-    # Fresh problems that re-score the search's top strategies, to choose among them.
-    retest_problems: Sequence[AppsProblem] = ()
     # Centralized: set the judge's prompt per strategy from this template, and score
     # each rewrite against its problem's honeypot. Empty keeps the sender-only loop.
     judge_template: str = ""
@@ -114,26 +117,15 @@ class TrainerTeam:
         self.base_judge_prompt = getattr(self.trainer.receiver, "system_prompt", "")
         if self.judge_template:
             paired = {p.problem_id for p, _ in self.train_honeypots}
-            problems = [*self.search_problems, *self.retest_problems]
-            if any(p.problem_id not in paired for p in problems):
+            if any(p.problem_id not in paired for p in self.search_problems):
                 raise ValueError("centralized search problems need a honeypot each")
-        sets = [
-            {p.problem_id for p in problems}
-            for problems in (
-                self.search_problems,
-                self.retest_problems,
-                self.held_out_problems,
-            )
-        ]
-        if sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2]:
-            raise ValueError("search, retest and held-out problems overlap")
-        # No weights change, so the trainer's train/held-out guard does not apply to
+        search = {p.problem_id for p in self.search_problems}
+        if search & {p.problem_id for p in self.validation_problems}:
+            raise ValueError("search and validation problems overlap")
+        # No weights change, so the trainer's train/evaluation guard does not apply to
         # these training problems; what matters is that the sets above do not overlap.
         self.search_problems = [
             replace(p, split="validation") for p in self.search_problems
-        ]
-        self.retest_problems = [
-            replace(p, split="validation") for p in self.retest_problems
         ]
 
     def _report(self, strategy: str, result: BatchResult, phase: str) -> None:
@@ -210,25 +202,19 @@ class TrainerTeam:
         result = await self._run(
             strategy, self.search_problems, "search", decoder, self.train_honeypots
         )
-        return [episode_from(rollout) for rollout in result.rollouts]
+        return [episode_from(r, self.trainer.config) for r in result.rollouts]
 
-    async def retest(self, strategy: str, decoder: str = "") -> list[Episode]:
-        result = await self._run(
-            strategy, self.retest_problems, "retest", decoder, self.train_honeypots
-        )
-        return [episode_from(rollout) for rollout in result.rollouts]
-
-    async def held_out(
+    async def validate(
         self, strategy: str, decoder: str = ""
     ) -> tuple[list[Episode], HoneypotEvalResult]:
-        """Episodes on held-out problems and the judge's scores against honeypots."""
+        """Episodes on validation problems and the judge's scores on their honeypots."""
         result = await self._run(
-            strategy, self.held_out_problems, "held_out", decoder, self.honeypots
+            strategy, self.validation_problems, "validation", decoder, self.honeypots
         )
         honeypot = await self.trainer.evaluate_against_honeypots(
-            list(self.held_out_problems), list(self.honeypots), signalled=result
+            list(self.validation_problems), list(self.honeypots), signalled=result
         )
-        return [episode_from(rollout) for rollout in result.rollouts], honeypot
+        return [episode_from(r, self.trainer.config) for r in result.rollouts], honeypot
 
 
 class TinkerLearner(_TinkerRole):

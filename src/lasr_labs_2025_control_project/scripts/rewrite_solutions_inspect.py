@@ -5,10 +5,13 @@ Reads attacks from a generator eval log, asks the sender (e.g. a tinker:// RL
 checkpoint) to rewrite each one with the collusion signal ON, and re-scores the
 rewritten code with the same APPS scorer as generate_solutions_inspect.py. The output
 .eval has the generator's layout (base_solution, generator_info with the original
-secret input), so transform_solutions_inspect.py and monitor_solutions_inspect.py
-run on it unchanged. The pre-rewrite code is kept as `pre_rewrite_solution`.
+secret input), so the pipeline takes it in place of its test attacks
+(``+inputs.generate.test.attacks=<file>``) and runs its monitors and games on it
+unchanged. The pre-rewrite code is kept as `pre_rewrite_solution`.
 
-Configs are emitted by experiments/open_models/make_configs.py (open tree, `rl_*`).
+Each run is a W&B stage run (job type ``rewrite``) like the pipeline's, so the
+output's header links the monitors to it, and it links to its inputs: the attacks,
+the RL checkpoint, or the ICRL result its strategy came from.
 """
 
 import json
@@ -32,6 +35,7 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import store
 from pydantic import BaseModel, ConfigDict
 
+from lasr_labs_2025_control_project import tracking
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
     extract_final_code,
     rewrite_messages,
@@ -52,6 +56,9 @@ class RewriteSettings(BaseModel):
     max_tokens: int = 4096
     # ICRL sender instructions, added the way the search added them.
     strategy: str = ""
+    # Or an ICRL run's icrl_result.json (a path or a wandb: ref to its strategy
+    # artifact): its winner's sender instructions are used, and the run is linked.
+    strategy_result: str | None = None
 
 
 class RewriteRun(BaseModel):
@@ -165,12 +172,29 @@ def rewrite_solutions(run: RewriteRun, settings: RewriteSettings) -> Task:
     )
 
 
+def with_strategy_result(
+    settings: RewriteSettings,
+) -> tuple[RewriteSettings, list[tracking.ResolvedInput]]:
+    """Settings with the winner's instructions from ``strategy_result``, and its input."""
+    if settings.strategy_result is None:
+        return settings, []
+    if settings.strategy:
+        raise ValueError("give strategy or strategy_result, not both")
+    source = tracking.resolve_input(settings.strategy_result)
+    winner = json.loads(source.local_path.read_text())["winner"]
+    if winner["decoder"]:
+        # The pipeline's judge would need the learned instructions as a prompt.
+        raise ValueError("a centralized strategy's judge text is not wired in yet")
+    return settings.model_copy(update={"strategy": winner["strategy"]}), [source]
+
+
 @click.command()
 @click.option("--config", type=str, required=True)
 @click.option(
     "--limit", type=int, default=None, help="Rewrite only the first N samples."
 )
-def main(config: str, limit: int | None) -> None:
+@click.option("--allow-unlinked", is_flag=True, help=tracking.ALLOW_UNLINKED_HELP)
+def main(config: str, limit: int | None, allow_unlinked: bool) -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -178,26 +202,42 @@ def main(config: str, limit: int | None) -> None:
     folder = parsed.experiment_folder
     (folder / "configs").mkdir(parents=True, exist_ok=True)
     shutil.copy(config, folder / "configs" / "rewrite_config.yaml")
-    settings = parsed.defaults["rewrite"]
+    settings, strategy_inputs = with_strategy_result(parsed.defaults["rewrite"])
     for label, run in parsed.runs.items():
         resolved = RewriteRun(
             eval_path=(folder / run.eval_path).resolve(),
             save_path=folder / run.save_path,
             limit=limit if limit is not None else run.limit,
         )
-        result = eval(
-            tasks=rewrite_solutions(resolved, settings),
-            max_connections=32,
-            max_sandboxes=32,
-            limit=resolved.limit,
-        )
-        resolved.save_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(result[0].location, resolved.save_path)
-        if result[0].status != "success":
-            raise SystemExit(
-                f"{label}: eval ended with status {result[0].status!r}, "
-                f"log saved to {resolved.save_path}"
+        with tracking.StageRun(
+            "rewrite",
+            f"rewrite-{parsed.experiment_name}-{label}",
+            config={"rewrite": settings.model_dump(), "run": run.model_dump()},
+            tags=[parsed.experiment_name, label],
+            inputs=[tracking.resolve_input(resolved.eval_path), *strategy_inputs],
+            models=[settings.model],
+            allow_unlinked=allow_unlinked,
+        ) as stage:
+            result = eval(
+                tasks=rewrite_solutions(resolved, settings),
+                max_connections=32,
+                max_sandboxes=32,
+                limit=resolved.limit,
+                metadata=stage.eval_metadata(),
             )
+            resolved.save_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(result[0].location, resolved.save_path)
+            try:
+                stage.finish_eval(
+                    result[0],
+                    resolved.save_path,
+                    limit=resolved.limit,
+                    extra_counts=tracking.input_counts(
+                        resolved.eval_path, result[0].eval.dataset.samples or 0
+                    ),
+                )
+            except tracking.StageFailed as error:
+                raise SystemExit(str(error)) from error
 
 
 if __name__ == "__main__":

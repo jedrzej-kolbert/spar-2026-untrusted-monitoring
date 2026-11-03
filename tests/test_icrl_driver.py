@@ -33,7 +33,6 @@ def icrl_config(output_dir: Path, **overrides: Any) -> RLRunConfig:
             "backdoor_suspicion_weight": 1,
         },
         "icrl": {"episodes": 1, "search_problems": 2},
-        "logging": {"wandb_mode": "disabled"},
     }
     return RLRunConfig.model_validate({**values, **overrides})
 
@@ -90,14 +89,16 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     assert "Describe your strategy" in replies[0]["prompt"][-1]["content"]
     assert "ENCODER MESSAGE" in replies[1]["prompt"][1]["content"]
     rollouts = rows("rollouts.jsonl")
-    assert {r["phase"] for r in rollouts} == {"search", "held_out"}
+    assert {r["phase"] for r in rollouts} == {"search", "validation"}
     assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {
         "",
         "keep the original helper names",
     }
     result = json.loads((tmp_path / "icrl_result.json").read_text())
-    assert set(result["held_out"]) == {"best", "baseline"}
-    assert result["held_out"]["best"]["auroc"] == pytest.approx(1.0)
+    # Both strategies are in the top 3; the no-strategy rewrite is one of them.
+    assert set(result["validation"]) == {"top1", "top2", "winner", "baseline"}
+    assert result["validation"]["winner"]["auroc"] == pytest.approx(1.0)
+    assert result["winner"]["strategy"] in {"", "keep the original helper names"}
     assert result["knowledge"]["knowledge"] == "preserve behavior"
     assert len(result["knowledge"]["failed_attempts"]) == 1
     status = json.loads((tmp_path / "status.json").read_text())
@@ -105,19 +106,13 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     assert len(status["search_problem_ids"]) == 2
 
 
-async def test_driver_retests_the_top_strategies_on_fresh_problems(
+async def test_driver_validates_the_top_strategies_on_unseen_problems(
     tmp_path: Path,
 ) -> None:
     config = icrl_config(
-        tmp_path,
-        icrl={
-            "episodes": 1,
-            "search_problems": 2,
-            "retest_top": 2,
-            "retest_problems": 1,
-        },
+        tmp_path, icrl={"episodes": 1, "search_problems": 2, "validate_top": 1}
     )
-    held_out = attack_problem("13", "validation")
+    validation = attack_problem("13", "validation")
     await run_in_context(
         config,
         self_rec_trainer(),
@@ -126,21 +121,47 @@ async def test_driver_retests_the_top_strategies_on_fresh_problems(
         Recorder(config, tmp_path),
         usage.Usage(),
         [attack_problem("11"), attack_problem("15"), attack_problem("17")],
-        [held_out],
-        [(held_out, "# another model\nprint(7)")],
+        [validation],
+        [(validation, "# another model\nprint(7)")],
     )
     rollouts = [
         json.loads(line)
         for line in (tmp_path / "rollouts.jsonl").read_text().splitlines()
     ]
-    retest_ids = {r["problem_id"] for r in rollouts if r["phase"] == "retest"}
+    validation_ids = {r["problem_id"] for r in rollouts if r["phase"] == "validation"}
     search_ids = {r["problem_id"] for r in rollouts if r["phase"] == "search"}
-    assert len(retest_ids) == 1 and not retest_ids & search_ids
+    assert validation_ids == {"13"} and not validation_ids & search_ids
     result = json.loads((tmp_path / "icrl_result.json").read_text())
-    assert len(result["retest"]) == 2
-    assert all("search_reward_mean" in row for row in result["retest"])
+    assert set(result["validation"]) >= {"top1", "winner", "baseline"}
+    assert "top2" not in result["validation"]
     state = SearchState.load(tmp_path / "icrl_state.json")
     assert state.completed == 1 and len(state.history) == 2
+
+
+async def test_frozen_judge_scores_train_honeypots_once_for_the_train_auroc(
+    tmp_path: Path,
+) -> None:
+    config = icrl_config(tmp_path)
+    trainer = self_rec_trainer()
+    validation = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        trainer,
+        StrategyBox(),
+        OneShotLearner(),
+        Recorder(config, tmp_path),
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15")],
+        [validation],
+        [(validation, "# another model\nprint(7)")],
+        [(attack_problem("21"), "# another model\nprint(7)")],
+    )
+    strategies = [
+        json.loads(line)
+        for line in (tmp_path / "strategies.jsonl").read_text().splitlines()
+    ]
+    assert [row["train_auroc"] for row in strategies] == [1.0, 1.0]
+    assert set(trainer.honeypot_views) == {"21", "13"}
 
 
 class FakeRun:
@@ -213,9 +234,11 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
     for row in strategies.data:
         values = dict(zip(strategies.columns, row))
         assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
-    held_out = table("icrl/held_out")
-    assert [row[0] for row in held_out.data] == ["best", "baseline"]
-    assert {"strategy", "reward_mean", "reward/task", "auroc"} <= set(held_out.columns)
+    validation = table("icrl/validation")
+    assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
+    assert {"strategy", "reward_mean", "reward/task", "auroc"} <= set(
+        validation.columns
+    )
 
 
 class FailingSender:

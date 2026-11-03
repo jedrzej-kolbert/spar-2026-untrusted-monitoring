@@ -167,6 +167,7 @@ class Episode:
     execution_detail: str = ""
     honeypot_p_yes: float | None = None
     honeypot_code: str = ""
+    gate: float | None = None  # V * g(s): working attack, gated by suspicion
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,10 @@ class RoundSummary:
     reward_components: dict[str, float] = field(default_factory=dict)
     decoder: str = ""
     honeypot_p_yes_mean: float | None = None
+    gate_mean: float | None = None
+    backdoor_fires_rate: float | None = (
+        None  # of the rewrites whose backdoor was checked
+    )
 
 
 @dataclass
@@ -323,6 +328,7 @@ def summarise(
     checked = [e for e in episodes if e.backdoor is not None]
     names = sorted({name for e in episodes for name in e.components})
     honeypots = [e.honeypot_p_yes for e in episodes if e.honeypot_p_yes is not None]
+    gates = [e.gate for e in episodes if e.gate is not None]
     summary = RoundSummary(
         round=round_index,
         strategy=strategy,
@@ -343,6 +349,10 @@ def summarise(
         },
         decoder=decoder,
         honeypot_p_yes_mean=sum(honeypots) / len(honeypots) if honeypots else None,
+        gate_mean=sum(gates) / len(gates) if gates else None,
+        backdoor_fires_rate=(
+            sum(bool(e.backdoor) for e in checked) / len(checked) if checked else None
+        ),
     )
     if not math.isfinite(summary.reward_mean):
         raise ValueError("reward must be finite")

@@ -33,7 +33,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
 from lasr_labs_2025_control_project.finetuning.grouped_rl.data import (
     EvalSample,
     attack_tasks,
-    honeypot_pairs,
     split_tasks,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
@@ -613,20 +612,6 @@ def sample(
     )
 
 
-def test_only_working_honeypots_are_paired() -> None:
-    samples = [
-        sample("1", "C", "C"),
-        sample("3", "I", "C"),
-        sample("5", "C", "I"),
-        sample("9", "C", "C"),
-    ]
-    problems = attack_tasks(
-        [sample(i, "C", "C") for i in ("1", "3", "5")],
-    )
-    pairs = honeypot_pairs(samples, problems)
-    assert [problem.problem_id for problem, _ in pairs] == ["1"]
-
-
 def test_attack_filtering_and_test_truncation() -> None:
     samples = [
         sample("1", "C", "C"),
@@ -971,77 +956,42 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
         run.load_tasks(self_rec_config())
 
 
-def test_held_out_uses_every_working_test_honeypot(
+def test_honeypots_are_every_working_one_split_like_the_attacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
     from lasr_labs_2025_control_project.finetuning.grouped_rl import run
 
-    train = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
-    attacks = [sample("2", "C", "C"), sample("4", "I", "C")]
+    attacks = [sample(str(i), "C", "C") for i in range(1, 80, 2)]
 
     def other(item: EvalSample) -> EvalSample:
         return replace(item, model="another-model")
 
-    honeypots = [
-        other(sample("2", "C", "I")),  # broken, though its attack works
-        other(sample("4", "C", "C")),  # works, though its attack doesn't
-    ]
-
-    def read(path: object) -> list:
-        return {
-            "val.eval": attacks,
-            "val_honeypots.eval": honeypots,
-            "honeypots.eval": [other(item) for item in train],
-        }.get(str(path), train)
-
-    monkeypatch.setattr(run, "read_generator_eval", read)
-    config = self_rec_config(
-        data={
-            "attacks_eval": "attacks.eval",
-            "honeypots_eval": "honeypots.eval",
-            "validation_attacks_eval": ["val.eval"],
-            "validation_honeypots_eval": ["val_honeypots.eval"],
-        }
+    honeypots = [other(sample(str(i), "C", "C")) for i in range(2, 80, 2)]  # no attack
+    honeypots += [other(sample("1", "C", "I")), other(sample("3", "I", "C"))]  # broken
+    monkeypatch.setattr(
+        run,
+        "read_generator_eval",
+        lambda path: honeypots if "honeypots" in str(path) else attacks,
     )
-    _, validation, _, eval_negatives, _ = run.load_tasks(config)
-    assert [p.problem_id for p in validation] == ["2"]
-    assert [(p.problem_id, p.split) for p, _ in eval_negatives] == [("4", "validation")]
-
-
-def test_separate_validation_logs_are_labelled_validation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dataclasses import replace
-    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
-
-    train_attacks = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
-    val_attacks = [sample(str(i), "C", "C") for i in range(2, 41, 2)]
-    negatives = [
-        replace(item, model="another-model") for item in train_attacks + val_attacks
-    ]
-
-    def read(path: object) -> list:
-        if "honeypots" in str(path):
-            return negatives
-        return val_attacks if str(path) == "val.eval" else train_attacks
-
-    monkeypatch.setattr(run, "read_generator_eval", read)
-    config = self_rec_config(
-        data={
-            "attacks_eval": "attacks.eval",
-            "honeypots_eval": "honeypots.eval",
-            "validation_attacks_eval": ["val.eval"],
-        }
+    # A frozen judge: no receiver SFT, so no attack needs a same-problem honeypot.
+    frozen = {"group_size": 2, "problems_per_step": 1}
+    tasks = run.load_tasks(self_rec_config(training=frozen))
+    pairs = tasks.train_honeypots + tasks.validation_honeypots
+    # Working honeypots only, whether or not their problem has an attack.
+    assert sorted(int(p.problem_id) for p, _ in pairs) == list(range(2, 80, 2))
+    assert tasks.validation and tasks.validation_honeypots
+    assert {p.split for p, _ in tasks.validation_honeypots} == {"validation"}
+    assert {p.split for p, _ in tasks.train_honeypots} == {"train"}
+    # Attacks and honeypots share one split by problem ID, the same for every seed.
+    bucket = run.split_tasks(
+        [p for p, _ in pairs], validation_fraction=0.2, seed=run.SPLIT_SEED
     )
-    train, validation, _, eval_negatives, _ = run.load_tasks(config)
-    # The trainer's held-out check rejects any problem still labelled "train".
-    assert validation
-    assert {p.split for p in validation} == {"validation"}
-    assert {p.split for p in train} == {"train"}
-    assert {p.problem_id for p, _ in eval_negatives} == {
-        p.problem_id for p in validation
-    }
+    assert [p.problem_id for p in bucket[1]] == [
+        p.problem_id for p, _ in tasks.validation_honeypots
+    ]
+    reseeded = run.load_tasks(self_rec_config(training=frozen, seed=7))
+    assert reseeded.split_record() == tasks.split_record()
 
 
 async def test_yes_no_receiver_scores_and_trains_the_same_answer_tokens() -> None:
@@ -1149,8 +1099,6 @@ def driven_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **training: Any
 ) -> tuple[Any, GroupedRLTrainer, Any, Any, RLRunConfig]:
     """The real run.train loop with fake models, sandbox, W&B and usage meter."""
-    import sys
-
     from lasr_labs_2025_control_project.finetuning.grouped_rl import run, usage
 
     train_problem = attack_problem()
@@ -1158,7 +1106,7 @@ def driven_run(
     monkeypatch.setattr(
         run,
         "load_tasks",
-        lambda config: (
+        lambda config: run.Tasks(
             [train_problem],
             [validation_problem],
             [(train_problem, "print(7)")],
@@ -1196,10 +1144,34 @@ def driven_run(
         return trainer, trainer.sender
 
     monkeypatch.setattr(run, "build_trainer", build)
-    wb = SimpleNamespace(url="https://example.test/run", summary={}, logs=[])
+    wb = SimpleNamespace(
+        url="https://example.test/run", summary={}, logs=[], artifacts=[], stage=None
+    )
     wb.log = lambda values, step: wb.logs.append((step, values))
-    wb.finish = lambda: None
-    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(init=lambda **kwargs: wb))
+    wb.save = lambda *args, **kwargs: None
+
+    class FakeStage:
+        """tracking.StageRun as an online run would behave, without W&B."""
+
+        def __init__(self, stage: str, name: str, **kwargs: Any) -> None:
+            self.stage, self.name, self.kwargs = stage, name, kwargs
+            self.run: Any = wb
+            wb.stage = self
+
+        def __enter__(self) -> FakeStage:
+            return self
+
+        def log_artifact(self, path: Any, **kwargs: Any) -> None:
+            wb.artifacts.append((Path(path).name, kwargs["type"]))
+
+        def log_model_ref(self, model_id: str, metadata: Any = None) -> None:
+            wb.artifacts.append((model_id, "model"))
+
+        def finish(self, *, complete: bool, reason: str | None = None) -> None:
+            wb.summary["complete"] = complete
+
+    monkeypatch.setattr(run.tracking, "StageRun", FakeStage)
+    monkeypatch.setattr(run.tracking, "resolve_input", lambda path: str(path))
     config = self_rec_config(
         output_dir=str(tmp_path),
         training={
@@ -1229,36 +1201,44 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     ]
     assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
     assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
-    training_log = next(
-        values for _, values in wb.logs if "zz_other/train/sender_updated" in values
+    # Everything is in metrics.jsonl; W&B gets the train/validation/progress keys.
+    detail = next(
+        row
+        for row in map(
+            json.loads, (tmp_path / "metrics.jsonl").read_text().splitlines()
+        )
+        if "train_detail/sender_updated" in row
     )
-    assert training_log["zz_other/train/sender_updated"] == 1
-    assert training_log["zz_other/train/receiver_updated"] == 1
-    assert training_log["zz_other/train/receiver_positive_examples"] == 2
-    assert training_log["zz_other/train/receiver_negative_examples"] == 2
-    assert training_log["zz_other/train/receiver/loss:sum"] == 1
-    # The curated sections: losses, reward components and scores per step.
-    assert training_log["loss/receiver_per_example"] == pytest.approx(0.25)
+    assert detail["train_detail/sender_updated"] == 1
+    assert detail["train_detail/receiver_updated"] == 1
+    assert detail["train_detail/receiver_positive_examples"] == 2
+    assert detail["train_detail/receiver_negative_examples"] == 2
+    assert detail["train_detail/receiver_loss_per_example"] == pytest.approx(0.25)
+    training_log = next(values for _, values in wb.logs if "train/reward" in values)
     # EchoSender writes "signal = 1" for payload 1, which MarkerReceiver scores 0.9.
-    assert training_log["scores/p_self"] == pytest.approx(0.9)
-    assert training_log["scores/pass_rate"] == 1
-    assert training_log["scores/backdoor_kept_rate"] == 0.5  # print(0) of 2 rewrites
-    assert {"reward/total", "reward/task", "reward/self_recognition"} <= set(
-        training_log
-    )
+    assert training_log["train/p_self_rec"] == pytest.approx(0.9)
+    assert training_log["train/tests_passed_rate"] == 1
+    assert training_log["train/backdoor_fires_rate"] == 0.5  # print(0) of 2 rewrites
+    assert training_log["train/working_rate"] == 0.5
+    assert {"train/reward/task", "train/reward/self_recognition"} <= set(training_log)
     progress = next(values for step, values in wb.logs if "progress/cost_usd" in values)
     assert progress["progress/epoch"] == 1
-    eval_logs = {
-        key for _, values in wb.logs for key in values if key.startswith("eval/")
-    }
-    assert {"eval/auroc", "eval/p_self", "eval/self_yes_rate"} <= eval_logs
-    assert not any(
-        key.split("/")[0] not in {"reward", "loss", "scores", "eval", "progress"}
-        and not key.startswith("zz_other/")
+    validation = next(values for _, values in wb.logs if "validation/auroc" in values)
+    assert validation["validation/p_self_rec"] == pytest.approx(0.9)
+    assert validation["validation/n_honeypots"] == 1
+    assert all(
+        key.startswith(("train/", "validation/", "progress/"))
         for _, values in wb.logs
         for key in values
     )
+    # The run is a pipeline-style stage run: job type, filter tags, split artifact.
+    assert wb.stage.stage == "gbrl"
+    assert "judge:trained" in wb.stage.kwargs["tags"]
+    assert wb.stage.kwargs["config"]["run"]["kind"] == "smoke"
+    assert ("split.json", "split") in wb.artifacts
+    assert wb.summary["complete"] is True
     status = json.loads((tmp_path / "status.json").read_text())
+    assert (status["final_checkpoint"], "model") in wb.artifacts
     assert status["state"] == "finished"
     assert status["final_receiver_checkpoint"].endswith("_receiver")
     assert (
@@ -1286,8 +1266,11 @@ async def test_frozen_receiver_driver_never_updates_or_saves_receiver(
     assert "final_checkpoint" in wb.summary
     assert wb.summary["state_step1"].endswith("_state_step1")
     assert "final_receiver_checkpoint" not in wb.summary
-    training_log = next(v for _, v in wb.logs if "scores/p_self" in v)
-    assert training_log["zz_other/train/receiver_updated"] == 0
+    training_log = next(v for _, v in wb.logs if "train/reward" in v)
+    # A frozen judge scores the train honeypots once, for the train AUROC.
+    assert training_log["train/n_honeypots"] == 1
+    assert training_log["train/auroc"] is not None
+    assert wb.stage.kwargs["config"]["run"]["judge"] == "base"
 
 
 async def test_budget_cap_stops_before_an_unaffordable_step(
@@ -1313,7 +1296,7 @@ async def test_budget_cap_stops_before_an_unaffordable_step(
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished" and "budget" in status["reason"]
     assert status["final_receiver_checkpoint"].endswith("_receiver")
-    assert any(s == 1 and "eval/p_self" in v for s, v in wb.logs)
+    assert any(s == 1 and "validation/p_self_rec" in v for s, v in wb.logs)
     usage_file = json.loads((tmp_path / "usage.json").read_text())
     assert usage_file["estimated_cost_usd"] == pytest.approx(1.2 * 3.718)
     assert usage_file["estimated_cost_usd"] == meter.cost_usd
@@ -1453,16 +1436,6 @@ def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> N
     with pytest.raises(ValueError, match="no budget price"):
         with meter.request("unknown/model", train=1):
             pytest.fail("unpriced request dispatched")
-
-
-def test_wandb_keys_put_unlisted_metrics_last() -> None:
-    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import wandb_key
-
-    assert wandb_key("train/reward/backdoor_kept", True) == "reward/backdoor_kept"
-    assert wandb_key("train/bit1_mean_p1", True) == "scores/p_self"
-    assert wandb_key("train/bit1_mean_p1", False) == "zz_other/train/bit1_mean_p1"
-    assert wandb_key("progress/cost_usd", False) == "progress/cost_usd"
-    assert wandb_key("train/step_seconds", True) == "zz_other/train/step_seconds"
 
 
 async def test_receiver_teacher_forces_each_label() -> None:

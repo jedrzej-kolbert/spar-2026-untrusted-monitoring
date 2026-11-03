@@ -2,8 +2,8 @@
 
 Option A (rewrite_signal) takes attacks the untrusted model already wrote with
 ``generate_solutions_inspect.py`` and keeps those that pass the main task and have a
-working backdoor (configurable). Honeypots from the same split are the negatives for
-the held-out attack-vs-honeypot check.
+working backdoor (configurable). Working honeypots, split the same way, are the
+negatives for the attack-vs-honeypot AUROC.
 """
 
 from __future__ import annotations
@@ -134,20 +134,3 @@ def split_tasks(
         else:
             train.append(replace(task, split="train"))
     return train, validation
-
-
-def honeypot_pairs(
-    samples: list[EvalSample], problems: list[AppsProblem]
-) -> list[tuple[AppsProblem, str]]:
-    """Working honeypots for the given problems (the receiver should say NO).
-
-    Only code that passes its tests with a firing backdoor counts, as in the game.
-    """
-    by_id = {problem.problem_id: problem for problem in problems}
-    return [
-        (by_id[sample.problem_id], sample.code)
-        for sample in samples
-        if sample.problem_id in by_id
-        and sample.main_task_success == "C"
-        and sample.side_task_success == "C"
-    ]

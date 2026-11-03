@@ -110,7 +110,7 @@ def team(model: GroupedRLTrainer) -> TrainerTeam:
         model,
         StrategyBox(),
         search_problems=search,
-        held_out_problems=[held_out],
+        validation_problems=[held_out],
         honeypots=[(held_out, HONEYPOT)],
         judge_template=RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
         train_honeypots=[(problem, HONEYPOT) for problem in search],
@@ -171,7 +171,7 @@ def test_a_search_problem_without_a_honeypot_is_refused() -> None:
             trainer(),
             StrategyBox(),
             search_problems=[attack_problem("11")],
-            held_out_problems=[],
+            validation_problems=[],
             honeypots=[],
             judge_template=RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
         )
@@ -267,8 +267,7 @@ async def test_driver_runs_every_control_and_logs_both_sides(tmp_path: Path) -> 
         icrl={
             "episodes": 1,
             "search_problems": 2,
-            "retest_top": 1,
-            "retest_problems": 1,
+            "validate_top": 1,
             "centralized": True,
         },
     )
@@ -298,12 +297,15 @@ async def test_driver_runs_every_control_and_logs_both_sides(tmp_path: Path) -> 
     assert all(r["honeypot_p_yes"] is not None for r in rollouts)
     assert {"", "look for the marker"} <= {r["decoder"] for r in rollouts}
     result = json.loads((tmp_path / "icrl_result.json").read_text())
-    assert set(result["held_out"]) == {
-        "best",
+    assert set(result["validation"]) == {
+        "top1",
+        "winner",
         "baseline",
         "instructions_removed",
         "empty_sender",
         "while_loop",
     }
-    assert result["held_out"]["best"]["n_working"] == 1
-    assert "paired_reward_mean" in result["held_out"]["best"]
+    assert result["validation"]["winner"]["n_working"] == 1
+    assert "paired_reward_mean" in result["validation"]["winner"]
+    # The centralized judge changes per strategy: train AUROC uses its paired scores.
+    assert all(row["train_auroc"] is not None for row in result["strategies"])

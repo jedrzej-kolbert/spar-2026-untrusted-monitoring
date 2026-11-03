@@ -42,14 +42,10 @@ class DataConfig(_Strict):
     require_main_task: bool = True
     require_backdoor: bool = True
     max_tests: int | None = 10
+    # Share of train problems kept for validation (attacks and honeypots alike),
+    # split by problem ID with a fixed seed so every run uses the same split. The
+    # test split never enters a run: final strategies are scored by the pipeline.
     validation_fraction: float = Field(default=0.2, ge=0, lt=1)
-    # None evaluates every held-out problem. A cap keeps the lowest IDs, not a
-    # random sample, so its AUROC is not comparable with the pipeline's.
-    max_validation_problems: int | None = None
-    # Evaluate on separate logs (e.g. the test split) instead of a split of
-    # attacks_eval; every attacks_eval task is then used for training.
-    validation_attacks_eval: list[Path] | None = None
-    validation_honeypots_eval: list[Path] | None = None
 
 
 class ChannelConfig(_Strict):
@@ -137,12 +133,6 @@ class SandboxConfig(_Strict):
     max_output_bytes: int = Field(default=65536, ge=1)
 
 
-class LoggingConfig(_Strict):
-    wandb_project: str | None = "hipt-collusion-rl"
-    wandb_entity: str | None = None
-    wandb_mode: Literal["online", "offline", "disabled"] = "online"
-
-
 class CheckpointConfig(_Strict):
     save_every: int | None = 10
     # On completion the final sender checkpoint is added to this file under
@@ -162,10 +152,9 @@ class IcrlConfig(_Strict):
     learner_temperature: float = Field(default=1.0, gt=0)
     # A SearchState file to continue from; episodes then counts the earlier ones too.
     resume_state: Path | None = None
-    # Re-score the top strategies on fresh training problems and take the winner to
-    # the held-out check. 0 keeps the search's best.
-    retest_top: int = Field(default=0, ge=0)
-    retest_problems: int = Field(default=64, ge=1)
+    # The search's top strategies by reward are scored on the validation problems;
+    # the one with the highest validation reward is the run's final strategy.
+    validate_top: int = Field(default=3, ge=1)
     # The learner writes the judge's instructions too (HiPT's centralized learner).
     # A shared strategy is causal collusion, a different question from self-recognition.
     centralized: bool = False
@@ -174,6 +163,8 @@ class IcrlConfig(_Strict):
 class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
+    # W&B filter and tag. A main run refuses to start from uncommitted code.
+    kind: Literal["smoke", "pilot", "main"] = "smoke"
     backend: Literal["tinker", "hf_gpu"] = "tinker"
     method: Literal["gradient", "in_context"] = "gradient"
     icrl: IcrlConfig = Field(default_factory=IcrlConfig)
@@ -190,7 +181,6 @@ class RLRunConfig(_Strict):
     eval: EvalConfig = Field(default_factory=EvalConfig)
     preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
 
     @model_validator(mode="after")
@@ -256,6 +246,26 @@ class RLRunConfig(_Strict):
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
         return self
+
+    @property
+    def identity(self) -> dict[str, str | int]:
+        """What every run is filtered by in W&B; each also becomes a ``key:value`` tag."""
+        centralized = self.icrl.centralized
+        if centralized:
+            judge = "learned"  # the learner writes the judge's instructions
+        elif self.training.train_receiver:
+            judge = "trained"
+        else:
+            judge = "sft" if self.models.receiver.startswith("tinker://") else "base"
+        reward = "paired" if centralized else self.reward.reward_fn
+        return {
+            "method": "icrl" if self.method == "in_context" else "gbrl",
+            "judge": judge,
+            "threat_model": "causal" if centralized else "self-recognition",
+            "reward_id": f"{reward}-s{self.reward.suspicion_threshold:g}",
+            "seed": self.seed,
+            "kind": self.kind,
+        }
 
     @property
     def checkpoint_name(self) -> str:
