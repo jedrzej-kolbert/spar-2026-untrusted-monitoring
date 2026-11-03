@@ -45,7 +45,7 @@ class DataConfig(_Strict):
     # Share of train problems kept for validation (attacks and honeypots alike),
     # split by problem ID with a fixed seed so every run uses the same split. The
     # test split never enters a run: final strategies are scored by the pipeline.
-    validation_fraction: float = Field(default=0.2, ge=0, lt=1)
+    validation_fraction: float = Field(default=0.28, ge=0, lt=1)
 
 
 class ChannelConfig(_Strict):

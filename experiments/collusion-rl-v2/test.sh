@@ -36,6 +36,7 @@ import yaml
 
 folder, label, model, system, limit, *strategy = sys.argv[1:]
 rewrite = {
+    # Inspect's provider prefix: tinker/<base model> or tinker/tinker://<checkpoint>.
     "model": model if model.startswith("tinker/") else f"tinker/{model}",
     "system_prompt": system,
     "user_prompt": "RL_SELF_REC_SENDER_USER_PROMPT",

@@ -985,7 +985,7 @@ def test_honeypots_are_every_working_one_split_like_the_attacks(
     assert {p.split for p, _ in tasks.train_honeypots} == {"train"}
     # Attacks and honeypots share one split by problem ID, the same for every seed.
     bucket = run.split_tasks(
-        [p for p, _ in pairs], validation_fraction=0.2, seed=run.SPLIT_SEED
+        [p for p, _ in pairs], validation_fraction=0.28, seed=run.SPLIT_SEED
     )
     assert [p.problem_id for p in bucket[1]] == [
         p.problem_id for p, _ in tasks.validation_honeypots
@@ -1238,7 +1238,8 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     assert ("split.json", "split") in wb.artifacts
     assert wb.summary["complete"] is True
     status = json.loads((tmp_path / "status.json").read_text())
-    assert (status["final_checkpoint"], "model") in wb.artifacts
+    # In the pipeline's form, so the test rewrite links to the checkpoint.
+    assert ("tinker/" + status["final_checkpoint"], "model") in wb.artifacts
     assert status["state"] == "finished"
     assert status["final_receiver_checkpoint"].endswith("_receiver")
     assert (
@@ -1295,12 +1296,28 @@ async def test_budget_cap_stops_before_an_unaffordable_step(
     assert progress_steps == [1, 2]
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["state"] == "finished" and "budget" in status["reason"]
+    assert wb.summary["complete"] is False  # stopped before its last step: partial
     assert status["final_receiver_checkpoint"].endswith("_receiver")
     assert any(s == 1 and "validation/p_self_rec" in v for s, v in wb.logs)
     usage_file = json.loads((tmp_path / "usage.json").read_text())
     assert usage_file["estimated_cost_usd"] == pytest.approx(1.2 * 3.718)
     assert usage_file["estimated_cost_usd"] == meter.cost_usd
     assert wb.summary["estimated_cost_usd"] == meter.cost_usd
+
+
+async def test_a_failure_while_opening_the_run_closes_it_as_partial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run, _, wb, _, config = driven_run(monkeypatch, tmp_path)
+
+    def broken(self: Any, path: Any, **kwargs: Any) -> None:
+        raise RuntimeError("artifact upload failed")
+
+    # run.tracking.StageRun is driven_run's fake stage.
+    monkeypatch.setattr(run.tracking.StageRun, "log_artifact", broken)
+    with pytest.raises(RuntimeError, match="artifact upload failed"):
+        await run.train(config, allow_paid=True)
+    assert wb.summary["complete"] is False
 
 
 @pytest.mark.parametrize("cap", [3.0, 4.0])

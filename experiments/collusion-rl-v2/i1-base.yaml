@@ -14,7 +14,6 @@ models:
 data:
   attacks_eval: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/generate/apps-262144_ft_a1611f-train-attacks-self_rec_subtle_attack-02737521009d/attacks.eval
   honeypots_eval: /home/jkk/spar-2026-untrusted-monitoring/experiments/exports/attack_SFT_full_test_batch64/SFT_self_rec_train/generator/honeypots.eval
-  validation_fraction: 0.28  # 100 validation attacks, 82 validation honeypots
 channel:
   kind: paraphrase
 reward:

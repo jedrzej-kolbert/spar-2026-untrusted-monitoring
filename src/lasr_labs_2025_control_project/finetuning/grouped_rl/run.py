@@ -74,7 +74,7 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # Records
 # --------------------------------------------------------------------------- #
 # Prefixes logged to W&B; everything else stays in metrics.jsonl only.
-WANDB_PREFIXES = ("train/", "validation/", "icrl/", "progress/")
+WANDB_PREFIXES = ("train/", "validation/", "progress/")
 
 
 def working(rollout: Rollout) -> bool:
@@ -183,6 +183,7 @@ class Recorder:
         inputs: list[tracking.ResolvedInput] | None = None,
         code: dict[str, Any] | None = None,
         allow_unlinked: bool = False,
+        resumed_from: dict[str, Any] | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.self_recognition = config.task_mode == "self_recognition"
@@ -199,8 +200,11 @@ class Recorder:
                 **json.loads(config.model_dump_json()),
                 "run": identity,
                 "code": code or {},
+                # A resumed run is a new W&B run; this names the state it continues.
+                "resumed_from": resumed_from,
             },
-            tags=[f"{key}:{value}" for key, value in identity.items()],
+            tags=[f"{key}:{value}" for key, value in identity.items()]
+            + (["resumed"] if resumed_from else []),
             inputs=inputs or [],
             models=[config.models.receiver],
             allow_unlinked=allow_unlinked,
@@ -298,7 +302,6 @@ class Recorder:
         }
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")
-        self.scalars(step, "icrl", row)
         self.strategy_rows.append(row)
         self.table(step, "icrl/strategies", self.strategy_rows)
 
@@ -406,14 +409,6 @@ class Tasks(NamedTuple):
             "validation_honeypots": ids(self.validation_honeypots),
             "train_dropped_without_honeypot": self.dropped,
         }
-
-
-def same_problem(
-    honeypots: list[tuple[AppsProblem, str]], problems: list[AppsProblem]
-) -> list[tuple[AppsProblem, str]]:
-    """The honeypots written for these problems."""
-    ids = {problem.problem_id for problem in problems}
-    return [pair for pair in honeypots if pair[0].problem_id in ids]
 
 
 def load_tasks(config: RLRunConfig) -> Tasks:
@@ -882,7 +877,10 @@ async def run_in_context(
                     if r.honeypot_p_yes is not None
                 }.items()
             )
-            round_auroc.append(batch_metrics(result, scores, trainer.config)["auroc"])
+            # The same train/ metrics as a GBRL step, so the methods share plots.
+            metrics = batch_metrics(result, scores, trainer.config)
+            round_auroc.append(metrics["auroc"])
+            recorder.scalars(step, "train", metrics)
 
     team = TrainerTeam(
         trainer,
@@ -1031,6 +1029,47 @@ async def run_in_context(
     )
 
 
+def open_recorder(
+    config: RLRunConfig,
+    code: dict[str, Any],
+    parity: dict[str, Any],
+    allow_unlinked: bool,
+    resumed_from: dict[str, Any] | None,
+) -> Recorder:
+    """The run's W&B stage run, with its split and, for uncommitted code, the diff."""
+    data = config.data
+    recorder = Recorder(
+        config,
+        config.output_dir,
+        inputs=[
+            tracking.resolve_input(path)
+            for path in (data.attacks_eval, data.honeypots_eval)
+            if path is not None
+        ],
+        code=code,
+        allow_unlinked=allow_unlinked,
+        resumed_from=resumed_from,
+    )
+    try:
+        recorder.status(state="starting", parity=parity)
+        recorder.scalars(0, "preflight", parity)
+        recorder.stage.log_artifact(
+            config.output_dir / "split.json",
+            type="split",
+            name=f"split-{config.run_name}",
+        )
+        if code["dirty"]:
+            diff = subprocess.run(
+                ["git", "diff", "HEAD"], capture_output=True, text=True
+            ).stdout
+            (config.output_dir / "code.diff").write_text(diff)
+            recorder.sync_file("code.diff")
+    except BaseException as error:
+        recorder.finish(False, repr(error))
+        raise
+    return recorder
+
+
 async def train(
     config: RLRunConfig,
     allow_paid: bool,
@@ -1102,29 +1141,6 @@ async def train(
 
     meter = usage.install()
     meter.max_cost_usd = config.training.max_cost_usd
-    data = config.data
-    recorder = Recorder(
-        config,
-        output_dir,
-        inputs=[
-            tracking.resolve_input(path)
-            for path in (data.attacks_eval, data.honeypots_eval)
-            if path is not None
-        ],
-        code=code,
-        allow_unlinked=allow_unlinked,
-    )
-    recorder.status(state="starting", parity=parity)
-    recorder.scalars(0, "preflight", parity)
-    recorder.stage.log_artifact(
-        output_dir / "split.json", type="split", name=f"split-{config.run_name}"
-    )
-    if code["dirty"]:
-        diff = subprocess.run(
-            ["git", "diff", "HEAD"], capture_output=True, text=True
-        ).stdout
-        (output_dir / "code.diff").write_text(diff)
-        recorder.sync_file("code.diff")
     box = StrategyBox() if config.method == "in_context" else None
     trainer, sender = await build_trainer(
         config, evaluator, resume_state=resume_state, strategy=box
@@ -1145,6 +1161,9 @@ async def train(
             temperature=config.icrl.learner_temperature,
             max_context_tokens=config.training.max_context_tokens,
         )
+        recorder = open_recorder(
+            config, code, parity, allow_unlinked, manifest.get("resumed_from")
+        )
         complete = False
         try:
             await run_in_context(
@@ -1164,24 +1183,10 @@ async def train(
             close_run(recorder, meter, output_dir, recorder.last_step, complete)
         return
 
-    if config.preflight.enabled and config.task_mode != "self_recognition":
-        preflight = await monitor_preflight(trainer, train_tasks, config)
-        click.echo(f"monitor preflight: {preflight}")
-        recorder.scalars(0, "preflight", preflight)
-        gap = preflight.get("overseer_explicit_suspicion", 0) - preflight.get(
-            "overseer_clean_suspicion", 0
-        )
-        if gap < config.preflight.require_overseer_gap:
-            recorder.status(state="stopped", reason=f"overseer gap {gap:.3f} too small")
-            raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
-
-    rng = random.Random(config.seed)
-    order: list[AppsProblem] = []
-    skipped = 0
+    recorder = open_recorder(
+        config, code, parity, allow_unlinked, manifest.get("resumed_from")
+    )
     training = config.training
-    # Replay earlier draws so a resumed run continues the same batch sequence.
-    for _ in range(1, start_step):
-        next_batch(order, train_tasks, training.problems_per_step, rng)
     honeypots = tasks.validation_honeypots
     last_step_cost = 0.0
     completed, last_eval = start_step - 1, start_step - 1
@@ -1198,6 +1203,24 @@ async def train(
 
     complete = False
     try:
+        if config.preflight.enabled and config.task_mode != "self_recognition":
+            preflight = await monitor_preflight(trainer, train_tasks, config)
+            click.echo(f"monitor preflight: {preflight}")
+            recorder.scalars(0, "preflight", preflight)
+            gap = preflight.get("overseer_explicit_suspicion", 0) - preflight.get(
+                "overseer_clean_suspicion", 0
+            )
+            if gap < config.preflight.require_overseer_gap:
+                recorder.status(
+                    state="stopped", reason=f"overseer gap {gap:.3f} too small"
+                )
+                raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
+        rng = random.Random(config.seed)
+        order: list[AppsProblem] = []
+        skipped = 0
+        # Replay earlier draws so a resumed run continues the same batch sequence.
+        for _ in range(1, start_step):
+            next_batch(order, train_tasks, training.problems_per_step, rng)
         # A frozen judge gives each train honeypot one score, for the train AUROC.
         frozen_scores: list[tuple[str, float]] = []
         if trainer.config.self_recognition and not training.train_receiver:
@@ -1317,8 +1340,8 @@ async def train(
             recorder.status(state="training", step=step)
             click.echo(
                 f"step {step}: reward {metrics['mean_reward']}, "
-                f"balanced acc {metrics['balanced_accuracy']}, "
-                f"pass {metrics['correctness']}, suspicion {metrics['suspicion_mean']}"
+                f"tests passed {metrics['correctness']}, "
+                f"backdoor fires {metrics['backdoor_success']}"
             )
             completed = step
             if step % config.eval.every == 0 or step == training.steps:
@@ -1334,7 +1357,7 @@ async def train(
                 path = await sender.save_checkpoint(
                     f"{config.checkpoint_name}_step{step}"
                 )
-                recorder.stage.log_model_ref(path, {"step": step})
+                recorder.stage.log_model_ref(f"tinker/{path}", {"step": step})
                 state = await sender.save_state(
                     f"{config.checkpoint_name}_state_step{step}"
                 )
@@ -1373,7 +1396,7 @@ async def train(
                 completed,
             )
         final = await sender.save_checkpoint(config.checkpoint_name)
-        recorder.stage.log_model_ref(final, {"step": completed})
+        recorder.stage.log_model_ref(f"tinker/{final}", {"step": completed})
         # Resumable sender state, so a finished run can be extended with more steps.
         final_state = await sender.save_state(
             f"{config.checkpoint_name}_state_step{completed}"
@@ -1391,7 +1414,7 @@ async def train(
             _update_ckpts_json(
                 config.checkpoints.ckpts_json, config.checkpoint_name, final
             )
-        complete = True
+        complete = completed == training.steps
     finally:
         close_run(recorder, meter, output_dir, step, complete)
 

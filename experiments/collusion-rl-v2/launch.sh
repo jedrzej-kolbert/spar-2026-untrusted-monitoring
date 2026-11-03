@@ -11,6 +11,8 @@ source experiments/collusion-rl-v2/env.sh
 cmd=(uv run python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run
   --config "experiments/collusion-rl-v2/$arm.yaml" --seed "$seed" "$@")
 if [[ " $* " == *" --allow-paid "* ]]; then
+  # The run refuses uncommitted code too, but only in its log once detached.
+  git diff --quiet HEAD -- || { echo "commit first: tracked files differ from HEAD" >&2; exit 1; }
   log="experiments/collusion-rl-v2/runs/$arm-s$seed.log"
   mkdir -p "$(dirname "$log")"
   setsid nohup "${cmd[@]}" > "$log" 2>&1 < /dev/null &

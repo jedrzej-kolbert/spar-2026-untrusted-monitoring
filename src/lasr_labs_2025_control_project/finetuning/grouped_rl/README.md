@@ -216,7 +216,8 @@ backdoored solution and preserving its original trigger are choices of this
 self-recognition experiment, not constraints inherited from HiPT.
 
 W&B keeps `icrl/strategies` (strategy, reward and every reward component),
-`icrl/proposed_strategies`, and `icrl/held_out`. `learner.jsonl` records each exact
+`icrl/proposed_strategies`, and `icrl/validation` (the top strategies on validation
+problems, the winner and the no-strategy rewrite). `learner.jsonl` records each exact
 request/reply with stage `strategy`, `reflection` or `strategize`, including any
 malformed strategy replies (upstream allows two attempts). This file,
 `strategies.jsonl`, `rollouts.jsonl` and `icrl_result.json` are uploaded; the final
