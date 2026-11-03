@@ -12,7 +12,6 @@ updates that view instead of saving a new one.
 
 from __future__ import annotations
 
-import os
 
 import click
 
@@ -59,7 +58,6 @@ def panel(key: str, kind: str) -> object:
 @click.option("--url", default=None, help="A saved view to update.")
 @click.option("--name", default="RL runs", help="Name of a new view.")
 def main(project: str, url: str | None, name: str) -> None:
-    os.environ.pop("WANDB_API_KEY", None)  # the ~/.netrc key has team access
     import wandb
     import wandb_workspaces.workspaces as ws
 

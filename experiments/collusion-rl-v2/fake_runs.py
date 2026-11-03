@@ -4,7 +4,7 @@ Every model call is replaced by a seeded random stand-in, so the numbers mean
 nothing; the run layout (config, tags, metrics, tables, files, artifacts) is what a
 real run records. Run from the repo root:
 
-    source experiments/collusion-rl-v2/env.sh && WANDB_PROJECT=collusion-rl-v2-smoke \\
+    WANDB_ENTITY=spar-untrusted-monitoring-collusion WANDB_PROJECT=collusion-rl-v2-smoke \\
         uv run python experiments/collusion-rl-v2/fake_runs.py
 """
 

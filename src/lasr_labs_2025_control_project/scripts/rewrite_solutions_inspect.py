@@ -196,25 +196,92 @@ def with_strategy_result(
     return settings.model_copy(update=update), [source], winner["decoder"]
 
 
+LEARNED_JUDGES = Path(__file__).parents[1] / "prompts" / "learned_judge_prompts.py"
+
+
+def for_label(
+    parsed: RewriteConfig, label: str | None, overrides: dict[str, str | None]
+) -> RewriteConfig:
+    """The config with rewrite settings overridden and, given a label, its one run
+    renamed to the label and saved under ``<label>/``."""
+    updates = {k: v for k, v in overrides.items() if v is not None}
+    settings = parsed.defaults["rewrite"].model_copy(update=updates)
+    runs = parsed.runs
+    if label is not None:
+        if len(runs) != 1:
+            raise click.UsageError("--label needs a config with exactly one run")
+        (run,) = runs.values()
+        runs = {
+            label: run.model_copy(update={"save_path": Path(label) / run.save_path})
+        }
+    return parsed.model_copy(update={"defaults": {"rewrite": settings}, "runs": runs})
+
+
+def register_judge(label: str, instructions: str) -> str:
+    """Add the learned judge as prompt JUDGE_<LABEL> (the search's template, filled)."""
+    name = "JUDGE_" + label.upper().replace("-", "_")
+    line = f"{name} = _judge({instructions!r})\n"
+    text = LEARNED_JUDGES.read_text()
+    if f"{name} = " not in text:
+        LEARNED_JUDGES.write_text(text + "\n" + line)
+    elif line not in text:
+        raise click.ClickException(f"{name} already exists with other instructions")
+    return name
+
+
 @click.command()
 @click.option("--config", type=str, required=True)
 @click.option(
     "--limit", type=int, default=None, help="Rewrite only the first N samples."
 )
+@click.option(
+    "--label", default=None, help="Name the config's one run; saved under it."
+)
+@click.option(
+    "--strategy-result",
+    default=None,
+    help="An ICRL run's icrl_result.json or wandb: ref to its strategy artifact.",
+)
+@click.option(
+    "--model", default=None, help="Sender model, e.g. tinker/tinker://<ckpt>."
+)
+@click.option("--system-prompt", default=None, help="Sender system prompt name.")
 @click.option("--allow-unlinked", is_flag=True, help=tracking.ALLOW_UNLINKED_HELP)
-def main(config: str, limit: int | None, allow_unlinked: bool) -> None:
+def main(
+    config: str,
+    limit: int | None,
+    label: str | None,
+    strategy_result: str | None,
+    model: str | None,
+    system_prompt: str | None,
+    allow_unlinked: bool,
+) -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
-    parsed = RewriteConfig.model_validate(yaml.safe_load(Path(config).read_text()))
+    parsed = for_label(
+        RewriteConfig.model_validate(yaml.safe_load(Path(config).read_text())),
+        label,
+        {
+            "strategy_result": strategy_result,
+            "model": model,
+            "system_prompt": system_prompt,
+        },
+    )
     folder = parsed.experiment_folder
-    (folder / "configs").mkdir(parents=True, exist_ok=True)
-    shutil.copy(config, folder / "configs" / "rewrite_config.yaml")
     settings, strategy_inputs, judge = with_strategy_result(parsed.defaults["rewrite"])
-    if judge:
-        # test.sh score gives these to the pipeline's judge, as the search's judge had them.
-        (folder / "judge_instructions.txt").write_text(judge)
     for label, run in parsed.runs.items():
+        out = (folder / run.save_path).parent
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "rewrite_config.yaml").write_text(
+            yaml.safe_dump(parsed.model_dump(mode="json"), sort_keys=False)
+        )
+        if judge:
+            name = register_judge(label, judge)
+            click.echo(
+                f"judge prompt {name} added to {LEARNED_JUDGES}; commit it, then score "
+                f"with +measurement.arms.base.collusion_prompt={name}"
+            )
         resolved = RewriteRun(
             eval_path=(folder / run.eval_path).resolve(),
             save_path=folder / run.save_path,
@@ -236,7 +303,6 @@ def main(config: str, limit: int | None, allow_unlinked: bool) -> None:
                 limit=resolved.limit,
                 metadata=stage.eval_metadata(),
             )
-            resolved.save_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(result[0].location, resolved.save_path)
             try:
                 stage.finish_eval(

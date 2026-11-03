@@ -1,0 +1,33 @@
+# @package _global_
+# Test scoring for collusion RL (branch exp/collusion-rl-v2): rewrites of the 309 working
+# V4.1 test attacks against the 246 working test honeypots, scored by the base judge on
+# both channels with the same monitors and game as the V4.1 SFT runs. Give per run:
+#   name=rlv2_<label> +inputs.generate.test.attacks=<rewrites .eval>
+# (the original attacks for the base-model baseline). A centralized (I2) run adds
+#   +measurement.arms.base.collusion_prompt=JUDGE_<LABEL> and this project's base-judge
+#   honest monitor outputs (the game reads only their suspicion scores).
+# Honeypots and honest solutions are the V4.1 runs' own, scored again in this project:
+# Tinker's scores on 3 Nov differ from the stored 28 Oct ones for the same inputs.
+# Commands: src/lasr_labs_2025_control_project/rl-steps.md, "Collusion RL v2".
+name: rl_test
+stages: [transform, monitor, game, analysis]
+models:
+  U: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
+  generation_max_tokens: 65536
+measurement:
+  collusion_strategy: self_rec
+  transforms: [none, paraphrased]
+  arms:
+    base: {model: U}
+optimization:
+  bootstrap:
+    replicates: 200
+    chunk_size: 100
+inputs:
+  generate:
+    test:
+      # V3.1's 246 working test honeypots, as in the V4.1 runs
+      honeypots: /home/jkk/spar-2026-untrusted-monitoring/experiments/exports/attack_SFT_full_test_batch64/self_rec_attack_test/generator/honeypots.eval
+      # V4.1's honest test solutions (817 valid)
+      honest: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/generate/apps-262144_ft_a1611f-test-honest-honest-267d38248808/honest.eval
+wandb_tags: [collusion-rl-v2]

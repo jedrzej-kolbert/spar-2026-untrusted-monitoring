@@ -1,6 +1,6 @@
 # Wiring test of I1-base: one strategy round on 8 problems, then validation.
 # r = V * g(s) * P(self_rec | rewrite), g midpoint 0.85, steepness 30.
-# Run: WANDB_PROJECT=collusion-rl-v2-smoke experiments/collusion-rl-v2/launch.sh smoke/i1-base 0 --allow-paid
+# Ran 3 Nov in W&B project collusion-rl-v2-smoke; commands in rl-steps.md, "Collusion RL v2".
 run_name: smoke-i1-base
 output_dir: experiments/collusion-rl-v2/runs/smoke/i1-base
 kind: smoke

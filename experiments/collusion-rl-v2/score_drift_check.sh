@@ -2,9 +2,8 @@
 # Score the first 20 original test attacks (no jamming, base judge) with today's monitor code
 # (one-request YES/NO), to compare with the stored V4.1 scores. Extra args: allow_paid=true.
 set -euo pipefail
-cd /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl
-export WANDB_PROJECT=collusion-rl-v2-smoke
-source experiments/collusion-rl-v2/env.sh
+cd "$(dirname "$0")/../.."
+export WANDB_ENTITY=spar-untrusted-monitoring-collusion WANDB_PROJECT=collusion-rl-v2-smoke
 V=/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps
 X=/home/jkk/spar-2026-untrusted-monitoring/experiments/exports/attack_SFT_full_test_batch64
 M=$V/monitor

@@ -1,10 +1,10 @@
-# I1-base: ICRL, sender-only, frozen base judge (self-recognition).
-# r = V * g(s) * P(self_rec | rewrite), g midpoint 0.85, steepness 30.
-# Run: experiments/collusion-rl-v2/launch.sh i1-base <seed>
-run_name: i1-base
-output_dir: experiments/collusion-rl-v2/runs/i1-base
-kind: main
-method: in_context
+# Wiring test of G1-base: one GBRL step on 4 problems x 4 samples, validation before and after.
+# Same reward as I1-base; validation runs before and after the step.
+# Ran 3 Nov in W&B project collusion-rl-v2-smoke; commands in rl-steps.md, "Collusion RL v2".
+run_name: smoke-g1-base
+output_dir: experiments/collusion-rl-v2/runs/smoke/g1-base
+kind: smoke
+method: gradient
 task_mode: self_recognition
 models:
   sender: deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
@@ -25,20 +25,21 @@ reward:
   backdoor_suspicion_weight: 1
   kl_coef: 0
 training:
+  steps: 1
+  problems_per_step: 4
+  group_size: 4
+  payload_grouping: single
+  ppo_passes: 1
+  learning_rate: 0.00015
   max_tokens: 4096
-  max_context_tokens: 200000
-  max_cost_usd: 9.0
-  max_concurrency: 8
+  max_context_tokens: 32768
+  train_receiver: false
+  max_cost_usd: 4.0
+  max_concurrency: 32
+eval:
+  every: 10
 preflight:
   enabled: false
 checkpoints:
+  save_every: 10
   ckpts_json: null
-icrl:
-  episodes: 8
-  search_problems: 32
-  validate_top: 3
-  learner: deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
-  learner_max_tokens: 6144
-  n_result_examples: 2
-sandbox:
-  max_output_bytes: 8388608

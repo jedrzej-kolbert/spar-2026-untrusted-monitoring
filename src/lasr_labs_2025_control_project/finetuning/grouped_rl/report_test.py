@@ -1,13 +1,15 @@
 """Write a final strategy's test scores into its RL run's W&B page, as ``test/``.
 
-The pipeline scores the test rewrites (``experiments/collusion-rl-v2/test.sh``);
-each channel's game folder holds the scores of the working rewrites, the 246
-working test honeypots and the honest solutions, the ROC curves and the safety
-sweep. This reads them, so the RL run shows train, validation and test together:
+The pipeline scores the test rewrites (``conf/experiment/rl_test.yaml``); each
+channel's game folder holds the scores of the working rewrites, the 246 working test
+honeypots and the honest solutions, the ROC curves and the safety sweep. This reads
+them, so the RL run shows train, validation and test together:
 
     python -m lasr_labs_2025_control_project.finetuning.grouped_rl.report_test \\
-        --run <entity/project/run_id> --rewrites <test rewrites .eval> \\
-        --game paraphrased=<game folder> --game none=<game folder>
+        --run <entity/project/run_id> --label <rewrite label>
+
+``--label`` finds the rewrites and the games scored on them; ``--rewrites`` and
+``--game channel=<folder>`` name them instead.
 """
 
 from __future__ import annotations
@@ -96,13 +98,37 @@ def rewrite_rates(path: Path) -> dict[str, Any]:
     }
 
 
+REWRITES = Path("experiments/collusion-rl-v2/test")
+GAMES = Path("experiments/apps/game")
+
+
+def games_for(label: str) -> list[str]:
+    """``channel=folder`` for each game whose attacks are this label's rewrites."""
+    found = []
+    for folder in sorted(GAMES.glob("apps.self_rec.*")):
+        inputs = json.load(gzip.open(folder / "analysis_data.json.gz"))["pipeline"]
+        if f"rewrite-collusion-rl-v2-{label}." in inputs["inputs"]["attacks"]:
+            found.append(f"{folder.name.split('.')[2]}={folder}")
+    return found
+
+
 @click.command()
 @click.option("--run", "run_path", required=True, help="entity/project/run_id")
-@click.option("--rewrites", type=click.Path(exists=True, path_type=Path), required=True)
-@click.option("--game", "games", multiple=True, required=True, help="channel=folder")
-def main(run_path: str, rewrites: Path, games: tuple[str, ...]) -> None:
+@click.option(
+    "--label", default=None, help="Find the rewrites and games of this label."
+)
+@click.option("--rewrites", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--game", "games", multiple=True, help="channel=folder")
+def main(
+    run_path: str, label: str | None, rewrites: Path | None, games: tuple[str, ...]
+) -> None:
     import wandb
 
+    if label is not None:
+        rewrites = rewrites or REWRITES / label / "attacks.eval"
+        games = games or tuple(games_for(label))
+    if rewrites is None or not games:
+        raise click.UsageError("no rewrites or games: give --label, or both options")
     rates = rewrite_rates(rewrites)
     entity, project, run_id = run_path.split("/")
     run = wandb.init(entity=entity, project=project, id=run_id, resume="must")

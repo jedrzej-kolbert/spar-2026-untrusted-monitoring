@@ -1,6 +1,6 @@
 # G1-base: GBRL (LoRA RL on the sender), frozen base judge (self-recognition).
 # Same reward as I1-base. Validation every 10 steps picks the checkpoint for test.
-# Run: experiments/collusion-rl-v2/launch.sh g1-base <seed>
+# Commands: src/lasr_labs_2025_control_project/rl-steps.md, "Collusion RL v2".
 run_name: g1-base
 output_dir: experiments/collusion-rl-v2/runs/g1-base
 kind: main
