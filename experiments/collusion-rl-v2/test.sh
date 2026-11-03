@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Test scoring of one final strategy or checkpoint, the same way as the SFT judges:
 #   test.sh rewrite <label> <source> [limit]   rewrite the 309 working test attacks (paid)
-#       source: strategy=<icrl_result.json or wandb: ref to its strategy artifact>
-#               model=<tinker:// sender checkpoint> | none (rewrite with no strategy)
+#       source: strategy=<icrl_result.json or wandb: ref to its strategy artifact> (I1)
+#               central=<the same, for a centralized run: sender prompt and judge text> (I2)
+#               model=<tinker:// sender checkpoint> (G1) | none (rewrite with no strategy)
 #   test.sh score <label> [pipeline overrides]  monitors, game and analysis on the rewrites
 #       (base judge, paraphrased and no jamming). Prints the plan only, unless given
 #       allow_paid=true. Honeypots and honest solutions are the V4.1 runs' own, but they
 #       are scored again here: Tinker's V4.1 scores on 3 Nov differ from the stored
 #       28 Oct ones for the same prompt and code (e.g. YES - NO -1.75 vs -0.21), so
 #       stored scores are not mixed with new ones. The pipeline scores them once per
-#       project and reuses them for every later label.
+#       project and reuses them for every later label. For a centralized run the judge
+#       reads the run's learned instructions (prompt JUDGE_<LABEL>), so its honeypots are
+#       scored again too; honest solutions keep the base judge's scores, as the game reads
+#       only their suspicion scores, which do not depend on the judge prompt.
 #   test.sh report <label> <entity/project/run_id>  write the games' test scores into the
 #       RL run's W&B page (test/, paraphrased_* and no_jamming_*), free
 set -euo pipefail
@@ -28,6 +32,7 @@ rewrite)
   source=$1 limit=${2:-null} model=$U strategy=() system=RL_SELF_REC_SENDER_SYSTEM_PROMPT
   case $source in
     strategy=*) strategy=(strategy_result "${source#strategy=}") ;;
+    central=*) strategy=(strategy_result "${source#central=}") system=RL_CENTRAL_SENDER_SYSTEM_PROMPT ;;
     model=*) model=${source#model=} ;;
     none) ;;
     *) echo "unknown source $source" >&2; exit 1 ;;
@@ -67,6 +72,29 @@ EOF
     lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect --config "$folder/rewrite.yaml"
   ;;
 score)
+  judge=()
+  if [ -f "$folder/judge_instructions.txt" ]; then
+    name=JUDGE_$(echo "$label" | tr '[:lower:]-' '[:upper:]_')
+    uv run python - "$name" "$folder/judge_instructions.txt" <<'EOF'
+import sys
+from pathlib import Path
+
+name, path = sys.argv[1:]
+module = Path("src/lasr_labs_2025_control_project/prompts/learned_judge_prompts.py")
+text = module.read_text()
+line = f"{name} = _judge({Path(path).read_text()!r})\n"
+if f"{name} = " not in text:
+    module.write_text(text + "\n" + line)
+elif line not in text:
+    sys.exit(f"{name} already exists with other instructions")
+EOF
+    # The base judge's honest scores from this project (baseline-base): the game reads
+    # only their suspicion scores.
+    M=experiments/apps/monitor
+    judge=("+measurement.arms.base.collusion_prompt=$name"
+      "+inputs.monitor.none.base.honest=$M/apps-262144_ft_a1611f-test-honest-honest.mon-262144_ft_a1611f-self_rec_collusion-36f750b15b47/honest.eval"
+      "+inputs.monitor.paraphrased.base.honest=$M/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-self_rec_collusion-a1fdc5ca2a29/honest.eval")
+  fi
   exec uv run python -m lasr_labs_2025_control_project.pipeline experiment=self_rec \
     "models.U='$U'" "name=rlv2_$label" models.generation_max_tokens=65536 \
     '~measurement.arms.sft' 'stages=[transform,monitor,game,analysis]' \
@@ -75,7 +103,7 @@ score)
     "+inputs.generate.test.attacks=$folder/attacks.eval" \
     "+inputs.generate.test.honeypots=$X/self_rec_attack_test/generator/honeypots.eval" \
     "+inputs.generate.test.honest=$V41/generate/apps-262144_ft_a1611f-test-honest-honest-267d38248808/honest.eval" \
-    "wandb_tags=[collusion-rl-v2,$label]" "$@"
+    "wandb_tags=[collusion-rl-v2,$label]" ${judge[@]+"${judge[@]}"} "$@"
   ;;
 report)
   # This label's games: their attacks input is a monitor output of this label's rewrite.

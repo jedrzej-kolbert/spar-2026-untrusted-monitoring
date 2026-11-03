@@ -172,20 +172,28 @@ def rewrite_solutions(run: RewriteRun, settings: RewriteSettings) -> Task:
     )
 
 
+CENTRAL_SENDER = "RL_CENTRAL_SENDER_SYSTEM_PROMPT"
+
+
 def with_strategy_result(
     settings: RewriteSettings,
-) -> tuple[RewriteSettings, list[tracking.ResolvedInput]]:
-    """Settings with the winner's instructions from ``strategy_result``, and its input."""
+) -> tuple[RewriteSettings, list[tracking.ResolvedInput], str]:
+    """Settings with the winner's sender instructions from ``strategy_result``, its
+    input, and the winner's judge instructions (empty unless centralized)."""
     if settings.strategy_result is None:
-        return settings, []
+        return settings, [], ""
     if settings.strategy:
         raise ValueError("give strategy or strategy_result, not both")
     source = tracking.resolve_input(settings.strategy_result)
     winner = json.loads(source.local_path.read_text())["winner"]
-    if winner["decoder"]:
-        # The pipeline's judge would need the learned instructions as a prompt.
-        raise ValueError("a centralized strategy's judge text is not wired in yet")
-    return settings.model_copy(update={"strategy": winner["strategy"]}), [source]
+    if bool(winner["decoder"]) != (settings.system_prompt == CENTRAL_SENDER):
+        # The sender must see the system prompt it was searched with.
+        raise ValueError(
+            f"a centralized strategy needs system_prompt {CENTRAL_SENDER}, "
+            "and only a centralized one"
+        )
+    update = {"strategy": winner["strategy"]}
+    return settings.model_copy(update=update), [source], winner["decoder"]
 
 
 @click.command()
@@ -202,7 +210,10 @@ def main(config: str, limit: int | None, allow_unlinked: bool) -> None:
     folder = parsed.experiment_folder
     (folder / "configs").mkdir(parents=True, exist_ok=True)
     shutil.copy(config, folder / "configs" / "rewrite_config.yaml")
-    settings, strategy_inputs = with_strategy_result(parsed.defaults["rewrite"])
+    settings, strategy_inputs, judge = with_strategy_result(parsed.defaults["rewrite"])
+    if judge:
+        # test.sh score gives these to the pipeline's judge, as the search's judge had them.
+        (folder / "judge_instructions.txt").write_text(judge)
     for label, run in parsed.runs.items():
         resolved = RewriteRun(
             eval_path=(folder / run.eval_path).resolve(),
