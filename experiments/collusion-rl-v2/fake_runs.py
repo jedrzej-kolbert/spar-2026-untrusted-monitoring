@@ -39,6 +39,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 )
 
 HERE = Path(__file__).parent
+ARMS = HERE.parents[1] / "src/lasr_labs_2025_control_project/configs/rl/collusion_rl_v2"
 OUT = HERE / "runs" / "fake"
 rng = random.Random(0)
 
@@ -143,7 +144,7 @@ class Learner:
 
 
 def config(arm: str, **overrides: Any) -> RLRunConfig:
-    values = yaml.safe_load((HERE / f"{arm}.yaml").read_text())
+    values = yaml.safe_load((ARMS / f"{arm.replace('-', '_')}.yaml").read_text())
     values.update(run_name=f"fake-{arm}", kind="smoke", output_dir=str(OUT / arm))
     for key, value in overrides.items():
         values[key] = {**values.get(key, {}), **value}

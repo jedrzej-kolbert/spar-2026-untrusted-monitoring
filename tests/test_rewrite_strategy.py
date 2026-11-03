@@ -83,6 +83,10 @@ def test_test_rewrite_template_takes_a_label_and_a_source() -> None:
     rewrite = config.defaults["rewrite"]
     assert rewrite.model == "tinker/tinker://x" and rewrite.max_tokens == 4096
     assert rewrite.system_prompt == "RL_SELF_REC_SENDER_SYSTEM_PROMPT"
+    import click
+
+    with pytest.raises(click.UsageError):
+        for_label(template, "i2.s0", {})
 
 
 def test_a_learned_judge_is_registered_once(

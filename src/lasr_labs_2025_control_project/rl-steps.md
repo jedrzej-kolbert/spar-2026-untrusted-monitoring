@@ -182,6 +182,7 @@ python -m lasr_labs_2025_control_project.pipeline experiment=rl_test_sft name=rl
 **2. Search or training**, seeds 0, 1, 2 (`--seed` appends `-s<seed>` to the run name and output folder). First without `--allow-paid` (free: loads the split, checks the sandbox), then detached:
 ```
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run --config $C/i1_base.yaml --seed 0
+mkdir -p experiments/collusion-rl-v2/runs
 setsid nohup python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
   --config $C/i1_base.yaml --seed 0 --allow-paid > experiments/collusion-rl-v2/runs/i1-base-s0.log 2>&1 &
 ```

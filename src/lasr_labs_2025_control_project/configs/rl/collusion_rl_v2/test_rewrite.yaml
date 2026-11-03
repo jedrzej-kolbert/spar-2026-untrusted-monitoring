@@ -1,0 +1,22 @@
+# Rewrite of the 309 working V4.1 test attacks by a finished collusion-RL run, for test
+# scoring (conf/experiment/rl_test.yaml). Per run, give rewrite_solutions_inspect:
+#   --label <label>                          output experiments/collusion-rl-v2/test/<label>/
+#   --strategy-result wandb:<.../strategy-<run>:v0>   an ICRL winner (I1)
+#     + --system-prompt RL_CENTRAL_SENDER_SYSTEM_PROMPT  for a centralized winner (I2)
+#   --model tinker/tinker://<checkpoint>     a GBRL checkpoint (G1)
+#   (nothing: the base model with no strategy, the empty-rewrite baseline)
+# The settings match the searches: same prompts, signal and 4096-token cap.
+# Commands: src/lasr_labs_2025_control_project/rl-steps.md, "Collusion RL v2".
+experiment_folder: experiments/collusion-rl-v2/test
+experiment_name: collusion-rl-v2
+defaults:
+  rewrite:
+    model: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
+    system_prompt: RL_SELF_REC_SENDER_SYSTEM_PROMPT
+    user_prompt: RL_SELF_REC_SENDER_USER_PROMPT
+    signal: RL_SIGNAL_ON
+    max_tokens: 4096
+runs:
+  test:
+    eval_path: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/generate/apps-262144_ft_a1611f-test-attacks-self_rec_subtle_attack-6f5c6a86b195/attacks.eval
+    save_path: attacks.eval

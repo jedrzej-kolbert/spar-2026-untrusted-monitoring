@@ -15,6 +15,7 @@ the RL checkpoint, or the ICRL result its strategy came from.
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -208,6 +209,9 @@ def for_label(
     settings = parsed.defaults["rewrite"].model_copy(update=updates)
     runs = parsed.runs
     if label is not None:
+        # The label becomes the Python name JUDGE_<LABEL> in learned_judge_prompts.py.
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
+            raise click.UsageError("--label may use only letters, digits, - and _")
         if len(runs) != 1:
             raise click.UsageError("--label needs a config with exactly one run")
         (run,) = runs.values()
