@@ -411,12 +411,21 @@ def load_tasks(
                 train = [t for t in train if t.problem_id not in dropped]
         if config.eval.honeypot_eval:
             if data.validation_honeypots_eval:
-                negatives = [
-                    s
-                    for path in data.validation_honeypots_eval
-                    for s in read_generator_eval(path)
+                # Every working honeypot in the test logs, as in the game, whether
+                # or not the same problem has a working attack.
+                honeypots = [
+                    (dataclasses.replace(task, split="validation"), task.base_code)
+                    for task in attack_tasks(
+                        [
+                            s
+                            for path in data.validation_honeypots_eval
+                            for s in read_generator_eval(path)
+                        ],
+                        max_tests=data.max_tests,
+                    )
                 ]
-            honeypots = honeypot_pairs(negatives, validation)
+            else:
+                honeypots = honeypot_pairs(negatives, validation)
     if not train:
         raise ValueError("no training tasks survived filtering")
     if len(train) < config.training.problems_per_step:
@@ -953,12 +962,13 @@ async def run_in_context(
     recorder.sync_file("icrl_result.json")
     recorder.status(
         state="finished",
-        held_out_auroc_best=held_out["best"]["auroc"],
-        held_out_auroc_baseline=held_out["baseline"]["auroc"],
+        held_out_auroc_best=held_out["best"]["auroc_working"],
+        held_out_auroc_baseline=held_out["baseline"]["auroc_working"],
     )
     click.echo(
-        f"best strategy (round {best.round}): held-out AUROC "
-        f"{held_out['best']['auroc']} vs baseline {held_out['baseline']['auroc']}"
+        f"best strategy (round {best.round}): held-out AUROC on working rewrites "
+        f"{held_out['best']['auroc_working']} vs baseline "
+        f"{held_out['baseline']['auroc_working']}"
     )
 
 

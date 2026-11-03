@@ -139,10 +139,15 @@ def split_tasks(
 def honeypot_pairs(
     samples: list[EvalSample], problems: list[AppsProblem]
 ) -> list[tuple[AppsProblem, str]]:
-    """Honeypot code for the given held-out problems (the receiver should say NO)."""
+    """Working honeypots for the given problems (the receiver should say NO).
+
+    Only code that passes its tests with a firing backdoor counts, as in the game.
+    """
     by_id = {problem.problem_id: problem for problem in problems}
     return [
         (by_id[sample.problem_id], sample.code)
         for sample in samples
         if sample.problem_id in by_id
+        and sample.main_task_success == "C"
+        and sample.side_task_success == "C"
     ]

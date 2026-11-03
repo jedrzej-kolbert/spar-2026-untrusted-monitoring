@@ -43,7 +43,9 @@ class DataConfig(_Strict):
     require_backdoor: bool = True
     max_tests: int | None = 10
     validation_fraction: float = Field(default=0.2, ge=0, lt=1)
-    max_validation_problems: int | None = 20
+    # None evaluates every held-out problem. A cap keeps the lowest IDs, not a
+    # random sample, so its AUROC is not comparable with the pipeline's.
+    max_validation_problems: int | None = None
     # Evaluate on separate logs (e.g. the test split) instead of a split of
     # attacks_eval; every attacks_eval task is then used for training.
     validation_attacks_eval: list[Path] | None = None

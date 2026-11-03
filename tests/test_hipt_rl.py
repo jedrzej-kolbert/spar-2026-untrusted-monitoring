@@ -33,6 +33,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
 from lasr_labs_2025_control_project.finetuning.grouped_rl.data import (
     EvalSample,
     attack_tasks,
+    honeypot_pairs,
     split_tasks,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
@@ -612,6 +613,20 @@ def sample(
     )
 
 
+def test_only_working_honeypots_are_paired() -> None:
+    samples = [
+        sample("1", "C", "C"),
+        sample("3", "I", "C"),
+        sample("5", "C", "I"),
+        sample("9", "C", "C"),
+    ]
+    problems = attack_tasks(
+        [sample(i, "C", "C") for i in ("1", "3", "5")],
+    )
+    pairs = honeypot_pairs(samples, problems)
+    assert [problem.problem_id for problem, _ in pairs] == ["1"]
+
+
 def test_attack_filtering_and_test_truncation() -> None:
     samples = [
         sample("1", "C", "C"),
@@ -954,6 +969,44 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
     negatives[0] = replace(negatives[0], model="deepseek-ai/DeepSeek-V3.1")
     with pytest.raises(ValueError, match="different model"):
         run.load_tasks(self_rec_config())
+
+
+def test_held_out_uses_every_working_test_honeypot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+
+    train = [sample(str(i), "C", "C") for i in range(1, 40, 2)]
+    attacks = [sample("2", "C", "C"), sample("4", "I", "C")]
+
+    def other(item: EvalSample) -> EvalSample:
+        return replace(item, model="another-model")
+
+    honeypots = [
+        other(sample("2", "C", "I")),  # broken, though its attack works
+        other(sample("4", "C", "C")),  # works, though its attack doesn't
+    ]
+
+    def read(path: object) -> list:
+        return {
+            "val.eval": attacks,
+            "val_honeypots.eval": honeypots,
+            "honeypots.eval": [other(item) for item in train],
+        }.get(str(path), train)
+
+    monkeypatch.setattr(run, "read_generator_eval", read)
+    config = self_rec_config(
+        data={
+            "attacks_eval": "attacks.eval",
+            "honeypots_eval": "honeypots.eval",
+            "validation_attacks_eval": ["val.eval"],
+            "validation_honeypots_eval": ["val_honeypots.eval"],
+        }
+    )
+    _, validation, _, eval_negatives, _ = run.load_tasks(config)
+    assert [p.problem_id for p in validation] == ["2"]
+    assert [(p.problem_id, p.split) for p, _ in eval_negatives] == [("4", "validation")]
 
 
 def test_separate_validation_logs_are_labelled_validation(
