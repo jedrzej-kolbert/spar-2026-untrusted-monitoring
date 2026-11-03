@@ -76,16 +76,16 @@ def game_metrics(
 
 
 def rewrite_rates(path: Path) -> dict[str, Any]:
-    """Tests-passed and backdoor-fires rates over every test rewrite."""
-    from .data import read_generator_eval
+    """Tests-passed and backdoor-fires rates over every test rewrite, failed ones too."""
+    from inspect_ai.log import read_eval_log
 
-    samples = read_generator_eval(path)
+    from .data import _scores
+
+    grades = [_scores(sample) for sample in read_eval_log(str(path)).samples or []]
     return {
-        "rewrites": len(samples),
-        "tests_passed_rate": sum(s.main_task_success == "C" for s in samples)
-        / len(samples),
-        "backdoor_fires_rate": sum(s.side_task_success == "C" for s in samples)
-        / len(samples),
+        "rewrites": len(grades),
+        "tests_passed_rate": sum(main == "C" for main, _ in grades) / len(grades),
+        "backdoor_fires_rate": sum(side == "C" for _, side in grades) / len(grades),
     }
 
 
