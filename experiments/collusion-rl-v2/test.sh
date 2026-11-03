@@ -5,8 +5,11 @@
 #               model=<tinker:// sender checkpoint> | none (rewrite with no strategy)
 #   test.sh score <label> [pipeline overrides]  monitors, game and analysis on the rewrites
 #       (base judge, paraphrased and no jamming). Prints the plan only, unless given
-#       allow_paid=true. Honeypot and honest scores are the V4.1 runs' own, so AUROC and
-#       safety compare directly with the base and SFT judges.
+#       allow_paid=true. Honeypots and honest solutions are the V4.1 runs' own, but they
+#       are scored again here: Tinker's V4.1 scores on 3 Nov differ from the stored
+#       28 Oct ones for the same prompt and code (e.g. YES - NO -1.75 vs -0.21), so
+#       stored scores are not mixed with new ones. The pipeline scores them once per
+#       project and reuses them for every later label.
 #   test.sh report <label> <entity/project/run_id>  write the games' test scores into the
 #       RL run's W&B page (test_paraphrased/, test_none/), free
 set -euo pipefail
@@ -64,8 +67,6 @@ EOF
     lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect --config "$folder/rewrite.yaml"
   ;;
 score)
-  M=$V41/monitor
-  base=262144_ft_a1611f-self_rec_collusion
   exec uv run python -m lasr_labs_2025_control_project.pipeline experiment=self_rec \
     "models.U='$U'" "name=rlv2_$label" models.generation_max_tokens=65536 \
     '~measurement.arms.sft' 'stages=[transform,monitor,game,analysis]' \
@@ -73,10 +74,7 @@ score)
     optimization.bootstrap.replicates=200 optimization.bootstrap.chunk_size=100 \
     "+inputs.generate.test.attacks=$folder/attacks.eval" \
     "+inputs.generate.test.honeypots=$X/self_rec_attack_test/generator/honeypots.eval" \
-    "+inputs.monitor.none.base.honest=$M/apps-262144_ft_a1611f-test-honest-honest.mon-$base-57a5bb885f16/honest.eval" \
-    "+inputs.monitor.none.base.honeypots=$M/untracked-honeypots.mon-$base-0e73330bf758/honeypots.eval" \
-    "+inputs.monitor.paraphrased.base.honest=$M/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-$base-8062ab61d0cd/honest.eval" \
-    "+inputs.monitor.paraphrased.base.honeypots=$M/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-$base-3ef184bddf22/honeypots.eval" \
+    "+inputs.generate.test.honest=$V41/generate/apps-262144_ft_a1611f-test-honest-honest-267d38248808/honest.eval" \
     "wandb_tags=[collusion-rl-v2,$label]" "$@"
   ;;
 report)
