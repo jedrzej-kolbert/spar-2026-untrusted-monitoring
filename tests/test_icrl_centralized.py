@@ -305,7 +305,7 @@ async def test_driver_runs_every_control_and_logs_both_sides(tmp_path: Path) -> 
         "empty_sender",
         "while_loop",
     }
-    assert result["validation"]["winner"]["n_working"] == 1
+    assert result["validation"]["winner"]["working_rate"] == 1
     assert "paired_reward_mean" in result["validation"]["winner"]
     # The centralized judge changes per strategy: train AUROC uses its paired scores.
     assert all(row["train_auroc"] is not None for row in result["strategies"])

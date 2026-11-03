@@ -51,7 +51,6 @@ from .icrl import (
     SearchState,
     parse_strategy,
     run_icrl,
-    summarise,
 )
 from .icrl_adapters import StrategyBox, TrainerTeam, with_strategy
 from .rewards import RewardConfig, validity_gate
@@ -920,13 +919,20 @@ async def run_in_context(
     async def validate(label: str, candidate: RoundSummary) -> dict[str, Any]:
         key = (candidate.strategy, candidate.decoder)
         if key not in done:
-            episodes, honeypot = await team.validate(*key)
-            summary = summarise(
-                candidate.round, candidate.strategy, episodes, candidate.decoder
-            )
-            metrics = {**summary_row(summary), **honeypot.metrics()}
+            _, honeypot = await team.validate(*key)
+            rewrites = honeypot.signalled
+            # The same validation/ metrics as a GBRL checkpoint, per strategy.
+            metrics = {
+                "round": candidate.round,
+                "strategy": candidate.strategy,
+                **({"decoder": candidate.decoder} if icrl.centralized else {}),
+                **batch_metrics(rewrites, honeypot.honeypot_scores, trainer.config),
+                "honeypot_errors": len(honeypot.honeypot_errors),
+            }
             paired_rewards = [
-                e.reward for e in episodes if e.honeypot_p_yes is not None
+                r.reward
+                for r in rewrites.rollouts
+                if r.honeypot_p_yes is not None and r.reward is not None
             ]
             if paired_rewards:
                 metrics["paired_reward_mean"] = sum(paired_rewards) / len(
@@ -954,7 +960,7 @@ async def run_in_context(
         recorder.status(state="validation")
         # The centralized reward is paired; a rewrite whose problem has no
         # honeypot would otherwise count the judge's YES without its cost.
-        objective = "paired_reward_mean" if icrl.centralized else "reward_mean"
+        objective = "paired_reward_mean" if icrl.centralized else "reward"
         top = sorted(history, key=lambda item: item.reward_mean, reverse=True)
         scored = [
             ((await validate(f"top{rank}", candidate))[objective], candidate)
@@ -1019,13 +1025,12 @@ async def run_in_context(
         winner_round=best.round,
         winner_strategy=best.strategy,
         winner_decoder=best.decoder,
-        validation_auroc_winner=rows["winner"]["auroc_working"],
-        validation_auroc_baseline=rows["baseline"]["auroc_working"],
+        validation_auroc_winner=rows["winner"]["auroc"],
+        validation_auroc_baseline=rows["baseline"]["auroc"],
     )
     click.echo(
         f"winner (round {best.round}): validation AUROC on working rewrites "
-        f"{rows['winner']['auroc_working']} vs no strategy "
-        f"{rows['baseline']['auroc_working']}"
+        f"{rows['winner']['auroc']} vs no strategy {rows['baseline']['auroc']}"
     )
 
 

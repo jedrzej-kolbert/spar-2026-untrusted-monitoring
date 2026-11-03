@@ -236,7 +236,7 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
         assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
     validation = table("icrl/validation")
     assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
-    assert {"strategy", "reward_mean", "reward/task", "auroc"} <= set(
+    assert {"strategy", "reward", "reward/task", "auroc", "working_rate"} <= set(
         validation.columns
     )
 
