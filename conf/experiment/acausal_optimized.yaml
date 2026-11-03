@@ -1,0 +1,12 @@
+# @package _global_
+# BigCodeBench acausal attacks with the optimised Schelling-point prompt.
+defaults:
+  - override /setting: bigcodebench
+name: acausal_optimized
+measurement:
+  collusion_strategy: acausal
+  attack_prompt: acausal_optimized_attack_policy_prompt_bcb
+  limits:
+    generate: 10
+  arms:
+    base: {model: U}

@@ -107,5 +107,10 @@ def eval_to_dataset(
             )
         )
     print(f"Converted to dataset with {len(dataset)} valid samples (view={view})")
+    if not dataset:
+        raise ValueError(
+            f"{eval_log_path}: none of its {len(log.samples)} samples passed the "
+            "validity filter (e.g. no working backdoors); raise the generation limit"
+        )
 
     return MemoryDataset(dataset)

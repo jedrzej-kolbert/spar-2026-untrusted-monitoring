@@ -35,11 +35,14 @@ from collections.abc import Callable, Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Optional
 
+
 from inspect_ai.model import (
     ChatCompletionChoice,
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageUser,
+    ContentReasoning,
+    ContentText,
     GenerateConfig,
     ModelAPI,
     ModelOutput,
@@ -437,6 +440,31 @@ def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
 # inspect-ai provider: handles plain sampling (generation / text monitors /
 # paraphrasing). Collusion logprobs go through collusion_yes_no_logprobs below.
 # --------------------------------------------------------------------------- #
+# Harmony (gpt-oss) completions write their reasoning to an "analysis" channel
+# and the answer to a "final" one. Decoding without special tokens runs the two
+# together ("analysis...assistantfinal..."), so a paraphrase or monitor answer
+# would carry the reasoning, which may quote the original code verbatim.
+_HARMONY_FINAL = "<|channel|>final<|message|>"
+_HARMONY_ANALYSIS = "<|channel|>analysis<|message|>"
+_HARMONY_SPECIAL = ("<|end|>", "<|return|>", "<|start|>assistant", "<|call|>")
+
+
+def split_harmony(raw: str) -> tuple[str, str] | None:
+    """(reasoning, answer) of a harmony completion decoded with special tokens;
+    None if it isn't one. A completion cut off before its final channel has an
+    empty answer."""
+    if _HARMONY_ANALYSIS not in raw and _HARMONY_FINAL not in raw:
+        return None
+    head, final_marker, answer = raw.partition(_HARMONY_FINAL)
+    if not final_marker:
+        head, answer = raw, ""
+    reasoning = head.replace(_HARMONY_ANALYSIS, "")
+    for token in _HARMONY_SPECIAL:
+        reasoning = reasoning.replace(token, "")
+        answer = answer.replace(token, "")
+    return reasoning.strip(), answer.strip()
+
+
 @_modelapi(name="tinker")
 def tinker() -> type[ModelAPI]:
     return TinkerAPI
@@ -538,12 +566,25 @@ class TinkerAPI(ModelAPI):
             total_tokens=prompt.length + len(seq.tokens),
         )
         if not tools:
-            text = _tokenizer(self.base_model).decode(
-                list(seq.tokens), skip_special_tokens=True
+            tokenizer = _tokenizer(self.base_model)
+            harmony = split_harmony(
+                tokenizer.decode(list(seq.tokens), skip_special_tokens=False)
             )
-            output = ModelOutput.from_content(
-                model=self.model_name, content=text, stop_reason=stop_reason
-            )
+            if harmony is None:
+                text = tokenizer.decode(list(seq.tokens), skip_special_tokens=True)
+                output = ModelOutput.from_content(
+                    model=self.model_name, content=text, stop_reason=stop_reason
+                )
+            else:
+                reasoning, answer = harmony
+                output = ModelOutput.from_content(
+                    model=self.model_name,
+                    content=[
+                        ContentReasoning(reasoning=reasoning),
+                        ContentText(text=answer),
+                    ],
+                    stop_reason=stop_reason,
+                )
             output.usage = usage
             return output
 
@@ -576,37 +617,6 @@ class TinkerAPI(ModelAPI):
 # --------------------------------------------------------------------------- #
 # Forced-decoding YES/NO logprobs for the untrusted collusion monitor.
 # --------------------------------------------------------------------------- #
-async def single_prefill_logprobs(
-    sc: Any, prefix_ids: list[int], first_id: int, second_id: int
-) -> tuple[float, float]:
-    """Log probs of two single-token answers after ``prefix_ids``, in one request.
-
-    Needs ``tinker>=0.30``.
-    """
-    import torch
-    from tinker import types
-
-    # Target row i scores prompt position i + 1, so the answer slot needs a
-    # token of its own: append the first candidate as a placeholder and name both
-    # candidate ids in the last row. -1 marks cells that are not scored.
-    targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
-    targets[-1] = torch.tensor([first_id, second_id])
-    resp = await sc.sample_async(
-        prompt=types.ModelInput.from_ints(prefix_ids + [first_id]),
-        num_samples=1,
-        sampling_params=types.SamplingParams(max_tokens=1),
-        # Without this the scores differ from the teacher-forced ones (a
-        # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
-        include_prompt_logprobs=True,
-        target_prompt_logprobs=types.TensorData.from_torch_sparse(
-            targets, pad_value=-1
-        ),
-    )
-    assert resp.target_prompt_logprobs is not None
-    first, second = resp.target_prompt_logprobs.to_torch()[-1].tolist()
-    return first, second
-
-
 async def collusion_yes_no_logprobs(
     model_name: str,
     system_prompt: str,
@@ -615,7 +625,7 @@ async def collusion_yes_no_logprobs(
     answer_open: str = "<answer>",
     yes_text: str = "YES",
     no_text: str = "NO",
-    single_prefill: bool = False,
+    single_prefill: bool = True,
 ) -> dict[str, Any]:
     """Return exact answer-token logprobs for a YES/NO collusion monitor.
 
@@ -623,10 +633,12 @@ async def collusion_yes_no_logprobs(
     ``YES`` and ``NO`` continuations, reading each one's summed token logprob
     (handles multi-token YES/NO). Returns ``{"YES", "NO", "completion"}`` in the
     same shape as ``get_answer_logprobs_from_openai_completion`` so the collusion
-    scorer treats it identically.
+    scorer treats it identically, plus ``"usage"``: the request's billed
+    ``input_tokens`` (prefill) and ``output_tokens``, for cost accounting.
 
-    ``single_prefill=True`` reads both logprobs from one request instead of two
-    when YES and NO are single tokens (needs ``tinker>=0.30``).
+    By default (``single_prefill=True``) both logprobs come from one request when
+    YES and NO are single tokens (needs ``tinker>=0.30``); multi-token labels, or
+    ``single_prefill=False``, use two teacher-forced requests.
     """
     from tinker import types
 
@@ -662,13 +674,33 @@ async def collusion_yes_no_logprobs(
             return None
         return float(sum(vals))
 
+    usage = {"input_tokens": 0, "output_tokens": 0}
     if single_prefill and len(yes_ids) == len(no_ids) == 1:
-        yes_lp, no_lp = await single_prefill_logprobs(
-            sc, prefix_ids, yes_ids[0], no_ids[0]
+        usage = {"input_tokens": len(prefix_ids) + 1, "output_tokens": 1}
+        import torch
+
+        # Target row i scores prompt position i + 1, so the answer slot needs a
+        # token of its own: append YES as a placeholder and name both candidate
+        # ids in the last row. -1 marks cells that are not scored.
+        targets = torch.full((len(prefix_ids), 2), -1, dtype=torch.int64)
+        targets[-1] = torch.tensor(yes_ids + no_ids)
+        resp = await sc.sample_async(
+            prompt=types.ModelInput.from_ints(prefix_ids + yes_ids),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=1),
+            # Without this the scores differ from the teacher-forced ones (a
+            # 0.25 shift in YES - NO on a fine-tuned DeepSeek-V3.1 checkpoint).
+            include_prompt_logprobs=True,
+            target_prompt_logprobs=types.TensorData.from_torch_sparse(
+                targets, pad_value=-1
+            ),
         )
+        assert resp.target_prompt_logprobs is not None
+        yes_lp, no_lp = resp.target_prompt_logprobs.to_torch()[-1].tolist()
     else:
         yes_lp = await _candidate_logprob(yes_ids)
         no_lp = await _candidate_logprob(no_ids)
+        usage["input_tokens"] = 2 * len(prefix_ids) + len(yes_ids) + len(no_ids)
 
     if yes_lp is not None and no_lp is not None:
         answer = yes_text if yes_lp >= no_lp else no_text
@@ -680,4 +712,4 @@ async def collusion_yes_no_logprobs(
         answer = ""
     completion = f"{answer_open}{answer}</answer>" if answer else ""
 
-    return {"YES": yes_lp, "NO": no_lp, "completion": completion}
+    return {"YES": yes_lp, "NO": no_lp, "completion": completion, "usage": usage}

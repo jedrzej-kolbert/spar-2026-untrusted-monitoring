@@ -1,0 +1,10 @@
+# @package _global_
+# No limits: every problem in the split.
+elicitation:
+  limits:
+    generate: null
+    examples: null
+measurement:
+  limits:
+    generate: null
+    monitor: null

@@ -111,6 +111,10 @@ async def test_collusion_retries_missing_logprobs(
     )
     result = await score(state, Target(""))
     assert request.await_count == len(logprobs)
+    if use_tinker:
+        assert all(
+            call.kwargs["single_prefill"] is True for call in request.await_args_list
+        )
     assert result is not None and isinstance(result.value, (int, float))
     if expected is None:
         assert math.isnan(result.value)

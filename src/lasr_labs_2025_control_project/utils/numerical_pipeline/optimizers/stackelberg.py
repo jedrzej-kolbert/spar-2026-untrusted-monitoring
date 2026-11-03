@@ -172,6 +172,7 @@ def stackelberg_equilibrium(
     param_data: ParamConfig,
     function: ObjectiveFn,
     max_iterations: int,
+    seed: Optional[int] = None,
 ) -> Dict[
     str,
     Union[
@@ -184,7 +185,7 @@ def stackelberg_equilibrium(
     ],
 ]:
     tolerance = 1e-3
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
     blue_param_names = [name for name in param_data.keys() if name.startswith("blue_")]
     if not blue_param_names and "blue_team_honeypot_fraction" in param_data:

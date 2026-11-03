@@ -12,7 +12,7 @@ iteration, the restricted game (using only strategies discovered so far) is solv
 exactly via linear programming to obtain equilibrium mixed strategies. The algorithm
 terminates when the gap between upper and lower bounds converges.
 
-Key differences from grid_search:
+Key differences from a pure-strategy grid search:
   - Supports mixed strategies (probability distributions over pure strategies)
   - Provides Nash equilibrium guarantees
   - More computationally expensive but theoretically sound for adversarial settings
@@ -356,6 +356,7 @@ def double_oracle(
     param_data: ParamConfig,
     function: ObjectiveFn,
     max_iterations: int,
+    seed: Optional[int] = None,
 ) -> Dict[
     str,
     Union[
@@ -386,6 +387,8 @@ def double_oracle(
             and returns a tuple ``(blue_win_rate, outcome_dict)``. Blue wants to maximize,
             red wants to minimize.
         max_iterations: Maximum number of outer Double Oracle iterations.
+        seed: Seeds the random initial strategies and differential evolution, so
+            a rerun lands on the same equilibrium (ties included). None: unseeded.
 
     Returns:
         Dictionary containing:
@@ -399,7 +402,7 @@ def double_oracle(
     """
 
     epsilon = 1e-3  # Convergence tolerance for gap between upper/lower bounds
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
     # Separate parameters by player (blue vs red)
     blue_param_names = [name for name in param_data.keys() if name.startswith("blue_")]
@@ -502,6 +505,8 @@ def double_oracle(
             }
             expected = 0.0
             for prob, red in zip(red_probs, red_strategies):
+                if prob == 0.0:
+                    continue
                 payoff, _ = evaluate(candidate, red)
                 expected += prob * payoff
             return expected
@@ -512,6 +517,8 @@ def double_oracle(
             candidate = {name: float(val) for name, val in zip(red_param_names, values)}
             expected = 0.0
             for prob, blue in zip(blue_probs, blue_strategies):
+                if prob == 0.0:
+                    continue
                 payoff, _ = evaluate(blue, candidate)
                 expected += prob * payoff
             return expected

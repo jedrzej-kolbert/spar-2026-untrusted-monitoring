@@ -23,9 +23,7 @@ from lasr_labs_2025_control_project.utils.numerical_pipeline.optimization import
     optimize_parameters,
 )
 from lasr_labs_2025_control_project.utils.numerical_pipeline.optimizers import (
-    double_oracle,  # noqa: F401
-    grid_search,  # noqa: F401
-    stackelberg_equilibrium,  # noqa: F401
+    double_oracle,
 )
 
 OPTIMIZER = double_oracle  # Default optimizer for re-optimization
@@ -539,7 +537,7 @@ def _reoptimize_with_parameter(
 
     Creates a modified parameter space where the specified parameter has
     its min and max set to the fixed value, effectively constraining it.
-    Then runs grid_search optimization on the remaining free parameters.
+    Then runs the double oracle optimizer on the remaining free parameters.
 
     Args:
         config: Optimization configuration
@@ -549,7 +547,7 @@ def _reoptimize_with_parameter(
         max_iterations: Max optimization iterations
 
     Returns:
-        Optimization result dictionary from grid_search
+        Optimization result dictionary from the double oracle optimizer
 
     Raises:
         KeyError: If param_name not in parameter_spaces
