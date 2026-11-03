@@ -72,16 +72,18 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # --------------------------------------------------------------------------- #
 # Records
 # --------------------------------------------------------------------------- #
+# W&B sections, numbered because W&B orders them by name. A section's other
+# metrics go to 9_detail_<section>/, at the bottom.
+SECTION = {
+    "train": "1_train",
+    "validation": "2_validation",
+    "test": "3_test",
+    "icrl": "4_icrl",
+    "progress": "5_progress",
+}
 # Prefixes logged to W&B; everything else stays in metrics.jsonl only.
-WANDB_PREFIXES = (
-    "train/",
-    "train_detail/",
-    "validation/",
-    "validation_detail/",
-    "validation_no_strategy/",
-    "progress/",
-)
-# The numbers to look at first; the other metrics go to <section>_detail/.
+WANDB_PREFIXES = (*(f"{name}/" for name in SECTION.values()), "9_detail_")
+# The numbers to look at first in each section.
 KEY_METRICS = (
     "auroc",
     "p_self_rec",
@@ -266,18 +268,20 @@ class Recorder:
             self.wandb.log(logged, step=step)
 
     def metrics(
-        self, step: int, section: str, values: dict[str, Any], detail: bool = True
+        self,
+        step: int,
+        section: str,
+        values: dict[str, Any],
+        *,
+        prefix: str = "",
+        detail: bool = True,
     ) -> None:
-        """Key metrics under ``section/``, the others under ``section_detail/``."""
-        self.scalars(
-            step, section, {k: v for k, v in values.items() if k in KEY_METRICS}
-        )
+        """Key metrics in the section, the others in its 9_detail_ section."""
+        key = {prefix + k: v for k, v in values.items() if k in KEY_METRICS}
+        self.scalars(step, SECTION[section], key)
         if detail:
-            self.scalars(
-                step,
-                f"{section}_detail",
-                {k: v for k, v in values.items() if k not in KEY_METRICS},
-            )
+            rest = {prefix + k: v for k, v in values.items() if k not in KEY_METRICS}
+            self.scalars(step, f"9_detail_{section}", rest)
 
     def roc(
         self, step: int, curves: dict[str, list[tuple[float, float]]], title: str
@@ -285,7 +289,7 @@ class Recorder:
         """The self-recognition (collusion) ROC: working rewrites vs honeypots."""
         if any(curves.values()):
             self.stage.log_roc(
-                "validation/roc_self_rec",
+                f"{SECTION['validation']}/roc_self_rec",
                 {label: points for label, points in curves.items() if points},
                 title,
                 step=step,
@@ -365,7 +369,7 @@ class Recorder:
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")
         self.strategy_rows.append(row)
-        self.table(step, "icrl/strategies", self.strategy_rows)
+        self.table(step, f"{SECTION['icrl']}/strategies", self.strategy_rows)
 
     def table(self, step: int, key: str, rows: list[dict[str, Any]]) -> None:
         """A W&B table whose columns are every key the rows use, in first-seen order."""
@@ -411,7 +415,11 @@ class Recorder:
                     ),
                 }
             )
-            self.table(self.last_step, "icrl/proposed_strategies", self.proposed_rows)
+            self.table(
+                self.last_step,
+                f"{SECTION['icrl']}/proposed_strategies",
+                self.proposed_rows,
+            )
 
     def batch_errors(
         self, step: int, phase: str, strategy: str, errors: list[str]
@@ -1059,7 +1067,9 @@ async def run_in_context(
                 )
         # W&B charts: the winner and the no-strategy rewrite; the table has every check.
         recorder.metrics(step, "validation", rows["winner"])
-        recorder.metrics(step, "validation_no_strategy", rows["baseline"], detail=False)
+        recorder.metrics(
+            step, "validation", rows["baseline"], prefix="no_strategy_", detail=False
+        )
         recorder.roc(
             step,
             {
@@ -1070,7 +1080,7 @@ async def run_in_context(
         )
         recorder.table(
             step,
-            "icrl/validation",
+            f"{SECTION['icrl']}/validation",
             [{"check": label, **metrics} for label, metrics in rows.items()],
         )
     except (BatchInfrastructureError, usage.BudgetExceeded):
@@ -1374,7 +1384,7 @@ async def train(
                         "--resume-state <path> --start-step <N+1>"
                     ) from error
                 skipped += 1
-                recorder.scalars(step, "train", {"skipped_step": 1})
+                recorder.scalars(step, "9_detail_train", {"skipped_step": 1})
                 rollout_errors = [e for item in result.rollouts for e in item.errors]
                 logger.warning(
                     "step %d skipped: %s", step, (result.errors + rollout_errors)[:3]
@@ -1459,7 +1469,7 @@ async def train(
                 click.echo(f"step {step}: saved {path}; resumable state {state}")
             recorder.scalars(
                 step,
-                "progress",
+                SECTION["progress"],
                 {
                     **meter.snapshot(),
                     "step_cost_usd": meter.cost_usd - spent,
@@ -1512,7 +1522,7 @@ def close_run(
     complete: bool,
 ) -> None:
     """Record final usage, even after a failed step or evaluation."""
-    recorder.scalars(step, "progress", meter.snapshot())
+    recorder.scalars(step, SECTION["progress"], meter.snapshot())
     (output_dir / "usage.json").write_text(
         json.dumps(
             {"estimated_cost_usd": meter.cost_usd, "tokens": meter.tokens}, indent=2

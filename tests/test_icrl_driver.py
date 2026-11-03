@@ -206,10 +206,10 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
         return [values[key] for _, values in run.logged if key in values][-1].data
 
     # Proposed strategies reach W&B before they are scored.
-    assert last_table("icrl/proposed_strategies") == [
+    assert last_table("4_icrl/proposed_strategies") == [
         [1, "conservative style", "keep the original helper names"]
     ]
-    scored = last_table("icrl/strategies")
+    scored = last_table("4_icrl/strategies")
     assert [row[2] for row in scored] == ["", "keep the original helper names"]
     assert ("learner.jsonl", "live") in run.saved
     assert ("strategies.jsonl", "live") in run.saved
@@ -222,7 +222,7 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
         return [values[key] for _, values in run.logged if key in values][-1]
 
     # Each strategy row: its text, total reward, and every reward term.
-    strategies = table("icrl/strategies")
+    strategies = table("4_icrl/strategies")
     assert strategies.columns[:4] == ["step", "round", "strategy", "reward_mean"]
     terms = [c for c in strategies.columns if c.startswith("reward/")]
     assert set(terms) == {
@@ -234,7 +234,7 @@ async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
     for row in strategies.data:
         values = dict(zip(strategies.columns, row))
         assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
-    validation = table("icrl/validation")
+    validation = table("4_icrl/validation")
     assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
     assert {"strategy", "reward", "reward/task", "auroc", "working_rate"} <= set(
         validation.columns
