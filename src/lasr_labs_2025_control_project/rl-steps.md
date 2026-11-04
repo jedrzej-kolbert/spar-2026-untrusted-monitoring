@@ -53,6 +53,18 @@ Everything is saved in `output_dir` (default `experiments/open-source-model/apps
 - `status.json`: progress and checkpoint paths
 - `manifest.json`: config, git commit, and train/validation problem IDs
 
+### Reading the records
+
+A finished run writes `run_view.html` into `output_dir`. Open it in a browser (no server needed). To build it for any run, including one still in progress or from before this existed:
+```
+python -m lasr_labs_2025_control_project.finetuning.grouped_rl.viewer --run-dir <output_dir>
+```
+- **Rollouts:** each problem at each step, with the original attack, signal-OFF and signal-ON code side by side, plus scores. Filter by phase, step or problem, show only identical ON/OFF pairs, sort by the ON − OFF P(YES) gap, and highlight changes from the original or between OFF and ON.
+- **Metrics:** everything in `metrics.jsonl`, by step.
+- **Honeypots:** the receiver's P(YES) on each honeypot, with its code.
+
+Original attacks and honeypot code come from the `.eval` logs named in the manifest. If those are missing the page still builds and says so.
+
 ### Numbers to watch
 
 | Metric | Meaning | Healthy |

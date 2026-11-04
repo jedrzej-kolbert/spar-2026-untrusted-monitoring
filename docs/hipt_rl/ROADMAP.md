@@ -129,6 +129,7 @@ Penalise only the suspicion a rewrite adds: `overseer_weight * max(0, suspicion(
 - [x] Signal-jamming channel: `none` / `minify` / `paraphrase`
 - [x] Generate train-split data: 1,033 DeepSeek attacks, 108 train / 20 validation tasks after filtering
 - [ ] Pilot run (50 steps). The first attempt reached step 39 (see below); a rerun is queued
+- [x] `run_view.html` record viewer for any RL run (`grouped_rl/viewer.py`): original, OFF and ON side by side
 - [x] Overseer baseline option (`original_attack`) + 30-step run with DeepSeek-V4.1-Flash (see above)
 
 ## Phase 2: evaluation integration

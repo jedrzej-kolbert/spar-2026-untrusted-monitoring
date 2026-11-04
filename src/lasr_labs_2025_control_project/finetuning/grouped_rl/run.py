@@ -44,6 +44,7 @@ from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .plots import plot_auroc_over_steps
 from .rewards import RewardConfig
 from .sandbox import DockerAppsEvaluator
+from .viewer import write_run_view
 
 logger = logging.getLogger(__name__)
 
@@ -621,6 +622,10 @@ async def train(
             click.echo(f"AUROC over steps: {figure}")
         except Exception as exc:  # a plotting failure must not fail a finished run
             logger.warning("could not plot AUROC over steps: %s", exc)
+        try:
+            click.echo(f"run view: {write_run_view(output_dir)}")
+        except Exception as exc:  # likewise for the record viewer
+            logger.warning("could not write the run view: %s", exc)
     finally:
         recorder.finish()
 

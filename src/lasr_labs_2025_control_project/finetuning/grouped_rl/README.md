@@ -18,6 +18,8 @@ The library now also drives the HiPT replication. How to run it is in
 - `core.py`: `payload_grouping="both"` puts both bits for a problem in one group
   (one shared baseline); per-bit/balanced accuracy, bit-pair collapse metrics;
   held-out comparison of signalled attacks against honeypots; concurrent scoring.
+- `viewer.py`: `run_view.html`, a self-contained page for reading a run's JSONL
+  records, with original, signal-OFF and signal-ON code side by side.
 - `channels.py`: the receiver and overseer see exactly what the eval monitors see
   (comments stripped, or minified / LLM-paraphrased for signal jamming).
 - `tinker_backend.py`: Tinker `ppo` loss (ratio clip, several passes per batch);

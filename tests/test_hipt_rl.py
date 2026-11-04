@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from pathlib import Path
@@ -742,3 +743,128 @@ def test_auroc_over_steps_from_run_records(tmp_path: Path) -> None:
     assert figure.exists() and figure.suffix == ".svg"
     table = json.loads((tmp_path / "auroc_over_steps.json").read_text())
     assert table["signalled_vs_honeypot"][0]["auroc"] == 0.6
+
+
+# --------------------------------------------------------------------------- #
+# Run viewer
+# --------------------------------------------------------------------------- #
+def view_rollout(payload: int, code: str, **fields: Any) -> dict[str, Any]:
+    return {
+        "step": 1,
+        "phase": "train",
+        "problem_id": "11",
+        "payload": payload,
+        "code": code,
+        "response": f"<final_code>{code}</final_code>",
+        **fields,
+    }
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def embedded_data(page: str) -> dict[str, Any]:
+    start = page.index('type="application/json">') + len('type="application/json">')
+    return json.loads(page[start : page.index("</script>", start)])
+
+
+def test_viewer_groups_off_and_on_and_flags_identical_code() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.viewer import (
+        group_rollouts,
+    )
+
+    groups = group_rollouts(
+        [
+            view_rollout(0, "a"),
+            view_rollout(1, "b"),
+            view_rollout(1, "a "),
+            view_rollout(0, "c", step=2),
+            view_rollout(1, "d", step=2, response="Sure! <final_code>d</final_code>"),
+        ]
+    )
+    first, second = groups
+    assert (first["step"], len(first["off"]), len(first["on"])) == (1, 1, 2)
+    assert first["identical"] is True and second["identical"] is False
+    assert "response" not in first["off"][0]  # only repeats the code
+    assert second["on"][0]["response"].startswith("Sure!")  # has text of its own
+    # Rollouts with no code (failed generations) are not "identical".
+    empty = group_rollouts([view_rollout(0, ""), view_rollout(1, "")])
+    assert empty[0]["identical"] is False
+
+
+def test_viewer_joins_originals_and_honeypots_from_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl import viewer
+
+    attacks, honeypots = tmp_path / "attacks.eval", tmp_path / "honeypots.eval"
+    attacks.touch()
+    honeypots.touch()
+    logs = {
+        attacks: [sample("11", "C", "C", "1"), sample("99", "C", "C", "1")],
+        honeypots: [sample("11", "C", "C", "1")],
+    }
+    logs[honeypots][0] = dataclasses.replace(logs[honeypots][0], code="honeypot code")
+    monkeypatch.setattr(viewer, "read_generator_eval", lambda path: logs[path])
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_name": "r",
+                "config": {
+                    "data": {
+                        "attacks_eval": str(attacks),
+                        "honeypots_eval": str(honeypots),
+                    }
+                },
+            }
+        )
+    )
+    write_jsonl(tmp_path / "rollouts.jsonl", [view_rollout(1, "x")])
+    write_jsonl(
+        tmp_path / "honeypot_scores.jsonl",
+        [{"step": 0, "problem_id": "11", "p_yes": 0.2}],
+    )
+    (tmp_path / "original_attack_suspicion.json").write_text('{"11": 0.7}')
+    data = viewer.build_view_data(tmp_path)
+    assert data["notes"] == [] and set(data["problems"]) == {"11"}
+    problem = data["problems"]["11"]
+    assert problem["original"] == logs[attacks][0].code
+    assert problem["honeypot"] == "honeypot code"
+    assert problem["original_suspicion"] == 0.7
+
+
+def test_viewer_survives_missing_logs_and_partial_records(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.viewer import (
+        build_view_data,
+    )
+
+    with pytest.raises(ValueError, match="no RL records"):
+        build_view_data(tmp_path)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"config": {"data": {"attacks_eval": "gone.eval"}}})
+    )
+    (tmp_path / "rollouts.jsonl").write_text(
+        json.dumps(view_rollout(1, "x")) + '\n{"step": 2, "pha'
+    )
+    (tmp_path / "metrics.jsonl").write_text('{"step": 1, "train/x": NaN}\n')
+    data = build_view_data(tmp_path)
+    assert len(data["groups"]) == 1 and data["metrics"][0]["train/x"] is None
+    assert data["problems"] == {}
+    assert any("Original attacks unavailable" in note for note in data["notes"])
+    assert any("unreadable" in note for note in data["notes"])
+
+
+def test_viewer_page_keeps_model_output_inert(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.viewer import (
+        VIEW_FILE,
+        write_run_view,
+    )
+
+    hostile = "</script><script>alert(1)</script>"
+    write_jsonl(tmp_path / "rollouts.jsonl", [view_rollout(1, hostile)])
+    path = write_run_view(tmp_path)
+    assert path == tmp_path / VIEW_FILE
+    page = path.read_text()
+    assert hostile not in page
+    assert embedded_data(page)["groups"][0]["on"][0]["code"] == hostile
