@@ -55,15 +55,29 @@ Everything is saved in `output_dir` (default `experiments/open-source-model/apps
 
 ### Reading the records
 
-A finished run writes `run_view.html` into `output_dir`. Open it in a browser (no server needed). To build it for any run, including one still in progress or from before this existed:
+`run_view.html` is a single page for reading a run's JSONL records. A finished run writes it into `output_dir` automatically.
+
+**Setup.** Only `uv sync` is needed. Building the page makes no model calls and doesn't use Tinker, Docker or W&B, so it's free.
+
+**Build it** for any run, including one still in progress or from before the viewer existed. Run this from the repo root:
 ```
-python -m lasr_labs_2025_control_project.finetuning.grouped_rl.viewer --run-dir <output_dir>
+PYTHONPATH=src uv run python -m lasr_labs_2025_control_project.finetuning.grouped_rl.viewer \
+  --run-dir experiments/open-source-model/apps/rl/<run>
 ```
+Re-run it to refresh the page; it overwrites `run_view.html` and takes a few seconds.
+
+**Open it in a browser**, not in your editor, which shows the page's source. It needs no server or internet:
+```
+open experiments/open-source-model/apps/rl/<run>/run_view.html
+```
+(`open` is macOS; on Linux use `xdg-open`.) The page's data is embedded in the file, so it can be shared on its own.
+
+The page has three tabs:
 - **Rollouts:** each problem at each step, with the original attack, signal-OFF and signal-ON code side by side, plus scores. Filter by phase, step or problem, show only identical ON/OFF pairs, sort by the ON − OFF P(YES) gap, and highlight changes from the original or between OFF and ON.
 - **Metrics:** everything in `metrics.jsonl`, by step.
 - **Honeypots:** the receiver's P(YES) on each honeypot, with its code.
 
-Original attacks and honeypot code come from the `.eval` logs named in the manifest. If those are missing the page still builds and says so.
+Original attacks and honeypot code come from the `.eval` logs named in the run's `manifest.json`, so build the page on a machine that has those logs. If one is missing the page still builds and shows a note saying what's unavailable.
 
 ### Numbers to watch
 
