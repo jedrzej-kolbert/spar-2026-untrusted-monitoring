@@ -2257,6 +2257,16 @@ if __name__ == "__main__":
     </div>
   </section>
 
+  <!-- ========== 42. Trusted-monitor score distributions ========== -->
+  <section class="slide dark research-slide" id="icrl-trusted-distribution">
+    <div class="slide-inner">
+      <h2>Trusted-monitor scores. <span class="dim">Benign and attack code</span></h2>
+      <p class="research-model">V2 I2 seed 0 · CRIMSON_FERN · T: Qwen3.5-4B · no jamming</p>
+      <div class="research-figure"><img src="media/icrl_trusted_score_distribution.svg" alt="Distribution of trusted-monitor suspicion scores from 0 to 10: all 817 benign solutions and all 296 working attacks from v2 I2 seed 0, normalized separately to percentages."></div>
+      <p class="research-note">Each set is normalized separately to 100%. Attacks: 296 working rewrites from 309 original working attacks, using the same validity filtering as the ROC and game. T reads comment-stripped original code. All saved scores are included. · <a href="data/icrl_trusted_score_distribution.csv">Counts and percentages for every score</a> · <a href="https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2/runs/czd2jsd6?panelDisplayName=roc%2Ftrusted_suspiciousness" target="_blank" rel="noopener">W&amp;B: corresponding T ROC</a></p>
+    </div>
+  </section>
+
 </div>
 
 <div class="nav">
