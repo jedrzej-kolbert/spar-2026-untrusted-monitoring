@@ -215,8 +215,9 @@ For I2 add the learned judge, and reuse the base judge's honest scores from step
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.report_test \
   --run $WANDB_ENTITY/$WANDB_PROJECT/<run id> --label i1-base-s0
 ```
+This also logs `test/safety_usefulness` (both channels, all monitors) and puts `run.arm` and `rl_run` on the scoring's W&B runs (tag `rlv2_<label>`), so its game runs group by `run.arm` and `condition.transform`.
 
-Optional: `uv run --with wandb-workspaces python experiments/collusion-rl-v2/workspace.py collusion-rl-v2` saves a W&B view with the sections in reading order.
+Optional: `uv run --with wandb-workspaces python experiments/collusion-rl-v2/workspace.py collusion-rl-v2` saves a W&B view with the sections in reading order; with `--curves` it saves the test safety-usefulness view instead (game runs, mean over seeds per arm and channel).
 
 ## Tests
 

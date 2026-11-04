@@ -10,6 +10,11 @@ them, so the RL run shows train, validation and test together:
 
 ``--label`` finds the rewrites and the games scored on them; ``--rewrites`` and
 ``--game channel=<folder>`` name them instead.
+
+With ``--label`` it also copies the RL run's ``run`` config block, plus ``run.arm``
+(the label without its seed) and ``rl_run``, into the config of the scoring's own
+W&B runs (those tagged ``rlv2_<label>``, the rl_test ``name=``), so game runs can be
+grouped by ``run.arm`` and ``condition.transform`` (the channel).
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from typing import Any
 import click
 import numpy as np
 
-from lasr_labs_2025_control_project.tracking.core import roc_chart
+from lasr_labs_2025_control_project.tracking.core import line_chart, roc_chart
 
 # The numbers to look at first, in test/; the rest go to test_detail/.
 KEY = (
@@ -112,6 +117,17 @@ def games_for(label: str) -> list[str]:
     return found
 
 
+def label_runs(project_path: str, tag: str, fields: dict[str, Any]) -> list[str]:
+    """Add ``fields`` to the config of every run in the project tagged ``tag``."""
+    import wandb
+
+    runs = list(wandb.Api().runs(project_path, filters={"tags": {"$in": [tag]}}))
+    for tagged in runs:
+        tagged.config.update(fields)
+        tagged.update()
+    return [tagged.id for tagged in runs]
+
+
 @click.command()
 @click.option("--run", "run_path", required=True, help="entity/project/run_id")
 @click.option(
@@ -132,6 +148,7 @@ def main(
     rates = rewrite_rates(rewrites)
     entity, project, run_id = run_path.split("/")
     run = wandb.init(entity=entity, project=project, id=run_id, resume="must")
+    curves: dict[str, list[tuple[float, float]]] = {}
     for channel, folder in (game.split("=", 1) for game in games):
         metrics, rocs = game_metrics(Path(folder), rates["rewrites"])
         metrics |= {k: v for k, v in rates.items() if k != "rewrites"}
@@ -142,17 +159,37 @@ def main(
         values |= {
             f"test_detail/{name}_{k}": v for k, v in metrics.items() if k not in KEY
         }
-        for key, monitor, label in (
+        for key, monitor, curve in (
             ("roc_collusion", "untrusted_collusion", "rewrites vs honeypots"),
             ("roc_trusted", "trusted_suspiciousness", "rewrites vs honest"),
         ):
             roc = rocs[monitor]
             values[f"test/{name}_{key}"] = roc_chart(
-                {label: list(zip(roc["fpr"], roc["tpr"]))}, f"Test {key}, {channel}"
+                {curve: list(zip(roc["fpr"], roc["tpr"]))}, f"Test {key}, {channel}"
             )
         run.log(values)
         run.summary.update({f"test_detail/{name}_game": str(folder)})
         click.echo(f"{channel}: {metrics}")
+        curves[name] = [
+            (float(k.removeprefix("safety_u")), v)
+            for k, v in metrics.items()
+            if k.startswith("safety_u")
+        ]
+    # The game's primary variant (all monitors) at each usefulness level.
+    run.log(
+        {
+            "test/safety_usefulness": line_chart(
+                curves, "Test safety vs usefulness", "usefulness", "safety"
+            )
+        }
+    )
+    if label is not None:
+        block = {**run.config.get("run", {}), "arm": label.rsplit("-s", 1)[0]}
+        run.config.update({"run": block}, allow_val_change=True)
+        tagged = label_runs(
+            f"{entity}/{project}", f"rlv2_{label}", {"run": block, "rl_run": run_path}
+        )
+        click.echo(f"run.arm={block['arm']} added to scoring runs {tagged}")
     run.finish()
 
 
