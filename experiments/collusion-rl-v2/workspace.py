@@ -97,7 +97,9 @@ def curves_view(project: str, name: str) -> object:
             filters=[
                 ws.Metric("JobType") == "game",
                 ws.Metric("State") == "finished",
-                ws.Config("run.arm").isin(["base", "sft", "i1-base", "i2", "g1-base"]),
+                ws.Config("run.arm").isin(
+                    ["base", "sft", "i1-base", "i2", "g1-base", "while-loop"]
+                ),
             ],
             groupby=[ws.Config("run.arm"), ws.Config("condition.transform")],
         ),
