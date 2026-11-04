@@ -1,0 +1,30 @@
+# @package _global_
+# Fixed five-epoch endpoint, not selected on the checkpoint test AUROC.
+# Reuse the summary inputs from moap3ypn; never regenerate them in this run.
+name: self_rec_v41_summary_5epoch
+stages: [finetune]
+models:
+  U: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
+measurement:
+  collusion_strategy: self_rec
+  transforms: [paraphrased]
+  arms:
+    sft: {model: "sft:self_rec"}
+elicitation:
+  arms:
+    self_rec: {}
+  training:
+    epochs: 5
+    checkpoint_every_steps: 9
+    checkpoint_auc: true
+inputs:
+  transform:
+    train:
+      paraphrased:
+        attacks: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/transform/apps-262144_ft_a1611f-train-attacks-self_rec_subtle_attack.para-qwen3_5_4b-llm_summarize-2ad252d5c75d/attacks.eval
+        honeypots: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/transform/untracked-honeypots.para-qwen3_5_4b-llm_summarize-005d85f0d679/honeypots.eval
+    test:
+      paraphrased:
+        attacks: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/transform/apps-262144_ft_a1611f-test-attacks-self_rec_subtle_attack.para-qwen3_5_4b-llm_summarize-1bcb496937c8/attacks.eval
+        honeypots: /home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/transform/untracked-honeypots.para-qwen3_5_4b-llm_summarize-e18a9c959a7a/honeypots.eval
+wandb_tags: [self_rec_v41, sft, 5-epoch, summary-trained, signal-jamming, cap-20-usd]
