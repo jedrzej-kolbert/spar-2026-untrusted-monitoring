@@ -2320,6 +2320,28 @@ if __name__ == "__main__":
     </div>
   </section>
 
+  <!-- ========== What's next ========== -->
+  <section class="slide dark" id="icrl-next-steps">
+    <div class="slide-inner">
+      <h2>What's next?</h2>
+      <ul class="bullets" style="font-size:1.15rem;line-height:1.45;">
+        <li>GBRL and decentralized (sender-only) ICRL did not seem to work very much.</li>
+        <li>Centralized ICRL improves over while-for and the base model, but many strategies are highly suspicious.
+          <ul>
+            <li>Try increasing the suspicion penalty.</li>
+            <li>Maybe supply the rewriter with the secret task description. Try this in GBRL and sender-only ICRL too.</li>
+          </ul>
+        </li>
+        <li>SFT still seems stronger, especially in the paraphrased regime.
+          <ul>
+            <li>Try ICRL starting from an SFT model.</li>
+          </ul>
+        </li>
+        <li>ICRL with fresh attack generation seems expensive; it may not be worth it.</li>
+      </ul>
+    </div>
+  </section>
+
 </div>
 
 <div class="nav">
