@@ -1,0 +1,16 @@
+{
+  "original_cap_usd": 20,
+  "compute_limit_usd": 19.0,
+  "already_used_usd": 12.432381900000095,
+  "rescore_upper_bound_usd": 0.5083656,
+  "aggregate_upper_bound_usd": 12.940747500000095,
+  "requests": 555,
+  "honest_collusion_scores_reused": true,
+  "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased",
+  "inputs": {
+    "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-attacks-self_rec_subtle_attack.para-qwen3_5_4b-llm_summarize.mon-ft_self_rec_paraphrased-sel-53a86592-738c7d0c895c/attacks.eval",
+    "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-ft_self_rec_paraphrased-self_rec_collusion-f041ee525628/honeypots.eval",
+    "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-ft_self_rec_paraphrased-self_rec_collusion-07a402e690d4/honest.eval"
+  },
+  "reason": "v2 reference summaries differ from the training-diagnostic summaries; rescore the judge only."
+}

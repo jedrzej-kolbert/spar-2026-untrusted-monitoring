@@ -52,3 +52,16 @@ The mirror is attribution-preserving, not a second training run. Existing three-
 Checks already passed: native main-branch pipeline dry run (exactly one paid fine-tuning node, all four inputs cached), free exact-token budget preflight, script syntax, W&B panel schema construction without publication, and three isolated spending-guard cases (reject before API call, reconcile a successful request, retain reservation on uncertain failure).
 
 The first commit's repository-wide Pyright hook failed: its newly created worktree environment lacks the project dependencies (`control_arena`, `inspect_ai`, etc.), and the scan also reports unrelated pre-existing errors in BashArena and documentation scripts. No dependency files or unrelated code were changed to silence it. The experiment itself uses the existing compatible `v41-pilot/.venv` with this worktree's main-derived source. The other pre-commit checks passed; the formatter's changes were verified to preserve the publication script's AST. Pyright is skipped for the experiment-record commit, not reported as passing.
+
+## Game (paraphrased channel)
+
+[Game run](https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2/runs/1nyhwgdo), run by `run_capped_game.py`. Only the collusion judge was rescored (555 requests, $0.254). The v2 reference summaries, trusted/untrusted suspicion scores and 817-benign calibration set were reused unchanged and verified identical. Honest-solution collusion scores were reused from the 3-epoch run, which the game does not read. Settings match the v2 baseline: 5,000 tasks, 2% blue budget, 5 slack honeypots, double-oracle solver, 200 bootstrap replicates.
+
+| At 0.95 usefulness (interpolated) | 3-epoch reference | 5-epoch |
+|---|---:|---:|
+| Collusion AUROC | 0.769 | **0.817** |
+| Safety, trusted + untrusted monitor | 0.248 | **0.260** |
+| Safety, untrusted monitor only | 0.718 | **0.745** |
+| Safety, trusted monitor only | 0.387 | 0.387 |
+
+The extraction reproduces the previously reported 3-epoch values. Trusted-only safety is identical, as expected, because that monitor did not change. This is a single seed, so no significance is claimed for the 3 versus 5 epoch gap. The game AUROC (0.817) differs from the training-time diagnostic (0.809) because the game scores the v2 reference summaries. Aggregate uncached compute is $12.69 of the $20 cap, not invoice-reconciled. Machine-readable: [`game-results.json`](game-results.json).
