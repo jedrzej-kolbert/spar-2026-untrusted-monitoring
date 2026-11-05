@@ -1,0 +1,49 @@
+{
+  "label": "5-epoch SFT | V4.1 | summarised attacks",
+  "source_run": "https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/untrusted-runs/runs/l0dbt9nf",
+  "main_commit": "2e97d827fe6074e13d3287c19a59c4faecdf0c75",
+  "epochs": 5,
+  "train_examples": 580,
+  "heldout_examples": 30,
+  "test_examples": 555,
+  "checkpoint_metrics": [
+    {
+      "step": 9,
+      "auroc": 0.656885573710106,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased-step-9"
+    },
+    {
+      "step": 18,
+      "auroc": 0.7292867103428317,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased-step-18"
+    },
+    {
+      "step": 27,
+      "auroc": 0.7849738206119926,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased-step-27"
+    },
+    {
+      "step": 36,
+      "auroc": 0.8137908806272528,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased-step-36"
+    },
+    {
+      "step": 45,
+      "auroc": 0.8173625911016393,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased-step-45"
+    },
+    {
+      "step": 50,
+      "auroc": 0.808864156602731,
+      "checkpoint": "tinker/tinker://f30b7ece-95e4-5344-a67e-fbcdc6f645d2:train:0/sampler_weights/self_rec_paraphrased"
+    }
+  ],
+  "final_auroc": 0.808864156602731,
+  "uncached_compute_estimate_usd": 12.432381900000095,
+  "cap_usd": 20,
+  "checkpoint_retention_excluded": true,
+  "selection": "Predetermined final epoch 5; checkpoint test AUROC is diagnostic, not selection.",
+  "scope": "Training and self-recognition AUROC on cached summarised attacks; no new safety-game evaluation.",
+  "mirrored_run": "https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2/runs/sft5p1105",
+  "plots_view": "https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2?nw=06avz3a96jf"
+}

@@ -1,6 +1,28 @@
 # Five-epoch SFT on summarised attacks
 
-Status: training in progress (2026-11-05).
+Status: completed and published (2026-11-05). Training and scoring finished at 00:58 local time.
+
+## Result
+
+- **Final five-epoch AUROC: 0.808864**, independently recomputed from all 555 saved test scores.
+- **Conservative uncached API-compute estimate: $12.432382**, including training and 3,360 checkpoint/held-out scoring requests, below the $20 cap. This is not an invoice reconciliation.
+- [Mirrored result in Collusion RL v2](https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2/runs/sft5p1105).
+- [Two explicitly labelled 5-epoch SFT plots](https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/collusion-rl-v2?nw=06avz3a96jf): training loss and diagnostic checkpoint AUROC.
+- Result artifact: `spar-untrusted-monitoring-collusion/collusion-rl-v2/sft-v41-summary-5epoch-results:v0`, with per-example scores, source history, preflight, ledger, configuration and budget-guard source.
+- Machine-readable result and all six sampler-weight references: [`results.json`](results.json).
+
+| Optimiser update | Diagnostic test AUROC |
+|---:|---:|
+| 9 | 0.656886 |
+| 18 | 0.729287 |
+| 27 | 0.784974 |
+| 36 | 0.813791 |
+| 45 | 0.817363 |
+| **50 (five-epoch endpoint)** | **0.808864** |
+
+Step 45 is higher than the final checkpoint, but the five-epoch endpoint was fixed in advance and was retained. These are diagnostic measurements on the reused test set, not a validation-selected best-checkpoint result. No new safety/usefulness claim is made.
+
+## Setup
 
 - Source: [Untrusted Collusion run `l0dbt9nf`](https://forge.coreweave.com/wandb/spar-untrusted-monitoring-collusion/untrusted-runs/runs/l0dbt9nf).
 - Destination: `spar-untrusted-monitoring-collusion/collusion-rl-v2`, following the latest comparison project in `hipt-collusion-icrl-ledger`.
@@ -20,7 +42,7 @@ This is token-based accounting, not invoice reconciliation. Checkpoint storage i
 
 ## Transfer and plots
 
-`publish_results.py` refuses an incomplete, over-budget or inconsistent result. After the source finishes it independently recomputes all six AUROCs from the saved per-example scores, copies the source metrics/configuration to a clearly labelled baseline in Collusion RL v2, uploads the result files, and creates a named view with two panels:
+`publish_results.py` checked completeness, budget and consistency before publication. It independently recomputed all six AUROCs from the saved per-example scores, copied the source metrics/configuration to a clearly labelled baseline in Collusion RL v2, uploaded the result files, and created a named view with two panels:
 
 1. **5-epoch SFT — training loss (summarised attacks)**, versus optimiser update.
 2. **5-epoch SFT — collusion AUROC (summarised test attacks)**, versus optimiser update, with the full 0–1 AUROC range.

@@ -164,7 +164,10 @@ view = ws.Workspace(
     ),
 ).save_as_new_view()
 assert len(view.sections) == 1 and len(view.sections[0].panels) == 2
-result["plots_view"] = view.url
+# Preserve the /wandb reverse-proxy prefix that the Workspace SDK drops.
+base_ui = source.url.split(f"/{ENTITY}/", 1)[0]
+view_query = view.url.split("?", 1)[1]
+result["plots_view"] = f"{base_ui}/{ENTITY}/{DESTINATION}?{view_query}"
 (OUT / "results.json").write_text(json.dumps(result, indent=2) + "\n")
 (REPORT / "results.json").write_text(json.dumps(result, indent=2) + "\n")
 print(json.dumps(result, indent=2))
