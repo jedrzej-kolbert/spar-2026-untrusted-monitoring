@@ -3662,7 +3662,7 @@
           ]
         }
       },
-      "label": "SFT self-rec V4.1"
+      "label": "SFT V4.1 (training regime above)"
     },
     {
       "arm": "sft",
@@ -4324,7 +4324,7 @@
           ]
         }
       },
-      "label": "SFT self-rec V4.1"
+      "label": "SFT V4.1 (training regime above)"
     },
     {
       "arm": "g1-base",

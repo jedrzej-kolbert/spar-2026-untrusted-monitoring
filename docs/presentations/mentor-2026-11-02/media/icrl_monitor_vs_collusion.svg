@@ -369,7 +369,8 @@ z
     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #303030" x="482.160089" y="47.191767" transform="rotate(-0 482.160089 47.191767)">2</text>
    </g>
    <g id="text_21">
-    <text style="font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #202020" x="282.224432" y="37.2" transform="rotate(-0 282.224432 37.2)">No jamming</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(242.815136 22.642844)">No jamming</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(176.318104 37.2)">SFT trace: raw-trained, 3 epochs</text>
    </g>
   </g>
   <g id="axes_2">
@@ -629,7 +630,8 @@ L 1021.248 324
     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #303030" x="852.033921" y="157.316283" transform="rotate(-0 852.033921 157.316283)">2</text>
    </g>
    <g id="text_42">
-    <text style="font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #202020" x="806.415568" y="37.2" transform="rotate(-0 806.415568 37.2)">Paraphrased (English summary)</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(702.392208 22.642844)">Paraphrased (English summary)</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(681.923302 37.2)">SFT trace: summary-trained, 3 epochs</text>
    </g>
   </g>
   <g id="legend_1">
@@ -648,11 +650,11 @@ z
 " style="stroke: #666666"/>
     </defs>
     <g>
-     <use xlink:href="#m7035496b62" x="209.581875" y="395.496406" style="fill: #666666; stroke: #666666"/>
+     <use xlink:href="#m7035496b62" x="164.279062" y="395.496406" style="fill: #666666; stroke: #666666"/>
     </g>
    </g>
    <g id="text_43">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="229.381875" y="399.346406" transform="rotate(-0 229.381875 399.346406)">Base V4.1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="184.079062" y="399.346406" transform="rotate(-0 184.079062 399.346406)">Base V4.1</text>
    </g>
    <g id="line2d_38">
     <defs>
@@ -664,11 +666,11 @@ z
 " style="stroke: #202020; stroke-linejoin: miter"/>
     </defs>
     <g>
-     <use xlink:href="#m6028d22f60" x="209.581875" y="411.642344" style="fill: #202020; stroke: #202020; stroke-linejoin: miter"/>
+     <use xlink:href="#m6028d22f60" x="164.279062" y="411.642344" style="fill: #202020; stroke: #202020; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="text_44">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="229.381875" y="415.492344" transform="rotate(-0 229.381875 415.492344)">SFT self-rec V4.1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="184.079062" y="415.492344" transform="rotate(-0 184.079062 415.492344)">SFT V4.1 (training regime above)</text>
    </g>
    <g id="line2d_39">
     <defs>
@@ -688,11 +690,11 @@ z
 " style="stroke: #888888; stroke-linejoin: miter"/>
     </defs>
     <g>
-     <use xlink:href="#m0073233ae1" x="354.109844" y="395.496406" style="fill: #888888; stroke: #888888; stroke-linejoin: miter"/>
+     <use xlink:href="#m0073233ae1" x="399.412656" y="395.496406" style="fill: #888888; stroke: #888888; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="text_45">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="373.909844" y="399.346406" transform="rotate(-0 373.909844 399.346406)">While-for*</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="419.212656" y="399.346406" transform="rotate(-0 419.212656 399.346406)">While-for*</text>
    </g>
    <g id="line2d_40">
     <defs>
@@ -706,11 +708,11 @@ z
 " style="stroke: #a0a0a0; stroke-linejoin: miter"/>
     </defs>
     <g>
-     <use xlink:href="#mf6088d8f40" x="354.109844" y="411.642344" style="fill: #a0a0a0; stroke: #a0a0a0; stroke-linejoin: miter"/>
+     <use xlink:href="#mf6088d8f40" x="399.412656" y="411.642344" style="fill: #a0a0a0; stroke: #a0a0a0; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="text_46">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="373.909844" y="415.492344" transform="rotate(-0 373.909844 415.492344)">General-purpose SFT V3.1†</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="419.212656" y="415.492344" transform="rotate(-0 419.212656 415.492344)">General-purpose SFT V3.1†</text>
    </g>
    <g id="line2d_41">
     <defs>
@@ -721,11 +723,11 @@ z
 " style="stroke: #1baf7a; stroke-linejoin: miter"/>
     </defs>
     <g>
-     <use xlink:href="#m9ef73d355e" x="556.264063" y="395.496406" style="fill: #1baf7a; stroke: #1baf7a; stroke-linejoin: miter"/>
+     <use xlink:href="#m9ef73d355e" x="601.566875" y="395.496406" style="fill: #1baf7a; stroke: #1baf7a; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="text_47">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="576.064062" y="399.346406" transform="rotate(-0 576.064062 399.346406)">GBRL G1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="621.366875" y="399.346406" transform="rotate(-0 621.366875 399.346406)">GBRL G1</text>
    </g>
    <g id="line2d_42">
     <defs>
@@ -737,11 +739,11 @@ z
 " style="stroke: #eb6834; stroke-linejoin: miter"/>
     </defs>
     <g>
-     <use xlink:href="#mc69fecbe3c" x="556.264063" y="411.642344" style="fill: #eb6834; stroke: #eb6834; stroke-linejoin: miter"/>
+     <use xlink:href="#mc69fecbe3c" x="601.566875" y="411.642344" style="fill: #eb6834; stroke: #eb6834; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="text_48">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="576.064062" y="415.492344" transform="rotate(-0 576.064062 415.492344)">ICRL sender-only I1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="621.366875" y="415.492344" transform="rotate(-0 621.366875 415.492344)">ICRL sender-only I1</text>
    </g>
    <g id="line2d_43">
     <defs>
@@ -758,11 +760,11 @@ z
 " style="stroke: #2a78d6"/>
     </defs>
     <g>
-     <use xlink:href="#m8fa26ee2d2" x="715.483906" y="395.496406" style="fill: #2a78d6; stroke: #2a78d6"/>
+     <use xlink:href="#m8fa26ee2d2" x="760.786719" y="395.496406" style="fill: #2a78d6; stroke: #2a78d6"/>
     </g>
    </g>
    <g id="text_49">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="735.283906" y="399.346406" transform="rotate(-0 735.283906 399.346406)">ICRL centralized I2</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="780.586719" y="399.346406" transform="rotate(-0 780.586719 399.346406)">ICRL centralized I2</text>
    </g>
   </g>
  </g>

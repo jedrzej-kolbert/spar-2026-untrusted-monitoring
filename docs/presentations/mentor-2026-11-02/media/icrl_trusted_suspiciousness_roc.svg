@@ -458,7 +458,8 @@ L 497.056865 324
 " style="fill: none; stroke: #b8b8b8; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_15">
-    <text style="font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #202020" x="282.224432" y="37.2" transform="rotate(-0 282.224432 37.2)">No jamming</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(242.815136 22.642844)">No jamming</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(176.318104 37.2)">SFT trace: raw-trained, 3 epochs</text>
    </g>
   </g>
   <g id="axes_2">
@@ -883,72 +884,73 @@ L 1021.248 324
 " style="fill: none; stroke: #b8b8b8; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="text_30">
-    <text style="font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #202020" x="806.415568" y="37.2" transform="rotate(-0 806.415568 37.2)">Paraphrased (English summary)</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(702.392208 22.642844)">Paraphrased (English summary)</text>
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; fill: #202020" transform="translate(681.923302 37.2)">SFT trace: summary-trained, 3 epochs</text>
    </g>
   </g>
   <g id="legend_1">
    <g id="line2d_77">
-    <path d="M 198.581875 395.496406
-L 209.581875 395.496406
-L 220.581875 395.496406
+    <path d="M 153.279062 395.496406
+L 164.279062 395.496406
+L 175.279062 395.496406
 " style="fill: none; stroke-dasharray: 2,3.3; stroke-dashoffset: 0; stroke: #666666; stroke-width: 2"/>
    </g>
    <g id="text_31">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="229.381875" y="399.346406" transform="rotate(-0 229.381875 399.346406)">Base V4.1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="184.079062" y="399.346406" transform="rotate(-0 184.079062 399.346406)">Base V4.1</text>
    </g>
    <g id="line2d_78">
-    <path d="M 198.581875 411.642344
-L 209.581875 411.642344
-L 220.581875 411.642344
+    <path d="M 153.279062 411.642344
+L 164.279062 411.642344
+L 175.279062 411.642344
 " style="fill: none; stroke-dasharray: 7.4,3.2; stroke-dashoffset: 0; stroke: #202020; stroke-width: 2"/>
    </g>
    <g id="text_32">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="229.381875" y="415.492344" transform="rotate(-0 229.381875 415.492344)">SFT self-rec V4.1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="184.079062" y="415.492344" transform="rotate(-0 184.079062 415.492344)">SFT V4.1 (training regime above)</text>
    </g>
    <g id="line2d_79">
-    <path d="M 343.109844 395.496406
-L 354.109844 395.496406
-L 365.109844 395.496406
+    <path d="M 388.412656 395.496406
+L 399.412656 395.496406
+L 410.412656 395.496406
 " style="fill: none; stroke-dasharray: 12.8,3.2,2,3.2; stroke-dashoffset: 0; stroke: #888888; stroke-width: 2"/>
    </g>
    <g id="text_33">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="373.909844" y="399.346406" transform="rotate(-0 373.909844 399.346406)">While-for*</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="419.212656" y="399.346406" transform="rotate(-0 419.212656 399.346406)">While-for*</text>
    </g>
    <g id="line2d_80">
-    <path d="M 343.109844 411.642344
-L 354.109844 411.642344
-L 365.109844 411.642344
+    <path d="M 388.412656 411.642344
+L 399.412656 411.642344
+L 410.412656 411.642344
 " style="fill: none; stroke-dasharray: 10,4,2,4,2,4; stroke-dashoffset: 0; stroke: #a0a0a0; stroke-width: 2"/>
    </g>
    <g id="text_34">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="373.909844" y="415.492344" transform="rotate(-0 373.909844 415.492344)">General-purpose SFT V3.1†</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="419.212656" y="415.492344" transform="rotate(-0 419.212656 415.492344)">General-purpose SFT V3.1†</text>
    </g>
    <g id="line2d_81">
-    <path d="M 545.264063 395.496406
-L 556.264063 395.496406
-L 567.264063 395.496406
+    <path d="M 590.566875 395.496406
+L 601.566875 395.496406
+L 612.566875 395.496406
 " style="fill: none; stroke: #1baf7a; stroke-width: 2; stroke-linecap: square"/>
    </g>
    <g id="text_35">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="576.064062" y="399.346406" transform="rotate(-0 576.064062 399.346406)">GBRL G1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="621.366875" y="399.346406" transform="rotate(-0 621.366875 399.346406)">GBRL G1</text>
    </g>
    <g id="line2d_82">
-    <path d="M 545.264063 411.642344
-L 556.264063 411.642344
-L 567.264063 411.642344
+    <path d="M 590.566875 411.642344
+L 601.566875 411.642344
+L 612.566875 411.642344
 " style="fill: none; stroke: #eb6834; stroke-width: 2; stroke-linecap: square"/>
    </g>
    <g id="text_36">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="576.064062" y="415.492344" transform="rotate(-0 576.064062 415.492344)">ICRL sender-only I1</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="621.366875" y="415.492344" transform="rotate(-0 621.366875 415.492344)">ICRL sender-only I1</text>
    </g>
    <g id="line2d_83">
-    <path d="M 704.483906 395.496406
-L 715.483906 395.496406
-L 726.483906 395.496406
+    <path d="M 749.786719 395.496406
+L 760.786719 395.496406
+L 771.786719 395.496406
 " style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: square"/>
    </g>
    <g id="text_37">
-    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="735.283906" y="399.346406" transform="rotate(-0 735.283906 399.346406)">ICRL centralized I2</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #202020" x="780.586719" y="399.346406" transform="rotate(-0 780.586719 399.346406)">ICRL centralized I2</text>
    </g>
   </g>
  </g>

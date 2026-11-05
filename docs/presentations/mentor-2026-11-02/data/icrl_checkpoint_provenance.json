@@ -1,0 +1,82 @@
+{
+  "description": "Two separate 3-epoch SFT checkpoints are plotted under the SFT label, one per matched evaluation panel. The raw-trained/summary-eval and summary-trained/raw-eval combinations were not found in saved v2 comparisons.",
+  "checkpoints": [
+    {
+      "training_regime": "none",
+      "saved_evaluation_regime": "none",
+      "model": "tinker/tinker://2fcd7478-7f4f-5b17-abf4-6afc1d3b4b02:train:0/sampler_weights/self_rec_base",
+      "training_params": {
+        "action_view": {
+          "actions_per_trajectory": null,
+          "max_history_chars": null
+        },
+        "backend": "tinker",
+        "base_model": "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+        "checkpoint_name": "self_rec_base",
+        "labels": "author",
+        "max_examples": null,
+        "seed": 0,
+        "system_prompt": "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+        "target_model": "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+        "training": {
+          "batch_size": 64,
+          "checkpoint_every_steps": 9,
+          "epochs": 3,
+          "keep_comments": false,
+          "lr": 0.0001,
+          "rank": 32,
+          "upsample_neg_factor": 1,
+          "upsample_pos_factor": 1,
+          "val_frac": 0.05
+        },
+        "transformed": false,
+        "user_prompt": "MONITOR_USER_PROMPT",
+        "view": "trajectory"
+      },
+      "model_record": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/finetune/apps-262144_ft_a1611f-train-attacks-self_rec_subtle_attack.ft-self_rec_base-6911a78dc671/model.json",
+      "monitor_eval": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-attacks-self_rec_subtle_attack.mon-ft_self_rec_base-self_rec_collusion-9e4910141a72/attacks.eval",
+      "game_folder": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/game/apps.self_rec.none.sft-76c91df8b731"
+    },
+    {
+      "training_regime": "paraphrased",
+      "saved_evaluation_regime": "paraphrased",
+      "model": "tinker/tinker://5d7065c1-0581-5cc2-a31b-e465de6721af:train:0/sampler_weights/self_rec_paraphrased",
+      "training_params": {
+        "action_view": {
+          "actions_per_trajectory": null,
+          "max_history_chars": null
+        },
+        "backend": "tinker",
+        "base_model": "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+        "checkpoint_name": "self_rec_paraphrased",
+        "labels": "author",
+        "max_examples": null,
+        "seed": 0,
+        "system_prompt": "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT",
+        "target_model": "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+        "training": {
+          "batch_size": 64,
+          "checkpoint_every_steps": 9,
+          "epochs": 3,
+          "keep_comments": false,
+          "lr": 0.0001,
+          "rank": 32,
+          "upsample_neg_factor": 1,
+          "upsample_pos_factor": 1,
+          "val_frac": 0.05
+        },
+        "transformed": true,
+        "user_prompt": "MONITOR_USER_PROMPT",
+        "view": "trajectory"
+      },
+      "model_record": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-pilot/experiments/apps/finetune/apps-262144_ft_a1611f-train-attacks-self_rec_subtle_attack.para-qwen3_5_4b-llm_summarize.ft-self_rec_paraphrased-e7356fab4ac9/model.json",
+      "monitor_eval": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-attacks-self_rec_subtle_attack.para-qwen3_5_4b-llm_summarize.mon-ft_self_rec_paraphrased-sel-53a86592-738c7d0c895c/attacks.eval",
+      "game_folder": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/game/apps.self_rec.paraphrased.sft-a8781f665021"
+    }
+  ],
+  "five_epoch_raw_checkpoint_not_used_in_v2_curves": {
+    "model": "tinker/tinker://9410764e-e807-5649-97f0-8c08c4fb0e20:train:0/sampler_weights/self_rec_base",
+    "model_record": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/v41-sft-longer/experiments/apps/finetune/apps-262144_ft_a1611f-train-attacks-self_rec_subtle_attack.ft-self_rec_base-fe344e5c7e6b/model.json"
+  },
+  "general_purpose_reference_training_mixture": "Unverified in the cached reference outputs; do not infer the training mixture from its evaluated channels."
+}

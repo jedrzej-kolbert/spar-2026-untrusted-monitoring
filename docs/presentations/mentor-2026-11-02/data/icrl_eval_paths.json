@@ -1,0 +1,66 @@
+{
+  "root": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl",
+  "note": "Full-test rewrites are Inspect .eval files with 309 attempts per seed. Search and validation outputs are JSONL, not .eval files. Monitor .eval files contain the saved scores on working attacks. Paths point to existing local files.",
+  "seeds": [
+    {
+      "seed": 0,
+      "test_rewrites_eval": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/test/i2-s0/attacks.eval",
+      "test_rewrite_attempts": 309,
+      "search_validation_rollouts": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s0/rollouts.jsonl",
+      "learner_prompts_replies": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s0/learner.jsonl",
+      "selected_strategy": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s0/icrl_result.json",
+      "monitor_evals": {
+        "none": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s0.mon-262144_ft_a1611f-judge_i2_s0-b73e71273f8f/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.mon-262144_ft_a1611f-judge_i2_s0-a0ef62d41d2a/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.mon-262144_ft_a1611f-self_rec_collusion-36f750b15b47/honest.eval"
+        },
+        "paraphrased": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s0.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s0-f654fca729bc/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s0-191faed45ac4/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-self_rec_collusion-a1fdc5ca2a29/honest.eval"
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "test_rewrites_eval": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/test/i2-s1/attacks.eval",
+      "test_rewrite_attempts": 309,
+      "search_validation_rollouts": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s1/rollouts.jsonl",
+      "learner_prompts_replies": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s1/learner.jsonl",
+      "selected_strategy": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s1/icrl_result.json",
+      "monitor_evals": {
+        "none": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s1.mon-262144_ft_a1611f-judge_i2_s1-037159410e27/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.mon-262144_ft_a1611f-judge_i2_s1-cb834948cc6a/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.mon-262144_ft_a1611f-self_rec_collusion-36f750b15b47/honest.eval"
+        },
+        "paraphrased": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s1.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s1-0f8da2c6608e/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s1-4746c421ff18/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-self_rec_collusion-a1fdc5ca2a29/honest.eval"
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "test_rewrites_eval": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/test/i2-s2/attacks.eval",
+      "test_rewrite_attempts": 309,
+      "search_validation_rollouts": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s2/rollouts.jsonl",
+      "learner_prompts_replies": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s2/learner.jsonl",
+      "selected_strategy": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/collusion-rl-v2/runs/i2-s2/icrl_result.json",
+      "monitor_evals": {
+        "none": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s2.mon-262144_ft_a1611f-judge_i2_s2-f2893a4ddd01/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.mon-262144_ft_a1611f-judge_i2_s2-f7e2418078ee/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.mon-262144_ft_a1611f-self_rec_collusion-36f750b15b47/honest.eval"
+        },
+        "paraphrased": {
+          "attacks": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/rewrite-collusion-rl-v2-i2-s2.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s2-ba76becf18be/attacks.eval",
+          "honeypots": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/untracked-honeypots.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-judge_i2_s2-fb88c470b3c7/honeypots.eval",
+          "honest": "/home/jkk/spar-2026-untrusted-monitoring/.claude/worktrees/icrl/experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-self_rec_collusion-a1fdc5ca2a29/honest.eval"
+        }
+      }
+    }
+  ]
+}
