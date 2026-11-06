@@ -346,6 +346,15 @@ def test_inputs_replace_nodes_and_must_exist() -> None:
         graph("experiment=self_rec", "+inputs.finetune.nope.none=x")
 
 
+def test_chained_transform_reads_its_source_output() -> None:
+    g = graph(
+        "experiment=self_rec", "measurement.transforms=[minified_paraphrased]"
+    ).by_id()
+    chained = g["transform.test.minified_paraphrased.attacks"]
+    assert chained.deps["input"].id == "transform.test.minified.attacks"
+    assert chained.name.endswith(".min.para-qwen3_5_4b-llm_summarize")
+
+
 def test_monitor_settings_follow_transform_and_view() -> None:
     g = graph("experiment=causal").by_id()
     para = g["monitor.paraphrased.sft.attacks"].params["monitors"]

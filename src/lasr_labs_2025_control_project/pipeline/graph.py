@@ -233,6 +233,8 @@ class GraphBuilder:
         if transform == NO_TRANSFORM:
             return source
         spec = self.cfg.transforms[transform]
+        if spec.source:
+            source = self.transform(split, spec.source, source)
         params: dict[str, Any] = {"transform": dataclasses.asdict(spec)}
         if spec.type == "llm":
             params["temperature"] = self.cfg.generation.temperature
