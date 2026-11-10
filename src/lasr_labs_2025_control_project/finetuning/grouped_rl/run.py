@@ -115,15 +115,20 @@ class Recorder:
     ) -> None:
         self.output_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
-        # Fields written in the YAML's logging block win over WANDB_* variables.
+        # Fields written in the YAML's logging block win over WANDB_* variables for
+        # this run only; an explicit `wandb_project: null` still turns W&B off.
         logging_config = config.logging
-        for field in logging_config.model_fields_set:
-            value = getattr(logging_config, field)
-            if value is not None:
-                os.environ[field.upper()] = value
+        overrides = {
+            field.upper(): getattr(logging_config, field)
+            for field in logging_config.model_fields_set
+        }
+        if "WANDB_PROJECT" in overrides and overrides["WANDB_PROJECT"] is None:
+            overrides["WANDB_MODE"] = "disabled"
+        self._saved_env = {key: os.environ.get(key) for key in overrides}
+        os.environ.update({k: v for k, v in overrides.items() if v is not None})
         data = config.data
         identity = config.identity
-        self.stage = tracking.StageRun(
+        stage = tracking.StageRun(
             "gbrl",
             config.run_name,
             config={
@@ -141,7 +146,14 @@ class Recorder:
             ],
             models=[config.models.receiver],
             allow_unlinked=allow_unlinked,
-        ).__enter__()
+        )
+        try:
+            self.stage = stage.__enter__()
+        except BaseException:
+            if stage.run is not None:  # opened, then failed declaring its inputs
+                stage.run.finish(exit_code=1)
+            self._restore_env()
+            raise
         self.wandb: Any = self.stage.run
         if self.wandb is not None:
             self.status(wandb_url=self.wandb.url)
@@ -259,14 +271,24 @@ class Recorder:
                         policy="now",
                     ),
                 )
-        self._wandb(
-            "finish",
-            lambda: self.stage.finish(
+        try:
+            self.stage.finish(
                 complete=complete,
                 reason=None if complete else "stopped before finishing",
-            ),
-        )
-        self.wandb = None
+            )
+        except Exception as exc:  # e.g. a failed summary write: still close the run
+            logger.warning("W&B finish failed: %s", exc)
+            self._wandb("close", lambda: self.wandb.finish(exit_code=1))
+        finally:
+            self.wandb = None
+            self._restore_env()
+
+    def _restore_env(self) -> None:
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def working(item: Rollout) -> bool:

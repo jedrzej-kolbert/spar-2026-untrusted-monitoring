@@ -23,7 +23,13 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.config import (
     load_rl_config,
 )
 
-from .test_hipt_rl import PILOT_CONFIG, attack_problem, balanced_trainer
+from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+    BatchResult,
+    ExecutionGrade,
+    Rollout,
+)
+
+from .test_hipt_rl import PILOT_CONFIG, attack_problem, balanced_trainer, rollout
 
 RECORDS = ("metrics.jsonl", "rollouts.jsonl", "honeypot_scores.jsonl", "manifest.json")
 
@@ -62,6 +68,7 @@ class FakeStageRun:
         self.rocs: list[str] = []
         self.models: list[tuple[str, Any]] = []
         self.finished: bool | None = None
+        self.env = {k: os.environ.get(k) for k in ("WANDB_PROJECT", "WANDB_MODE")}
         FakeStageRun.last = self
 
     def __enter__(self) -> FakeStageRun:
@@ -169,12 +176,42 @@ def test_yaml_logging_fields_win_over_environment(
     monkeypatch.setattr(
         tracking, "resolve_input", lambda path: SimpleNamespace(source=str(path))
     )
-    config = load_rl_config(PILOT_CONFIG).model_copy(
-        update={
-            "output_dir": tmp_path,
-            "logging": LoggingConfig.model_validate({"wandb_project": "from-yaml"}),
-        }
-    )
-    run.Recorder(config, tmp_path)
-    assert os.environ["WANDB_PROJECT"] == "from-yaml"
+
+    def recorder(logging: dict[str, Any]) -> run.Recorder:
+        config = load_rl_config(PILOT_CONFIG).model_copy(
+            update={
+                "output_dir": tmp_path,
+                "logging": LoggingConfig.model_validate(logging),
+            }
+        )
+        return run.Recorder(config, tmp_path)
+
+    first = recorder({"wandb_project": "from-yaml"})
+    assert FakeStageRun.last.env["WANDB_PROJECT"] == "from-yaml"
     assert os.environ["WANDB_ENTITY"] == "env-entity"  # not written in the YAML
+    first.finish(complete=True)
+    assert os.environ["WANDB_PROJECT"] == "from-env"  # the next run is unaffected
+
+    # wandb_project: null turned W&B off before; it still does.
+    recorder({"wandb_project": None}).finish(complete=True)
+    assert FakeStageRun.last.env["WANDB_MODE"] == "disabled"
+    assert os.environ["WANDB_MODE"] == "disabled"  # conftest's own value, restored
+
+
+def test_collusion_auroc_uses_working_signal_on_rewrites_only() -> None:
+    def item(payload: int, p_yes: float, works: bool) -> Rollout:
+        return rollout(payload=payload, p_yes=p_yes, backdoor=ExecutionGrade(works))
+
+    result = BatchResult(
+        4,
+        [
+            item(1, 0.9, True),
+            item(1, 0.8, True),
+            item(1, 0.99, False),  # backdoor broken: not a working rewrite
+            item(0, 0.95, True),  # signal OFF: not a positive
+        ],
+    )
+    numbers, roc = run.collusion_auroc(result, [("a", 0.85), ("b", 0.2)])
+    # Positives 0.9 and 0.8 against honeypots 0.85 and 0.2: 3 of 4 pairs ranked right.
+    assert numbers == {"auroc": 0.75, "n_working": 2, "n_honeypots": 2}
+    assert roc
