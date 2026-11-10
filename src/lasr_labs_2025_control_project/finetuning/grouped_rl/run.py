@@ -303,7 +303,8 @@ def working(item: Rollout) -> bool:
 
 def shared_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
     """Key numbers with the same definitions and names as the collusion-rl-v2 runs,
-    the reward's terms (reward/<term>, summing to reward), then this task's own
+    the reward's terms (reward/<term>, each a mean over the rollouts that have it,
+    so they need not sum to reward), then this task's own
     (signal ON vs OFF, the signal overseer)."""
     total = len(result.rollouts)
     return {
