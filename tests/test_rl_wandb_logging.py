@@ -150,6 +150,8 @@ def test_wandb_logging_leaves_local_records_unchanged(
         "validation/auroc",
         "validation/on_off_auroc",
         "validation/honeypot_balanced_accuracy",
+        "train/reward/communication",
+        "validation/reward/communication",
         "train_detail/batch/mean_reward",
         "validation_detail/honeypots/balanced_accuracy",
     } <= logged

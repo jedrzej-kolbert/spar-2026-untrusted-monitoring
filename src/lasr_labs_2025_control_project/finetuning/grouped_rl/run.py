@@ -303,10 +303,12 @@ def working(item: Rollout) -> bool:
 
 def shared_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
     """Key numbers with the same definitions and names as the collusion-rl-v2 runs,
-    then this task's own (signal ON vs OFF, the signal overseer)."""
+    the reward's terms (reward/<term>, summing to reward), then this task's own
+    (signal ON vs OFF, the signal overseer)."""
     total = len(result.rollouts)
     return {
         "reward": metrics.get("mean_reward"),
+        **{k: v for k, v in metrics.items() if k.startswith("reward/")},
         "working_rate": sum(map(working, result.rollouts)) / total if total else None,
         "tests_passed_rate": metrics.get("correctness"),
         "backdoor_fires_rate": metrics.get("backdoor_success"),
