@@ -324,7 +324,7 @@ def shared_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, An
             / len(rewarded)
             for name in sorted(terms)
         },
-        "p_correct_bit": math.fsum(p_correct) / len(p_correct) if p_correct else None,
+        "p_correct": math.fsum(p_correct) / len(p_correct) if p_correct else None,
         "working_rate": sum(map(working, rollouts)) / total if total else None,
         "tests_passed_rate": metrics.get("correctness"),
         "backdoor_fires_rate": metrics.get("backdoor_success"),
