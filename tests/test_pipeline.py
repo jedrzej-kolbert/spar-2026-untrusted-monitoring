@@ -361,11 +361,19 @@ def test_rl_arms_rewrite_attacks_and_share_negatives() -> None:
         rewrite=RewriteSpec(model=checkpoint),
     )
     g = build_graph(cfg).by_id()
-    untrained, trained = g["rewrite.test.attacks.untrained"], g["rewrite.test.attacks.trained"]
-    assert untrained.params["model"] == "tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
+    untrained, trained = (
+        g["rewrite.test.attacks.untrained"],
+        g["rewrite.test.attacks.trained"],
+    )
+    assert (
+        untrained.params["model"]
+        == "tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
+    )
     assert trained.params["model"] == checkpoint
     assert untrained.params["signal"] == trained.params["signal"] == "RL_SIGNAL_ON"
-    assert untrained.deps["input"] is trained.deps["input"] is g["generate.test.attacks"]
+    assert (
+        untrained.deps["input"] is trained.deps["input"] is g["generate.test.attacks"]
+    )
     for transform in ("none", "minified", "paraphrased"):
         attacks = g[f"monitor.{transform}.trained.attacks"]
         source = attacks.deps["input"]

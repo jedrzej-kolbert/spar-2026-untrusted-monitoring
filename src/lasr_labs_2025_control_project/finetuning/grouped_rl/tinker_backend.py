@@ -606,7 +606,7 @@ class TextScoreBackdoorMonitor:
     """Trusted backdoor monitor (``<score>0-10</score>``), normalized to [0, 1].
 
     Uses ``monitor_solutions_inspect.suspiciousness_monitor``, the same call as the
-    pipeline's trusted_backdoor_monitor. Unparseable answers are retried, then fail.
+    pipeline's trusted_backdoor_monitor. Unparsable answers are retried, then fail.
     """
 
     def __init__(

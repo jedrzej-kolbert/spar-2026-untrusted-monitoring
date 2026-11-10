@@ -84,7 +84,9 @@ def group_rollouts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         on = {(item.get("code") or "").strip() for item in group["on"]}
         # The same test as the identical_pair_fraction metric.
         group["identical"] = bool((off & on) - {""})
-    return sorted(groups.values(), key=lambda g: (g["step"], g["phase"], g["problem_id"]))
+    return sorted(
+        groups.values(), key=lambda g: (g["step"], g["phase"], g["problem_id"])
+    )
 
 
 def _eval_path(value: str | None) -> Path | None:
@@ -101,7 +103,9 @@ def _read_code(
     """Samples for the wanted problems from an eval log, noting if it can't be read."""
     path = _eval_path(value)
     if path is None or not path.exists():
-        notes.append(f"{label} unavailable: log not found ({value or 'not configured'}).")
+        notes.append(
+            f"{label} unavailable: log not found ({value or 'not configured'})."
+        )
         return {}
     try:
         samples = read_generator_eval(path)
@@ -109,9 +113,7 @@ def _read_code(
         notes.append(f"{label} unavailable: could not read {path} ({exc}).")
         return {}
     return {
-        sample.problem_id: sample
-        for sample in samples
-        if sample.problem_id in wanted
+        sample.problem_id: sample for sample in samples if sample.problem_id in wanted
     }
 
 

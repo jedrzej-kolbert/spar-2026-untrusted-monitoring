@@ -35,7 +35,7 @@ defaults:
 
 runs:
   attacks:
-    eval_path: /Users/neelashasudarshan/Desktop/linux-env/spar-2026-untrusted-monitoring/experiments/open_models/test_data/minified_sft/attacks.eval 
+    eval_path: /Users/neelashasudarshan/Desktop/linux-env/spar-2026-untrusted-monitoring/experiments/open_models/test_data/minified_sft/attacks.eval
     save_path: outputs/minified_sft/attack_monitor_results.eval
     monitors:
       - untrusted_collusion_monitor
