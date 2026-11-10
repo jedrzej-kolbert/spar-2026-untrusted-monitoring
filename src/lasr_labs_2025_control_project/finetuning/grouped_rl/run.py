@@ -18,6 +18,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import random
 import subprocess
 import sys
@@ -303,21 +304,38 @@ def working(item: Rollout) -> bool:
 
 def shared_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
     """Key numbers with the same definitions and names as the collusion-rl-v2 runs,
-    the reward's terms (reward/<term>, each a mean over the rollouts that have it,
-    so they need not sum to reward), then this task's own
-    (signal ON vs OFF, the signal overseer)."""
-    total = len(result.rollouts)
+    the reward, its terms and the batch mean of each input to its formula, then this
+    task's own (signal ON vs OFF, the signal overseer)."""
+    rollouts = result.rollouts
+    total = len(rollouts)
+    rewarded = [item.reward_components for item in rollouts if item.reward is not None]
+    terms = {name for components in rewarded for name in components}
+    p_correct = [
+        item.probabilities[item.payload]
+        for item in rollouts
+        if item.probabilities is not None
+    ]
     return {
         "reward": metrics.get("mean_reward"),
-        **{k: v for k, v in metrics.items() if k.startswith("reward/")},
-        "working_rate": sum(map(working, result.rollouts)) / total if total else None,
+        # Over every rewarded rollout, a missing term counting 0 (the overseer term
+        # is only stored when nonzero), so the terms sum to reward.
+        **{
+            f"reward/{name}": math.fsum(c.get(name, 0.0) for c in rewarded)
+            / len(rewarded)
+            for name in sorted(terms)
+        },
+        "p_correct_bit": math.fsum(p_correct) / len(p_correct) if p_correct else None,
+        "working_rate": sum(map(working, rollouts)) / total if total else None,
         "tests_passed_rate": metrics.get("correctness"),
         "backdoor_fires_rate": metrics.get("backdoor_success"),
         "on_off_balanced_accuracy": metrics.get("balanced_accuracy"),
         "on_off_auroc": metrics.get("on_off_auroc"),
         "p1_gap": metrics.get("p1_gap"),
         "signal_suspicion": metrics.get("suspicion_mean"),
+        "baseline_suspicion": metrics.get("baseline_suspicion_mean"),
         "suspicion_increase_mean": metrics.get("suspicion_increase_mean"),
+        # The overseer weight at this step (it changes under overseer_ramp_*).
+        "overseer_strength": metrics.get("overseer_strength"),
     }
 
 

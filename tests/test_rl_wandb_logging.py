@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -152,6 +153,10 @@ def test_wandb_logging_leaves_local_records_unchanged(
         "validation/honeypot_balanced_accuracy",
         "train/reward/communication",
         "validation/reward/communication",
+        "train/p_correct_bit",
+        "validation/p_correct_bit",
+        "train/overseer_strength",
+        "train_detail/batch/bit1_mean_p1",
         "train_detail/batch/mean_reward",
         "validation_detail/honeypots/balanced_accuracy",
     } <= logged
@@ -161,6 +166,11 @@ def test_wandb_logging_leaves_local_records_unchanged(
         in {"train", "validation", "train_detail", "validation_detail", "preflight"}
         for key in logged
     )
+    for _, values in stage.run.logged:
+        for section in ("train", "validation"):
+            terms = [v for k, v in values.items() if k.startswith(f"{section}/reward/")]
+            if terms:
+                assert math.fsum(terms) == pytest.approx(values[f"{section}/reward"])
     assert [step for step, values in stage.run.logged if "validation/auroc" in values]
     assert stage.rocs and stage.finished is True
     assert stage.models[-1][0] == "tinker/tinker://fake/sampler_weights/rl_" + (
