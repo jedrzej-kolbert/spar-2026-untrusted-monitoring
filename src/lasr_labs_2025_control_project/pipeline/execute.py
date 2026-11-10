@@ -620,12 +620,12 @@ def step_artifact(node: Node, ctx: RunContext) -> Optional[ResolvedInput]:
     from lasr_labs_2025_control_project.pipeline.store import ARTIFACT_TYPES
     from lasr_labs_2025_control_project.tracking import (
         artifact_input,
+        available,
         find_pipeline_run,
-        mode,
     )
 
     artifact = ctx.artifacts.get(node.hash)
-    if artifact is None and mode() == "online":
+    if artifact is None and ctx.cfg.reuse == "wandb" and available():
         run = find_pipeline_run(node.hash, node.key)
         wanted = ARTIFACT_TYPES.get(node.stage)
         if run is not None:

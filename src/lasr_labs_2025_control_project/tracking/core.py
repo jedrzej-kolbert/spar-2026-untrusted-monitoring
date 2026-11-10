@@ -143,7 +143,8 @@ def _api() -> Any:
         except Exception as exc:  # network, auth, server errors
             logger.warning("W&B API unavailable: %s", exc)
             api = None
-    _api_cache["api"] = api
+    if api is not None:
+        _api_cache["api"] = api
     return api
 
 
