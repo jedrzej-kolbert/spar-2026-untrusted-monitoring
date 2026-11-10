@@ -8,7 +8,7 @@ For the design, the decisions behind it, and what is still to come, see [`docs/h
 
 Run `uv sync`, and put your Tinker API key in `.env` as `TINKER_API_KEY`. Docker must be running: the training loop grades code in a locked-down container. The first run pulls a pinned `python:3.12-slim` image.
 
-Log in to Weights & Biases with `wandb login`, or set `logging.wandb_mode: offline` in the RL config and upload later with `wandb sync`.
+Log in to Weights & Biases with `wandb login`, or set `logging.wandb_mode: offline` in the RL config and upload later with `wandb sync`. Runs log to the team project `collusion-rl-v2` (the config's `logging:` block; a field written there wins over its `WANDB_*` variable) as job type `gbrl`, laid out like the collusion-rl-v2 runs: `train/` and `validation/` hold the key numbers, `*_detail/` everything else, and the run is tagged with its identity (`method`, `task_mode`, `payload`, `reward_id`, ...). The local record files are unchanged. Pass `--allow-unlinked` when an input log's producing W&B run cannot be linked.
 
 Models are set per RL config (`models:`) and, for evaluation, per pipeline experiment (`conf/experiment/rl/`). The current run (`overseer_delta_v4flash`) uses:
 - U, the untrusted model: `deepseek-ai/DeepSeek-V4.1-Flash:peft:262144`. It is the sender being trained and, frozen, the receiver.
