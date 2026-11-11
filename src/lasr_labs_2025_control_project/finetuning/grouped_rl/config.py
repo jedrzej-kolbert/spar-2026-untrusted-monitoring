@@ -46,6 +46,8 @@ class DataConfig(_Strict):
     # split by problem ID with a fixed seed so every run uses the same split. The
     # test split never enters a run: final strategies are scored by the pipeline.
     validation_fraction: float = Field(default=0.28, ge=0, lt=1)
+    # Keep only the first N validation problems (the rewrite_signal configs use 20).
+    max_validation_problems: int | None = Field(default=None, ge=1)
 
 
 class ChannelConfig(_Strict):
@@ -68,6 +70,10 @@ class RewardSettings(_Strict):
     # overseer_ramp_start to its final value over overseer_ramp_steps steps.
     overseer_ramp_start: float | None = None
     overseer_ramp_steps: int = Field(default=0, ge=0)
+    # Penalise only the suspicion a rewrite adds over the attack it rewrote
+    # (rewrite_signal): overseer_weight * max(0, suspicion - original's suspicion).
+    overseer_baseline: Literal["none", "original_attack"] = "none"
+    overseer_delta_space: Literal["probability", "logit"] = "probability"
     # hipt reward
     stego_scale: float = Field(default=1.0, ge=0)
     overseer_scale: float = Field(default=1.0, ge=0)
@@ -133,11 +139,19 @@ class SandboxConfig(_Strict):
     max_output_bytes: int = Field(default=65536, ge=1)
 
 
+class LoggingConfig(_Strict):
+    """W&B settings; a field written in the YAML wins over its WANDB_* variable, an
+    unwritten one leaves the variable (and the pipeline's defaults) in charge."""
+
+    wandb_project: str | None = "hipt-collusion-rl"
+    wandb_entity: str | None = None
+    wandb_mode: Literal["online", "offline", "disabled"] = "online"
+
+
 class CheckpointConfig(_Strict):
     save_every: int | None = 10
-    # On completion the final sender checkpoint is added to this file under
-    # ``name`` so make_configs.py can build monitor configs for it.
-    ckpts_json: Path | None = Path("experiments/open_models/ckpts.json")
+    # Name of the saved sender weights; the final tinker:// path is written to
+    # status.json (final_checkpoint) for the evaluation pipeline.
     name: str | None = None
 
 
@@ -182,6 +196,7 @@ class RLRunConfig(_Strict):
     preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @model_validator(mode="after")
     def _check(self) -> RLRunConfig:
@@ -245,6 +260,17 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        if reward.overseer_baseline != "none":
+            if reward.reward_fn != "branch":
+                raise ValueError(
+                    "overseer_baseline is only defined for reward_fn branch"
+                )
+            if self.task_mode != "rewrite_signal":
+                raise ValueError(
+                    "overseer_baseline original_attack needs rewrite_signal"
+                )
+            if not self.models.overseer:
+                raise ValueError("overseer_baseline needs models.overseer")
         return self
 
     @property
@@ -258,7 +284,7 @@ class RLRunConfig(_Strict):
         else:
             judge = "sft" if self.models.receiver.startswith("tinker://") else "base"
         reward = "paired" if centralized else self.reward.reward_fn
-        return {
+        identity: dict[str, str | int] = {
             "method": "icrl" if self.method == "in_context" else "gbrl",
             "judge": judge,
             "threat_model": "causal" if centralized else "self-recognition",
@@ -266,6 +292,21 @@ class RLRunConfig(_Strict):
             "seed": self.seed,
             "kind": self.kind,
         }
+        if self.task_mode == "rewrite_signal":
+            # The sender hides a signal the receiver was told about: causal collusion.
+            settings = self.reward
+            reward_id = settings.reward_fn
+            if settings.overseer_baseline != "none":
+                reward_id += (
+                    f"-{settings.overseer_baseline}-{settings.overseer_delta_space}"
+                )
+            identity |= {
+                "threat_model": "causal",
+                "reward_id": reward_id,
+                "task_mode": self.task_mode,
+                "payload": self.training.payload_grouping,
+            }
+        return identity
 
     @property
     def checkpoint_name(self) -> str:

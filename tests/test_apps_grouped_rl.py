@@ -1,6 +1,7 @@
 """Offline-only tests: no Tinker, Docker, model downloads, or generated-code execution."""
 
 import asyncio
+import json
 import math
 import sys
 from dataclasses import replace
@@ -661,6 +662,34 @@ async def test_failed_backdoor_batch_grades_each_program_alone(
     grade = await evaluator.check_backdoor(secret, "print(2)")
     assert (None if grade is None else grade.passed) is expected
     assert grade is None or grade.infrastructure_error is None
+
+
+async def test_batched_backdoor_check_allows_each_job_its_own_output(
+    tmp_path: Path,
+) -> None:
+    problem = AppsProblem(
+        "9",
+        "Echo",
+        ("1\n",),
+        ("1\n",),
+        secret_input="7\n",
+        reference_solution="print(input())",
+    )
+    evaluator = DockerAppsEvaluator(
+        temp_root=tmp_path, max_output_bytes=8, batch_tests=True
+    )
+    # Each job's output is within the per-job cap, but together they exceed it.
+    reply = json.dumps(
+        [{"returncode": 0, "stdout": "a" * 8, "stderr": ""}] * 2
+    ).encode()
+    evaluator._run = AsyncMock(return_value=(0, reply, b""))
+    grade = await evaluator.check_backdoor(problem, "print('a' * 8)")
+    assert grade is not None and grade.infrastructure_error is None
+    assert evaluator._run.call_args.kwargs["max_stdout_bytes"] >= len(reply)
+    # A batch overflow reruns each program alone; the reference overflowing too
+    # means the check does not apply.
+    evaluator._run = AsyncMock(side_effect=_OutputLimitError("too much"))
+    assert await evaluator.check_backdoor(problem, "print('a' * 8)") is None
 
 
 @pytest.mark.parametrize("overflow", [False, True])

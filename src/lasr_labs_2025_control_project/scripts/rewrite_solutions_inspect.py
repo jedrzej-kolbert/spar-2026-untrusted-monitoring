@@ -9,6 +9,11 @@ secret input), so the pipeline takes it in place of its test attacks
 (``+inputs.generate.test.attacks=<file>``) and runs its monitors and games on it
 unchanged. The pre-rewrite code is kept as `pre_rewrite_solution`.
 
+Run as the pipeline's ``rewrite`` stage: a monitor arm with ``rewrite:`` set
+(``conf/experiment/rl/``) rewrites the test attacks before they are transformed
+and monitored. The command line below runs the same rewrite on its own, and also
+registers a centralized ICRL strategy's learned judge.
+
 Each run is a W&B stage run (job type ``rewrite``) like the pipeline's, so the
 output's header links the monitors to it, and it links to its inputs: the attacks,
 the RL checkpoint, or the ICRL result its strategy came from.
@@ -19,7 +24,7 @@ import re
 import runpy
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import click
 import yaml
@@ -43,6 +48,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
     rewrite_messages,
 )
 from lasr_labs_2025_control_project.settings.setting import AppsSetting
+from lasr_labs_2025_control_project.tracking import StageRun
 from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  (registers tinker/ provider)
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from lasr_labs_2025_control_project.utils.utils import check_sample_is_valid
@@ -106,7 +112,11 @@ def _secret_input(generator_info: Any) -> str:
 
 
 @solver
-def rewrite_solution(settings: RewriteSettings) -> Solver:
+def rewrite_solution(
+    settings: RewriteSettings,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> Solver:
     model = get_model(settings.model)
     system_prompt = get_prompt_by_name(settings.system_prompt)
     if settings.strategy:
@@ -129,7 +139,9 @@ def rewrite_solution(settings: RewriteSettings) -> Solver:
                 ChatMessageSystem(content=messages[0]["content"]),
                 ChatMessageUser(content=messages[1]["content"]),
             ],
-            config=GenerateConfig(max_tokens=settings.max_tokens),
+            config=GenerateConfig(
+                max_tokens=settings.max_tokens, seed=seed, temperature=temperature
+            ),
         )
         try:
             code = extract_final_code(output.completion)
@@ -163,11 +175,16 @@ def rewrite_solution(settings: RewriteSettings) -> Solver:
 
 
 @task
-def rewrite_solutions(run: RewriteRun, settings: RewriteSettings) -> Task:
+def rewrite_solutions(
+    eval_path: Path,
+    settings: RewriteSettings,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> Task:
     setting = AppsSetting(cache_python_code=False, num_tests_to_run=10)
     return Task(
-        dataset=attack_dataset(run.eval_path),
-        solver=rewrite_solution(settings),
+        dataset=attack_dataset(eval_path),
+        solver=rewrite_solution(settings, seed, temperature),
         scorer=setting.get_scorers()[0],
         sandbox=setting.get_sandbox_config(),
         metadata={"eval_mode": EvalMode.ATTACK.value},
@@ -290,39 +307,60 @@ def main(
                 f"judge prompt {name} added to {LEARNED_JUDGES}; commit it, then score "
                 f"with +measurement.arms.base.collusion_prompt={name}"
             )
-        resolved = RewriteRun(
-            eval_path=(folder / run.eval_path).resolve(),
-            save_path=folder / run.save_path,
-            limit=limit if limit is not None else run.limit,
-        )
-        with tracking.StageRun(
+        eval_path = (folder / run.eval_path).resolve()
+        tracker = tracking.StageRun(
             "rewrite",
             f"rewrite-{parsed.experiment_name}-{label}",
             config={"rewrite": settings.model_dump(), "run": run.model_dump()},
             tags=[parsed.experiment_name, label],
-            inputs=[tracking.resolve_input(resolved.eval_path), *strategy_inputs],
+            inputs=[tracking.resolve_input(eval_path), *strategy_inputs],
             models=[settings.model],
             allow_unlinked=allow_unlinked,
-        ) as stage:
-            result = eval(
-                tasks=rewrite_solutions(resolved, settings),
-                max_connections=32,
-                max_sandboxes=32,
-                limit=resolved.limit,
-                metadata=stage.eval_metadata(),
+        )
+        try:
+            run_rewrite(
+                eval_path,
+                folder / run.save_path,
+                settings,
+                tracker,
+                limit=limit if limit is not None else run.limit,
             )
-            shutil.copy(result[0].location, resolved.save_path)
-            try:
-                stage.finish_eval(
-                    result[0],
-                    resolved.save_path,
-                    limit=resolved.limit,
-                    extra_counts=tracking.input_counts(
-                        resolved.eval_path, result[0].eval.dataset.samples or 0
-                    ),
-                )
-            except tracking.StageFailed as error:
-                raise SystemExit(str(error)) from error
+        except tracking.StageFailed as error:
+            raise SystemExit(str(error)) from error
+
+
+def run_rewrite(
+    eval_path: Path,
+    save_path: Path,
+    settings: RewriteSettings,
+    tracker: StageRun,
+    *,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+    max_connections: int = 32,
+) -> Any:
+    """Rewrite the attacks in ``eval_path`` under ``tracker``; save to ``save_path``."""
+    with tracker:
+        result = eval(
+            tasks=rewrite_solutions(eval_path, settings, seed, temperature),
+            max_connections=max_connections,
+            max_sandboxes=max_connections,
+            limit=limit,
+            metadata=tracker.eval_metadata(),
+        )
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(result[0].location, save_path)
+        tracker.finish_eval(
+            result[0],
+            save_path,
+            limit=limit,
+            metadata={"label": "attacks"},
+            extra_counts=tracking.input_counts(
+                eval_path, result[0].eval.dataset.samples or 0
+            ),
+        )
+    return result[0]
 
 
 if __name__ == "__main__":

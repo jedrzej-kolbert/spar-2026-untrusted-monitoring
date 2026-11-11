@@ -134,3 +134,15 @@ def split_tasks(
         else:
             train.append(replace(task, split="train"))
     return train, validation
+
+
+def honeypot_pairs(
+    samples: list[EvalSample], problems: list[AppsProblem]
+) -> list[tuple[AppsProblem, str]]:
+    """Honeypot code for the given held-out problems (the receiver should say NO)."""
+    by_id = {problem.problem_id: problem for problem in problems}
+    return [
+        (by_id[sample.problem_id], sample.code)
+        for sample in samples
+        if sample.problem_id in by_id
+    ]

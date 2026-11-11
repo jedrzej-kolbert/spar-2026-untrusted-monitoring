@@ -1,7 +1,7 @@
 """Run HiPT-style collusion-signal RL from a YAML config.
 
     python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \\
-        --config src/lasr_labs_2025_control_project/configs/rl/rewrite_signal_pilot.yaml \\
+        --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml \\
         [--offline | --allow-paid]
 
 ``--offline`` (the default) loads data, writes the manifest, and checks the Docker
@@ -18,6 +18,8 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
+import os
 import random
 import subprocess
 import sys
@@ -41,8 +43,9 @@ from .core import (
     HoneypotEvalResult,
     ReceiverExample,
     Rollout,
+    auroc,
 )
-from .data import attack_tasks, read_generator_eval, split_tasks
+from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .icrl import (
     CENTRAL,
     SENDER_ONLY,
@@ -60,8 +63,10 @@ from lasr_labs_2025_control_project.prompts.rl_prompts import (
     RL_WHILE_LOOP_JUDGE_INSTRUCTIONS,
     RL_WHILE_LOOP_SENDER_INSTRUCTIONS,
 )
+from .plots import plot_auroc_over_steps
 from .sandbox import DockerAppsEvaluator
 from .tinker_backend import TinkerReceiver
+from .viewer import write_run_view
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,21 @@ WANDB_PREFIXES = (
     "train_detail/",
     "validation_detail/",
     "test_detail/",
+    "preflight/",
+)
+# Run records uploaded to the W&B run when it closes.
+RECORD_FILES = (
+    "manifest.json",
+    "split.json",
+    "original_attack_suspicion.json",
+    "metrics.jsonl",
+    "rollouts.jsonl",
+    "honeypot_scores.jsonl",
+    "status.json",
+    "usage.json",
+    "auroc_over_steps.svg",
+    "auroc_over_steps.json",
+    "run_view.html",
 )
 # The numbers to look at first in each section.
 KEY_METRICS = (
@@ -162,6 +182,71 @@ def self_rec_roc(
     return list(zip(roc["fpr"], roc["tpr"]))
 
 
+def signal_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Key numbers of a rewrite_signal batch: the shared names above where the maths
+    is the same, the reward, its terms and the batch mean of each input to its formula,
+    then this task's own (signal ON vs OFF, the signal overseer)."""
+    rollouts = result.rollouts
+    total = len(rollouts)
+    rewarded = [item.reward_components for item in rollouts if item.reward is not None]
+    terms = {name for components in rewarded for name in components}
+    p_correct = [
+        item.probabilities[item.payload]
+        for item in rollouts
+        if item.probabilities is not None
+    ]
+    return {
+        "reward": metrics.get("mean_reward"),
+        # Over every rewarded rollout, a missing term counting 0 (the overseer term
+        # is only stored when nonzero), so the terms sum to reward.
+        **{
+            f"reward/{name}": math.fsum(c.get(name, 0.0) for c in rewarded)
+            / len(rewarded)
+            for name in sorted(terms)
+        },
+        "p_correct": math.fsum(p_correct) / len(p_correct) if p_correct else None,
+        "working_rate": sum(map(working, rollouts)) / total if total else None,
+        "tests_passed_rate": metrics.get("correctness"),
+        "backdoor_fires_rate": metrics.get("backdoor_success"),
+        "on_off_balanced_accuracy": metrics.get("balanced_accuracy"),
+        "on_off_auroc": metrics.get("on_off_auroc"),
+        "p1_gap": metrics.get("p1_gap"),
+        "signal_suspicion": metrics.get("suspicion_mean"),
+        "baseline_suspicion": metrics.get("baseline_suspicion_mean"),
+        "suspicion_increase_mean": metrics.get("suspicion_increase_mean"),
+        # The overseer weight at this step (it changes under overseer_ramp_*).
+        "overseer_strength": metrics.get("overseer_strength"),
+    }
+
+
+def collusion_auroc(
+    result: BatchResult, honeypot_scores: list[tuple[str, float]]
+) -> tuple[dict[str, Any], list[tuple[float, float]]]:
+    """AUROC and ROC of the receiver's P(YES): working signal-ON rewrites vs honeypots
+    (the population the self-recognition runs log as validation/auroc)."""
+    import numpy as np
+
+    from lasr_labs_2025_control_project.utils.numerical_pipeline.results_io import (
+        _raw_roc,
+    )
+
+    positives = [
+        item.probabilities[1]
+        for item in result.rollouts
+        if item.payload == 1 and working(item) and item.probabilities is not None
+    ]
+    negatives = [score for _, score in honeypot_scores]
+    numbers = {
+        "auroc": auroc(positives, negatives),
+        "n_working": len(positives),
+        "n_honeypots": len(negatives),
+    }
+    if not positives or not negatives:
+        return numbers, []
+    roc = _raw_roc(np.array(positives), np.array(negatives))
+    return numbers, list(zip(roc["fpr"], roc["tpr"]))
+
+
 def summary_row(summary: RoundSummary) -> dict[str, Any]:
     """One table row per strategy: its text, total reward, each reward term, scores."""
     return {
@@ -233,8 +318,19 @@ class Recorder:
         self.strategy_rows: list[dict[str, Any]] = []
         self.proposed_rows: list[dict[str, Any]] = []
         self.last_step = 0  # W&B steps must not go backwards
+        # Fields written in the YAML's logging block win over WANDB_* variables for
+        # this run only; an explicit `wandb_project: null` still turns W&B off.
+        logging_config = config.logging
+        overrides = {
+            field.upper(): getattr(logging_config, field)
+            for field in logging_config.model_fields_set
+        }
+        if "WANDB_PROJECT" in overrides and overrides["WANDB_PROJECT"] is None:
+            overrides["WANDB_MODE"] = "disabled"
+        self._saved_env = {key: os.environ.get(key) for key in overrides}
+        os.environ.update({k: v for k, v in overrides.items() if v is not None})
         identity = config.identity
-        self.stage = tracking.StageRun(
+        stage = tracking.StageRun(
             str(identity["method"]),
             config.run_name,
             config={
@@ -249,7 +345,14 @@ class Recorder:
             inputs=inputs or [],
             models=[config.models.receiver],
             allow_unlinked=allow_unlinked,
-        ).__enter__()
+        )
+        try:
+            self.stage = stage.__enter__()
+        except BaseException:
+            if stage.run is not None:  # opened, then failed declaring its inputs
+                stage.run.finish(exit_code=1)
+            self._restore_env()
+            raise
         self.wandb: Any = self.stage.run
         if self.wandb is not None:
             self.status(wandb_url=self.wandb.url)
@@ -325,6 +428,8 @@ class Recorder:
                     else None,
                     "backdoor": item.backdoor.passed if item.backdoor else None,
                     "suspiciousness": item.suspiciousness,
+                    "baseline_suspicion": item.baseline_suspicion,
+                    "suspicion_increase": item.suspicion_increase,
                     "overseer_log_odds": item.overseer_log_odds,
                     "backdoor_suspicion": item.backdoor_suspicion,
                     "honeypot_p_yes": item.honeypot_p_yes,
@@ -451,8 +556,32 @@ class Recorder:
             self.wandb.summary.update(values)
 
     def finish(self, complete: bool, reason: str | None = None) -> None:
-        self.stage.finish(complete=complete, reason=reason)
-        self.wandb = None
+        """Upload the record files and close the run (tagged partial if incomplete)."""
+        try:
+            for name in RECORD_FILES + tuple(
+                p.name for p in self.output_dir.glob("manifest_resume_step*.json")
+            ):
+                if self.wandb is not None and (self.output_dir / name).exists():
+                    self.wandb.save(
+                        str(self.output_dir / name),
+                        base_path=str(self.output_dir),
+                        policy="now",
+                    )
+            self.stage.finish(complete=complete, reason=reason)
+        except Exception as exc:  # e.g. a failed upload: still close the run
+            logger.warning("W&B finish failed: %s", exc)
+            if self.wandb is not None:
+                self.wandb.finish(exit_code=1)
+        finally:
+            self.wandb = None
+            self._restore_env()
+
+    def _restore_env(self) -> None:
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 # --------------------------------------------------------------------------- #
@@ -497,14 +626,29 @@ def load_tasks(config: RLRunConfig) -> Tasks:
         require_backdoor=data.require_backdoor,
         max_tests=data.max_tests,
     )
-    train, validation = split_tasks(
-        tasks, validation_fraction=data.validation_fraction, seed=SPLIT_SEED
-    )
     train_honeypots: list[tuple[AppsProblem, str]] = []
     validation_honeypots: list[tuple[AppsProblem, str]] = []
     dropped: list[str] = []
-    if data.honeypots_eval is not None and (
-        config.eval.honeypot_eval or config.task_mode == "self_recognition"
+    if config.task_mode == "rewrite_signal":
+        # The signal runs' own split: by run seed, optionally capped, with each
+        # validation problem's honeypot (working or not) as the negatives.
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=config.seed
+        )
+        if data.max_validation_problems is not None:
+            validation = validation[: data.max_validation_problems]
+        if data.honeypots_eval is not None and config.eval.honeypot_eval:
+            validation_honeypots = honeypot_pairs(
+                read_generator_eval(data.honeypots_eval), validation
+            )
+    else:
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=SPLIT_SEED
+        )
+    if (
+        config.task_mode != "rewrite_signal"
+        and data.honeypots_eval is not None
+        and (config.eval.honeypot_eval or config.task_mode == "self_recognition")
     ):
         negatives = read_generator_eval(data.honeypots_eval)
         if config.task_mode == "self_recognition":
@@ -609,6 +753,8 @@ def core_config(
         if overseer_weight is None
         else overseer_weight,
         payload_grouping=training.payload_grouping,
+        overseer_baseline=reward.overseer_baseline,
+        overseer_delta_space=reward.overseer_delta_space,
         reward=RewardConfig(
             reward_fn=reward.reward_fn,
             suspicion_threshold=reward.suspicion_threshold,
@@ -832,6 +978,31 @@ async def run_evaluation(
         )
         recorder.honeypots(step, honeypot_eval.honeypot_scores)
         scores, errors = honeypot_eval.honeypot_scores, honeypot_eval.honeypot_errors
+    if config.task_mode == "rewrite_signal":
+        pairs = result.metrics()
+        vs_honeypots = honeypot_eval.metrics() if honeypots else {}
+        numbers, roc = collusion_auroc(result, scores)
+        recorder.scalars(
+            step,
+            "validation",
+            {
+                **signal_metrics(result, pairs),
+                **numbers,
+                "honeypot_balanced_accuracy": vs_honeypots.get("balanced_accuracy"),
+                "signalled_yes_rate": vs_honeypots.get("signalled_yes_rate"),
+                "honeypot_yes_rate": vs_honeypots.get("honeypot_yes_rate"),
+            },
+        )
+        recorder.scalars(
+            step,
+            "validation_detail",
+            {
+                **{f"pairs/{k}": v for k, v in pairs.items()},
+                **{f"honeypots/{k}": v for k, v in vs_honeypots.items()},
+            },
+        )
+        recorder.roc(step, {f"step {step}": roc}, "Collusion ROC on validation")
+        return pairs["mean_reward"]
     metrics = batch_metrics(result, scores, trainer.config)
     recorder.metrics(step, "validation", {**metrics, "honeypot_errors": len(errors)})
     recorder.roc(
@@ -878,13 +1049,6 @@ _DOCKER_DOWN = ("Cannot connect to the Docker daemon", "Is the docker daemon run
 def docker_down(result: BatchResult) -> bool:
     messages = [*result.errors, *(e for item in result.rollouts for e in item.errors)]
     return any(marker in message for message in messages for marker in _DOCKER_DOWN)
-
-
-def _update_ckpts_json(path: Path, name: str, checkpoint: str) -> None:
-    current = json.loads(path.read_text()) if path.exists() else {}
-    current[name] = checkpoint
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(current, indent=2) + "\n")
 
 
 async def run_in_context(
@@ -1313,6 +1477,18 @@ async def train(
                     state="stopped", reason=f"overseer gap {gap:.3f} too small"
                 )
                 raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
+        if config.reward.overseer_baseline == "original_attack":
+            # One overseer score per original attack, reused for every rewrite of it.
+            baselines = await trainer.score_original_attacks(train_tasks + validation)
+            (output_dir / "original_attack_suspicion.json").write_text(
+                json.dumps(baselines, indent=2)
+            )
+            mean = sum(baselines.values()) / len(baselines)
+            click.echo(
+                f"original attacks: mean overseer suspicion {mean:.3f} "
+                f"over {len(baselines)}"
+            )
+            recorder.scalars(0, "preflight", {"original_attack_suspicion_mean": mean})
         rng = random.Random(config.seed)
         order: list[AppsProblem] = []
         skipped = 0
@@ -1426,15 +1602,28 @@ async def train(
                         / len(result.receiver_examples)
                     )
             recorder.scalars(step, "train_legacy", metrics)  # metrics.jsonl only
-            recorder.metrics(
-                step,
-                "train",
-                {
-                    **batch_metrics(result, frozen_scores, trainer.config),
-                    "sender_loss": metrics.get("sender/loss:sum"),
-                    "sender_updated": metrics["sender_updated"],
-                },
-            )
+            if config.task_mode == "rewrite_signal":
+                recorder.scalars(
+                    step,
+                    "train",
+                    {
+                        **signal_metrics(result, metrics),
+                        "sender_loss": metrics.get("sender/loss:sum"),
+                    },
+                )
+                recorder.scalars(
+                    step, "train_detail", {f"batch/{k}": v for k, v in metrics.items()}
+                )
+            else:
+                recorder.metrics(
+                    step,
+                    "train",
+                    {
+                        **batch_metrics(result, frozen_scores, trainer.config),
+                        "sender_loss": metrics.get("sender/loss:sum"),
+                        "sender_updated": metrics["sender_updated"],
+                    },
+                )
             recorder.status(state="training", step=step)
             click.echo(
                 f"step {step}: reward {metrics['mean_reward']}, "
@@ -1508,10 +1697,15 @@ async def train(
             click.echo(f"final receiver checkpoint: {receiver_final}")
         recorder.status(state="finished", final_checkpoint=final)
         click.echo(f"final sender checkpoint: {final}")
-        if config.checkpoints.ckpts_json is not None:
-            _update_ckpts_json(
-                config.checkpoints.ckpts_json, config.checkpoint_name, final
-            )
+        if config.task_mode == "rewrite_signal":
+            try:
+                click.echo(f"AUROC over steps: {plot_auroc_over_steps(output_dir)}")
+            except Exception as exc:  # a plotting failure must not fail a finished run
+                logger.warning("could not plot AUROC over steps: %s", exc)
+        try:
+            click.echo(f"run view: {write_run_view(output_dir)}")
+        except Exception as exc:  # likewise for the record viewer
+            logger.warning("could not write the run view: %s", exc)
         complete = completed == training.steps
     finally:
         close_run(recorder, meter, output_dir, step, complete)

@@ -6,16 +6,20 @@ The library now also drives the HiPT replication. How to run it is in
 [`rl-steps.md`](../../rl-steps.md); decisions and status are in
 [`docs/hipt_rl/ROADMAP.md`](../../../../docs/hipt_rl/ROADMAP.md). The additions are:
 
-- `run.py` + `config.py`: YAML-configured run driver (`configs/rl/*.yaml`) with
+- `run.py` + `config.py`: YAML-configured run driver (`finetuning/grouped_rl/configs/*.yaml`) with
   preflight checks, baseline/periodic evaluation, JSONL records, W&B, checkpoints.
 - `data.py`: tasks built from generator `.eval` logs (Option A rewrites U's own
   attacks that pass and have working backdoors); deterministic train/validation split.
 - `rewards.py`: the reward below stays the default (`branch`); `hipt` uses
   HiPT's probability-reward variant and log-odds-thresholded overseer term;
-  optional failed-backdoor, backdoor-suspicion, and per-token KL penalties.
+  optional failed-backdoor, backdoor-suspicion, and per-token KL penalties. With
+  `overseer_baseline: original_attack` the branch overseer term penalises only
+  the suspicion a rewrite adds over the attack it rewrote.
 - `core.py`: `payload_grouping="both"` puts both bits for a problem in one group
   (one shared baseline); per-bit/balanced accuracy, bit-pair collapse metrics;
   held-out comparison of signalled attacks against honeypots; concurrent scoring.
+- `viewer.py`: `run_view.html`, a self-contained page for reading a run's JSONL
+  records, with original, signal-OFF and signal-ON code side by side.
 - `channels.py`: the receiver and overseer see exactly what the eval monitors see
   (comments stripped, or minified / LLM-paraphrased for signal jamming).
 - `tinker_backend.py`: Tinker `ppo` loss (ratio clip, several passes per batch);

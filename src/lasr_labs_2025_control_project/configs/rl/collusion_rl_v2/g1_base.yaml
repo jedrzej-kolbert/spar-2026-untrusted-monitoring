@@ -42,4 +42,3 @@ preflight:
   enabled: false
 checkpoints:
   save_every: 10
-  ckpts_json: null

@@ -31,8 +31,6 @@ training:
   max_concurrency: 8
 preflight:
   enabled: false
-checkpoints:
-  ckpts_json: null
 icrl:
   episodes: 1
   search_problems: 8

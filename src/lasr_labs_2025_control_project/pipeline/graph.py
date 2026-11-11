@@ -30,6 +30,7 @@ from lasr_labs_2025_control_project.pipeline.schema import (
     Config,
     ElicitationArm,
     MonitorArm,
+    RewriteSpec,
 )
 from lasr_labs_2025_control_project.tracking import names
 
@@ -243,10 +244,15 @@ class GraphBuilder:
         else:
             segment = names.stage_segment("min")
         label = source.info["label"]
+        # Rewritten attacks are a different input from the generated ones.
+        variant = source.info.get("rewrite_arm")
+        node_id = f"transform.{split}.{transform}.{label}"
+        if variant:
+            node_id += f".{variant}"
         return self.add(
             Node(
                 "transform",
-                f"transform.{split}.{transform}.{label}",
+                node_id,
                 names.extend(source.name, segment),
                 params,
                 deps={"input": source},
@@ -255,13 +261,59 @@ class GraphBuilder:
             )
         )
 
-    def test_input(self, label: str, transform: str) -> Node:
-        """A test-split generation of ``label``, after ``transform``."""
+    def rewrite(self, source: Node, arm_name: str, spec: RewriteSpec) -> Node:
+        """``source``'s attacks rewritten by ``spec.model`` (an RL arm's sender)."""
+        cfg = self.cfg
+        model = getattr(cfg.models, spec.model, None) or spec.model
+        params = {
+            "model": model,
+            "system_prompt": spec.system_prompt,
+            "user_prompt": spec.user_prompt,
+            "signal": spec.signal,
+            "max_tokens": spec.max_tokens,
+            "limit": cfg.measurement.limits.generate,
+            "temperature": cfg.generation.temperature,
+            "seed": cfg.seed,
+        }
+        segment = names.stage_segment("rw", model, spec.signal)
+        # Only when set, so arms without a strategy keep their names and digests.
+        strategy = {
+            k: v
+            for k, v in (
+                ("strategy", spec.strategy),
+                ("strategy_result", spec.strategy_result),
+            )
+            if v
+        }
+        if strategy:
+            params.update(strategy)
+            segment += "-st" + names.short_hash(json.dumps(strategy, sort_keys=True))
+        return self.add(
+            Node(
+                "rewrite",
+                f"rewrite.test.attacks.{arm_name}",
+                names.extend(source.name, segment),
+                params,
+                deps={"input": source},
+                paid=True,
+                info={**source.info, "rewrite_arm": arm_name},
+            )
+        )
+
+    def test_input(
+        self,
+        label: str,
+        transform: str,
+        rewrite: Optional[tuple[str, RewriteSpec]] = None,
+    ) -> Node:
+        """A test-split generation of ``label`` (optionally rewritten), after ``transform``."""
         m, prompts = self.cfg.measurement, self.cfg.setting.prompts
         limit = m.limits.generate
         if label == "attacks":
             prompt = m.attack_prompt or prompts.attack[m.collusion_strategy]
             gen = self.generation("test", "attacks", "U", "attack", prompt, limit)
+            if rewrite is not None:
+                gen = self.rewrite(gen, *rewrite)
         elif label == "honest":
             gen = self.generation(
                 "test", "honest", "U", "honest", prompts.honest, limit
@@ -361,7 +413,12 @@ class GraphBuilder:
         cfg, m = self.cfg, self.cfg.measurement
         prompts, setting = cfg.setting.prompts, cfg.setting
         source_label = arm.attacks_label if label == "attacks" else label
-        source = self.test_input(source_label, transform)
+        rewrite = (
+            (arm_name, arm.rewrite)
+            if arm.rewrite is not None and label == "attacks"
+            else None
+        )
+        source = self.test_input(source_label, transform, rewrite)
         deps: dict[str, Node] = {"input": source}
 
         if arm.model.startswith(SFT_PREFIX):
@@ -543,6 +600,14 @@ def validate(cfg: Config) -> None:
     for name, arm in arms.items():
         check(
             arm.attacks_label in ("attacks", "honest"), f"arm {name}: bad attacks_label"
+        )
+        check(
+            arm.rewrite is None or arm.attacks_label == "attacks",
+            f"arm {name}: rewrite applies to attacks only",
+        )
+        check(
+            arm.rewrite is None or s.name == "apps",
+            f"arm {name}: rewrite is implemented for APPS only",
         )
         for transform in arm.transforms or []:
             check(

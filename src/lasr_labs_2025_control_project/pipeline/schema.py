@@ -15,7 +15,15 @@ from typing import Any, Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
-STAGES = ("generate", "transform", "finetune", "monitor", "game", "analysis")
+STAGES = (
+    "generate",
+    "rewrite",
+    "transform",
+    "finetune",
+    "monitor",
+    "game",
+    "analysis",
+)
 MONITORS = ("untrusted_collusion", "trusted_suspiciousness", "untrusted_suspiciousness")
 #: analysis variant -> monitors it needs
 VARIANTS = {
@@ -163,6 +171,29 @@ class ElicitationConfig:
 
 
 @dataclass
+class RewriteSpec:
+    """Rewrite U's test attacks before monitoring (HiPT-style RL, rewrite_signal).
+
+    The trained arm uses the RL checkpoint; its control uses base U with the same
+    prompts, so the two differ only in training.
+    """
+
+    #: "U" (base) or a literal model id, e.g. tinker/tinker://<run>/sampler_weights/<name>
+    model: str = "U"
+    system_prompt: str = "RL_REWRITE_SIGNAL_SENDER_SYSTEM_PROMPT"
+    user_prompt: str = "RL_REWRITE_SIGNAL_SENDER_USER_PROMPT"
+    #: RL_SIGNAL_ON or RL_SIGNAL_OFF
+    signal: str = "RL_SIGNAL_ON"
+    max_tokens: int = 4096
+    #: ICRL sender instructions, added to the system prompt as the search added them
+    strategy: str = ""
+    #: or an ICRL run's icrl_result.json / wandb: ref, whose winner's instructions
+    #: are used (a centralized winner's judge must first be registered with
+    #: scripts/rewrite_solutions_inspect.py --label)
+    strategy_result: Optional[str] = None
+
+
+@dataclass
 class MonitorArm:
     """Which collusion monitor scores the solutions."""
 
@@ -174,6 +205,8 @@ class MonitorArm:
     attacks_label: str = "attacks"
     #: transforms to measure this arm on; default: all of measurement.transforms
     transforms: Optional[list[str]] = None
+    #: rewrite U's test attacks with this model and prompt first (RL arms)
+    rewrite: Optional[RewriteSpec] = None
 
 
 @dataclass

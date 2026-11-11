@@ -36,6 +36,7 @@ data:
   require_backdoor: true
   max_tests: 10
   validation_fraction: 0.2
+  max_validation_problems: 20
 
 channel:
   kind: none               # none | minify | paraphrase (signal jamming)
@@ -75,8 +76,10 @@ preflight:
   enabled: true
   require_overseer_gap: 0.0   # log only
 
-# W&B: set WANDB_PROJECT and WANDB_ENTITY (and WANDB_MODE=offline to log locally).
+logging:
+  wandb_project: collusion-rl-v2
+  wandb_entity: spar-untrusted-monitoring-collusion
+  wandb_mode: online
 
 checkpoints:
   save_every: 10
-  ckpts_json: experiments/open_models/ckpts.json
