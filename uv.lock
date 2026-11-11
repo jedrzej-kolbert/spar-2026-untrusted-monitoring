@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'linux'",
@@ -2104,7 +2104,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "tinker", specifier = ">=0.29.0" },
+    { name = "tinker", specifier = ">=0.39.0" },
     { name = "torch", specifier = ">=2.7.1" },
     { name = "wandb", specifier = ">=0.21.0" },
 ]
@@ -4419,7 +4419,7 @@ wheels = [
 
 [[package]]
 name = "tinker"
-version = "0.30.0"
+version = "0.39.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -4437,9 +4437,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/39/c21099bc99ee9204eb8f70503240a2478decf896a130a0d445c0d4fbd597/tinker-0.30.0.tar.gz", hash = "sha256:1217684e76df9fe97c07f611f208d2d941fb8afbb2e7dff68a5e1640716f5dab", size = 288578, upload-time = "2026-09-18T23:53:28.845Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/a5/61141855969a41fd8ad3c2bfc77224d1a7b4dfc1aabc0229ae69fd6e772e/tinker-0.39.0.tar.gz", hash = "sha256:bc882bdacf676177725d920d7f39d57ff8bb6f02ab4cff18054f4b9d877c6bc0", size = 338857, upload-time = "2026-11-07T02:15:08.667Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/af/d867bc7c7e1112186d2828f868f5eada59559594d345c4649e722b479208/tinker-0.30.0-py3-none-any.whl", hash = "sha256:50822be19ccf83ebbc50bed5db51dda6793fa4cd21e3b2fa89e6b320e77e64e3", size = 275766, upload-time = "2026-09-18T23:53:27.594Z" },
+    { url = "https://files.pythonhosted.org/packages/51/97/efbf0734ce67297b64e6f17469e9a2179773a1d7b794047cba98d38c4674/tinker-0.39.0-py3-none-any.whl", hash = "sha256:47c87de4e13ca6eeaecfff55b316bd436344d98685091c3024c44462e946250d", size = 331100, upload-time = "2026-11-07T02:15:06.908Z" },
 ]
 
 [[package]]
