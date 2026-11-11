@@ -16,6 +16,7 @@ the RL checkpoint, or the ICRL result its strategy came from.
 
 import json
 import re
+import runpy
 import shutil
 from pathlib import Path
 from typing import Any
@@ -228,7 +229,10 @@ def register_judge(label: str, instructions: str) -> str:
     text = LEARNED_JUDGES.read_text()
     if f"{name} = " not in text:
         LEARNED_JUDGES.write_text(text + "\n" + line)
-    elif line not in text:
+    # compare values, not source: ruff format rewraps the committed lines
+    elif (ns := runpy.run_path(str(LEARNED_JUDGES)))[name] != ns["_judge"](
+        instructions
+    ):
         raise click.ClickException(f"{name} already exists with other instructions")
     return name
 

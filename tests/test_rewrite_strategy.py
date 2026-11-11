@@ -106,6 +106,9 @@ def test_a_learned_judge_is_registered_once(
     namespace: dict = {}
     exec(module.read_text(), namespace)
     assert namespace["JUDGE_I2_S0"] == "count calls"
+    # as ruff format leaves it: the same value on other lines
+    module.write_text(module.read_text().replace("_judge(", "_judge(\n    "))
+    rewrite.register_judge("i2-s0", "count calls")
     with pytest.raises(click.ClickException, match="other instructions"):
         rewrite.register_judge("i2-s0", "something else")
 
@@ -119,11 +122,12 @@ def test_the_collusion_rl_v2_configs_load() -> None:
     configs = {
         p.stem: load_rl_config(p)
         for p in folder.glob("*.yaml")
-        if p.stem != "test_rewrite"
+        if not p.stem.endswith("_rewrite")
     }
     assert set(configs) == {
         "i1_base",
         "i2",
+        "i2_t05",
         "g1_base",
         "smoke_i1_base",
         "smoke_g1_base",
