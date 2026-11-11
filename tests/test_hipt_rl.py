@@ -1636,41 +1636,6 @@ async def test_save_state_returns_resumable_path() -> None:
     assert await sender.save_state("s10") == "tinker://run/weights/s10"
 
 
-def test_test_report_reads_the_game_folder(tmp_path: Path) -> None:
-    import gzip
-    import json
-
-    from lasr_labs_2025_control_project.finetuning.grouped_rl.report_test import (
-        game_metrics,
-    )
-
-    def row(collusion: float, trusted: int = 3) -> dict[str, Any]:
-        return {
-            "untrusted_collusion_score": collusion,
-            "trusted_suspiciousness_score": trusted,
-        }
-
-    scores = {
-        "attacks": {"rows": [row(2.0), row(1.0), row(0.0)]},
-        "honeypots": {"rows": [row(0.5), row(-1.0)]},
-    }
-    roc = {"fpr": [1.0, 0.5, 0.0, 0.0], "tpr": [1.0, 2 / 3, 2 / 3, 0.0]}
-    analysis = {
-        "roc_curves": {"untrusted_collusion": roc, "trusted_suspiciousness": roc},
-        "sweep": [{"usefulness": 0.95, "safety": 0.4}],
-    }
-    for name, payload in (("scores", scores), ("analysis_data", analysis)):
-        with gzip.open(tmp_path / f"{name}.json.gz", "wt") as handle:
-            json.dump(payload, handle)
-    metrics, _ = game_metrics(tmp_path, rewrites=4)
-    assert metrics["auroc"] == pytest.approx(5 / 6)  # 5 of 6 pairs ranked right
-    assert metrics["auroc_ci_low"] <= metrics["auroc"] <= metrics["auroc_ci_high"]
-    assert metrics["working_rate"] == 0.75  # 3 working of 4 rewrites
-    assert metrics["tpr_at_1pct_fpr"] == pytest.approx(2 / 3)
-    assert metrics["trusted_suspicion"] == pytest.approx(0.3)
-    assert metrics["safety_u0.95"] == 0.4
-
-
 # --------------------------------------------------------------------------- #
 # AUROC over training steps
 # --------------------------------------------------------------------------- #

@@ -172,69 +172,6 @@ python -m lasr_labs_2025_control_project.pipeline experiment=rl/overseer_delta_v
 ```
 Outputs go to `experiments/apps/{rewrite,transform,monitor,game,analysis}/`.
 
-## Collusion RL v2 (V4.1, Nov 2026)
-
-GBRL and ICRL under one protocol: search or training on train problems, the final strategy or checkpoint picked on validation (a fixed 28% of train problems, by problem ID), and one score on the full test set (309 working V4.1 attacks vs 246 working honeypots) with the same monitors and game as the SFT judges. Branch `exp/collusion-rl-v2`; W&B project `spar-untrusted-monitoring-collusion/collusion-rl-v2`.
-
-| Arm | Config (`configs/rl/collusion_rl_v2/`) | What |
-| --- | --- | --- |
-| I1-base | `i1_base.yaml` | ICRL, sender-only, frozen base judge; reward V·g(s)·P(self_rec) |
-| I2 | `i2.yaml` | ICRL, centralized: the learner also writes the judge's instructions; paired reward |
-| G1-base | `g1_base.yaml` | GBRL (LoRA on the sender), frozen base judge; same reward as I1-base |
-
-Run every command from the repo root, in the project's environment (`uv run` or the activated `.venv`), with
-```
-export WANDB_ENTITY=spar-untrusted-monitoring-collusion WANDB_PROJECT=collusion-rl-v2
-C=src/lasr_labs_2025_control_project/configs/rl/collusion_rl_v2
-```
-
-**1. Baselines on today's serving** (Tinker's V4.1 scores changed between 28 Oct and 3 Nov for the same inputs, so the base and SFT judges are scored again in this project):
-```
-python -m lasr_labs_2025_control_project.pipeline experiment=rl_test name=rlv2_baseline-base \
-  +inputs.generate.test.attacks=<the 309 original test attacks .eval> allow_paid=true
-python -m lasr_labs_2025_control_project.pipeline experiment=rl_test_sft name=rlv2_baseline_sft allow_paid=true
-```
-
-**2. Search or training**, seeds 0, 1, 2 (`--seed` appends `-s<seed>` to the run name and output folder). First without `--allow-paid` (free: loads the split, checks the sandbox), then detached:
-```
-python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run --config $C/i1_base.yaml --seed 0
-mkdir -p experiments/collusion-rl-v2/runs
-setsid nohup python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
-  --config $C/i1_base.yaml --seed 0 --allow-paid > experiments/collusion-rl-v2/runs/i1-base-s0.log 2>&1 &
-```
-A `kind: main` config refuses to start from uncommitted code. ICRL logs its winner as artifact `strategy-<run>`; GBRL records `best_validation_step` in `status.json` and logs every checkpoint as a model artifact.
-
-**3. Test rewrite** of the 309 test attacks (`scripts/rewrite_solutions_inspect.py`, a W&B stage run of type `rewrite` linked to the strategy or checkpoint):
-```
-R="python -m lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect --config $C/test_rewrite.yaml"
-$R --label i1-base-s0 --strategy-result wandb:$WANDB_ENTITY/$WANDB_PROJECT/strategy-i1-base-s0:v0
-$R --label g1-base-s0 --model tinker/<tinker:// checkpoint of best_validation_step>
-$R --label i2-s0 --strategy-result wandb:$WANDB_ENTITY/$WANDB_PROJECT/strategy-i2-s0:v0 \
-   --system-prompt RL_CENTRAL_SENDER_SYSTEM_PROMPT
-```
-For I2 the rewrite also adds the learned judge as prompt `JUDGE_I2_S0` to `prompts/learned_judge_prompts.py`; commit it before scoring.
-
-**4. Test scoring** through the pipeline (prints the plan without `allow_paid=true`; honeypot and honest scores are computed once and reused):
-```
-python -m lasr_labs_2025_control_project.pipeline experiment=rl_test name=rlv2_i1-base-s0 \
-  +inputs.generate.test.attacks=experiments/collusion-rl-v2/test/i1-base-s0/attacks.eval allow_paid=true
-```
-For I2 add the learned judge, and reuse the base judge's honest scores from step 1 (the game reads only their suspicion scores):
-```
-  +measurement.arms.base.collusion_prompt=JUDGE_I2_S0 \
-  +inputs.monitor.none.base.honest=experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.mon-262144_ft_a1611f-self_rec_collusion-36f750b15b47/honest.eval \
-  +inputs.monitor.paraphrased.base.honest=experiments/apps/monitor/apps-262144_ft_a1611f-test-honest-honest.para-qwen3_5_4b-llm_summarize.mon-262144_ft_a1611f-self_rec_collusion-a1fdc5ca2a29/honest.eval
-```
-
-**5. Report** the test scores into the run's W&B page (`test/` section; free):
-```
-python -m lasr_labs_2025_control_project.finetuning.grouped_rl.report_test \
-  --run $WANDB_ENTITY/$WANDB_PROJECT/<run id> --label i1-base-s0
-```
-This also logs `test/safety_usefulness` (both channels, all monitors) and puts `run.arm` and `rl_run` on the scoring's W&B runs (tag `rlv2_<label>`), so its game runs group by `run.arm` and `condition.transform`.
-
-Optional: `uv run --with wandb-workspaces python experiments/collusion-rl-v2/workspace.py collusion-rl-v2` saves a W&B view with the sections in reading order; with `--curves` it saves the test safety-usefulness view instead (game runs, mean over seeds per arm and channel).
-
 ## Tests
 
 ```

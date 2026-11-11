@@ -78,8 +78,7 @@ _EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
 # Records
 # --------------------------------------------------------------------------- #
 # Prefixes logged to W&B; everything else stays in metrics.jsonl only. A section's
-# less important metrics go to <section>_detail/; experiments/collusion-rl-v2/
-# workspace.py stacks the sections in reading order.
+# less important metrics go to <section>_detail/.
 WANDB_PREFIXES = (
     "train/",
     "validation/",
