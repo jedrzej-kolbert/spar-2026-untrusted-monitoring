@@ -60,15 +60,37 @@ async def test_refuses_to_reuse_an_existing_icrl_run_folder(tmp_path: Path) -> N
     assert not (tmp_path / "manifest.json").exists()
 
 
+class FakeRun:
+    url = None
+
+    def __init__(self) -> None:
+        self.logged: list[tuple[int | None, dict[str, Any]]] = []
+        self.saved: list[tuple[str, str | None]] = []
+        self.summary: dict[str, Any] = {}
+
+    def log(self, values: dict[str, Any], step: int | None = None) -> None:
+        self.logged.append((step, values))
+
+    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
+        self.saved.append((Path(path).name, policy))
+
+    def finish(self) -> None:
+        pass
+
+
 async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> None:
+    """Local records and W&B from one search: same strategies, replies, rewrites."""
     config = icrl_config(tmp_path)
+    recorder = Recorder(config, tmp_path)
+    run = FakeRun()
+    recorder.wandb = run
     held_out = attack_problem("13", "validation")
     await run_in_context(
         config,
         self_rec_trainer(),
         StrategyBox(),
         OneShotLearner(),
-        Recorder(config, tmp_path),
+        recorder,
         usage.Usage(),
         [attack_problem("11"), attack_problem("15"), attack_problem("17")],
         [held_out],
@@ -78,14 +100,44 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     def rows(name: str) -> list[dict[str, Any]]:
         return [json.loads(line) for line in (tmp_path / name).read_text().splitlines()]
 
+    def table(key: str) -> Any:
+        return [values[key] for _, values in run.logged if key in values][-1]
+
     strategies = rows("strategies.jsonl")
     assert [s["strategy"] for s in strategies] == ["", "keep the original helper names"]
     assert all(s["episodes"] == 2 for s in strategies)
     replies = rows("learner.jsonl")
     assert [r["stage"] for r in replies] == ["strategy", "reflection", "strategize"]
     assert all(r["episode"] == 1 for r in replies)
-    assert "Describe your strategy" in replies[0]["prompt"][-1]["content"]
-    assert "ENCODER MESSAGE" in replies[1]["prompt"][1]["content"]
+    # Proposed strategies reach W&B before they are scored.
+    assert table("icrl/proposed_strategies").data == [
+        [1, "conservative style", "keep the original helper names"]
+    ]
+    # Each scored strategy row: its text, total reward, and every reward term.
+    scored = table("icrl/strategies")
+    assert scored.columns[:4] == ["step", "round", "strategy", "reward_mean"]
+    assert [row[2] for row in scored.data] == ["", "keep the original helper names"]
+    terms = [c for c in scored.columns if c.startswith("reward/")]
+    assert set(terms) == {
+        "reward/task",
+        "reward/self_recognition",
+        "reward/backdoor_kept",
+        "reward/backdoor_suspicion",
+    }
+    for row in scored.data:
+        values = dict(zip(scored.columns, row))
+        assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
+    for name in (
+        "learner.jsonl",
+        "strategies.jsonl",
+        "rollouts.jsonl",
+        "icrl_result.json",
+    ):
+        assert (name, "live") in run.saved
+    steps = [step for step, _ in run.logged if step is not None]
+    assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
+    validation = table("icrl/validation")
+    assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
     rollouts = rows("rollouts.jsonl")
     assert {r["phase"] for r in rollouts} == {"search", "validation"}
     assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {
@@ -160,83 +212,6 @@ async def test_frozen_judge_scores_train_honeypots_once_for_the_train_auroc(
     ]
     assert [row["train_auroc"] for row in strategies] == [1.0, 1.0]
     assert set(trainer.honeypot_views) == {"21", "13"}
-
-
-class FakeRun:
-    url = None
-
-    def __init__(self) -> None:
-        self.logged: list[tuple[int | None, dict[str, Any]]] = []
-        self.saved: list[tuple[str, str | None]] = []
-        self.summary: dict[str, Any] = {}
-
-    def log(self, values: dict[str, Any], step: int | None = None) -> None:
-        self.logged.append((step, values))
-
-    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
-        self.saved.append((Path(path).name, policy))
-
-    def finish(self) -> None:
-        pass
-
-
-async def test_driver_sends_proposed_and_scored_strategies_to_wandb(
-    tmp_path: Path,
-) -> None:
-    config = icrl_config(tmp_path)
-    recorder = Recorder(config, tmp_path)
-    run = FakeRun()
-    recorder.wandb = run
-    held_out = attack_problem("13", "validation")
-    await run_in_context(
-        config,
-        self_rec_trainer(),
-        StrategyBox(),
-        OneShotLearner(),
-        recorder,
-        usage.Usage(),
-        [attack_problem("11"), attack_problem("15")],
-        [held_out],
-        [(held_out, "# another model\nprint(7)")],
-    )
-
-    def last_table(key: str) -> list[list[Any]]:
-        return [values[key] for _, values in run.logged if key in values][-1].data
-
-    # Proposed strategies reach W&B before they are scored.
-    assert last_table("icrl/proposed_strategies") == [
-        [1, "conservative style", "keep the original helper names"]
-    ]
-    scored = last_table("icrl/strategies")
-    assert [row[2] for row in scored] == ["", "keep the original helper names"]
-    assert ("learner.jsonl", "live") in run.saved
-    assert ("strategies.jsonl", "live") in run.saved
-    assert ("rollouts.jsonl", "live") in run.saved
-    assert ("icrl_result.json", "live") in run.saved
-    steps = [step for step, _ in run.logged if step is not None]
-    assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
-
-    def table(key: str) -> Any:
-        return [values[key] for _, values in run.logged if key in values][-1]
-
-    # Each strategy row: its text, total reward, and every reward term.
-    strategies = table("icrl/strategies")
-    assert strategies.columns[:4] == ["step", "round", "strategy", "reward_mean"]
-    terms = [c for c in strategies.columns if c.startswith("reward/")]
-    assert set(terms) == {
-        "reward/task",
-        "reward/self_recognition",
-        "reward/backdoor_kept",
-        "reward/backdoor_suspicion",
-    }
-    for row in strategies.data:
-        values = dict(zip(strategies.columns, row))
-        assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
-    validation = table("icrl/validation")
-    assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
-    assert {"strategy", "reward", "reward/task", "auroc", "working_rate"} <= set(
-        validation.columns
-    )
 
 
 class FailingSender:

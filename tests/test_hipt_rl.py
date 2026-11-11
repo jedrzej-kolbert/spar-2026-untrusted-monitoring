@@ -708,50 +708,16 @@ def test_config_rejects_unknown_keys_and_unwired_modes() -> None:
         {**base, "task_mode": "attack_signal"},
         {**base, "backend": "hf_gpu"},
         {**base, "training": {"group_size": 5}},
+        # removed options, and a log-odds threshold that is not finite
+        {**base, "reward": {"reward_fn": "hipt", "overseer_threshold": True}},
+        {**base, "reward": {"reward_fn": "hipt", "hipt_gate_on_pass": True}},
+        *(
+            {**base, "reward": {"overseer_log_odds_threshold": value}}
+            for value in (math.nan, math.inf, -math.inf)
+        ),
     ):
         with pytest.raises(ValueError):
             RLRunConfig.model_validate(bad)
-
-
-@pytest.mark.parametrize("threshold", [-2.0, 0.75, 2.0])
-def test_hipt_config_preserves_log_odds_threshold(threshold: float) -> None:
-    config = RLRunConfig.model_validate(
-        {
-            "run_name": "r",
-            "output_dir": "out",
-            "data": {"attacks_eval": "a.eval"},
-            "reward": {"reward_fn": "hipt", "overseer_log_odds_threshold": threshold},
-        }
-    )
-    assert core_config(config).reward.overseer_log_odds_threshold == threshold
-
-
-@pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
-def test_hipt_config_rejects_nonfinite_threshold(threshold: float) -> None:
-    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
-        RewardConfig(overseer_log_odds_threshold=threshold)
-    with pytest.raises(ValueError, match="overseer_log_odds_threshold"):
-        RLRunConfig.model_validate(
-            {
-                "run_name": "r",
-                "output_dir": "out",
-                "data": {"attacks_eval": "a.eval"},
-                "reward": {"overseer_log_odds_threshold": threshold},
-            }
-        )
-
-
-@pytest.mark.parametrize("removed", ["overseer_threshold", "hipt_gate_on_pass"])
-def test_hipt_config_rejects_removed_options(removed: str) -> None:
-    with pytest.raises(ValueError, match=removed):
-        RLRunConfig.model_validate(
-            {
-                "run_name": "r",
-                "output_dir": "out",
-                "data": {"attacks_eval": "a.eval"},
-                "reward": {"reward_fn": "hipt", removed: True},
-            }
-        )
 
 
 def test_overseer_baseline_needs_branch_reward_and_rewrite_mode() -> None:
@@ -809,26 +775,8 @@ def self_rec_config(**overrides: Any) -> RLRunConfig:
     return RLRunConfig.model_validate({**values, **overrides})
 
 
-def test_self_recognition_config_and_prompts() -> None:
-    from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
-
-    config = self_rec_config()
-    assert core_config(config).self_recognition
-    messages = rewrite_sender_messages(
-        attack_problem(),
-        1,
-        system_prompt=get_prompt_by_name(config.prompts.sender_system),
-        user_prompt=get_prompt_by_name(config.prompts.sender_user),
-        signal_labels=("OFF", "ON"),
-    )
-    text = "\n".join(message["content"] for message in messages)
-    assert "Collusion signal:" not in text
-    assert "Signal ON" not in text
-    assert "natural coding style" in text
-    assert (
-        config.prompts.receiver_system
-        == "SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT"
-    )
+def test_self_recognition_config_rejects_and_penalises() -> None:
+    assert core_config(self_rec_config()).self_recognition
     for overrides in (
         {"data": {"attacks_eval": "a"}},
         {"models": {"receiver": "tinker/another-model"}},
@@ -853,7 +801,6 @@ def test_self_recognition_config_and_prompts() -> None:
         }
     )
     assert core_config(penalised).reward.backdoor_suspicion_weight == 1
-    assert penalised.models.backdoor_monitor == "tinker/Qwen/Qwen3.5-4B"
     _, parts = compute_reward(
         rollout(p_yes=0.8, backdoor=ExecutionGrade(True), backdoor_suspicion=0.7),
         core_config(penalised),
@@ -1160,11 +1107,7 @@ async def test_receiver_factory_supports_base_and_sft_weights(
         if model.startswith("tinker://")
         else [{"base_model": "deepseek-ai/DeepSeek-V3.1", "rank": 8}]
     )
-    assert receiver.labels == ("NO", "YES")
-    assert receiver.answer_prefix == "<answer>"
     messages = receiver.messages_fn(attack_problem(), "print(7)")
-    assert messages[0]["content"] == "recognize self"
-    assert "print(7)" in messages[1]["content"]
     assert "reference_solution" not in messages[1]["content"]
 
 

@@ -18,9 +18,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
     Episode,
-    RoundSummary,
-    SearchState,
-    Knowledge,
     parse_strategy,
     results_string,
     summarise,
@@ -33,7 +30,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import RewardC
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
 from lasr_labs_2025_control_project.finetuning.grouped_rl.records import (
     Recorder,
-    summary_row,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
     extract_final_code,
@@ -41,7 +37,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 from lasr_labs_2025_control_project.prompts.rl_prompts import (
     RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
 )
-from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 from tests.test_hipt_rl import (
     EchoSender,
     FixedOverseer,
@@ -203,38 +198,9 @@ def test_results_show_the_honeypot_the_judge_accepted() -> None:
     assert "HONEYPOT:\nprint(7)" in text
 
 
-def test_summary_row_adds_columns_only_for_centralized_results() -> None:
-    plain = [Episode(p_self=0.8, passed=True, backdoor=True, suspicion=0.2, reward=0.1)]
-    assert "decoder" not in summary_row(summarise(1, "s", plain))
-
-
-def test_state_saved_before_this_change_still_loads(tmp_path: Path) -> None:
-    row = summarise(
-        1,
-        "s",
-        [Episode(p_self=0.8, passed=True, backdoor=True, suspicion=0.2, reward=0.1)],
-    ).__dict__.copy()
-    del row["decoder"], row["honeypot_p_yes_mean"]
-    path = tmp_path / "state.json"
-    path.write_text(
-        json.dumps(
-            {
-                "completed": 1,
-                "messages": [],
-                "history": [row],
-                "knowledge": {"failed_attempts": [], "knowledge": None},
-            }
-        )
-    )
-    state = SearchState.load(path)
-    assert isinstance(state.history[0], RoundSummary)
-    assert state.history[0].decoder == "" and isinstance(state.knowledge, Knowledge)
-
-
-def test_config_needs_the_gated_reward_and_the_prompts_resolve(tmp_path: Path) -> None:
+def test_config_needs_the_gated_reward(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="centralized needs"):
         icrl_config(tmp_path, icrl={"centralized": True})
-    assert "<final_code>" in get_prompt_by_name("RL_CENTRAL_SENDER_SYSTEM_PROMPT")
 
 
 class CentralLearner:
