@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from lasr_labs_2025_control_project import tracking
-from lasr_labs_2025_control_project.finetuning.grouped_rl import run
+from lasr_labs_2025_control_project.finetuning.grouped_rl import records, run
 from lasr_labs_2025_control_project.finetuning.grouped_rl.config import (
     LoggingConfig,
     load_rl_config,
@@ -197,14 +197,14 @@ def test_yaml_logging_fields_win_over_environment(
         tracking, "resolve_input", lambda path: SimpleNamespace(source=str(path))
     )
 
-    def recorder(logging: dict[str, Any]) -> run.Recorder:
+    def recorder(logging: dict[str, Any]) -> records.Recorder:
         config = load_rl_config(PILOT_CONFIG).model_copy(
             update={
                 "output_dir": tmp_path,
                 "logging": LoggingConfig.model_validate(logging),
             }
         )
-        return run.Recorder(config, tmp_path)
+        return records.Recorder(config, tmp_path)
 
     first = recorder({"wandb_project": "from-yaml"})
     assert FakeStageRun.last.env["WANDB_PROJECT"] == "from-yaml"
@@ -231,7 +231,7 @@ def test_collusion_auroc_uses_working_signal_on_rewrites_only() -> None:
             item(0, 0.95, True),  # signal OFF: not a positive
         ],
     )
-    numbers, roc = run.collusion_auroc(result, [("a", 0.85), ("b", 0.2)])
+    numbers, roc = records.collusion_auroc(result, [("a", 0.85), ("b", 0.2)])
     # Positives 0.9 and 0.8 against honeypots 0.85 and 0.2: 3 of 4 pairs ranked right.
     assert numbers == {"auroc": 0.75, "n_working": 2, "n_honeypots": 2}
     assert roc

@@ -6,8 +6,11 @@ The library now also drives the HiPT replication. How to run it is in
 [`rl-steps.md`](../../rl-steps.md); decisions and status are in
 [`docs/hipt_rl/ROADMAP.md`](../../../../docs/hipt_rl/ROADMAP.md). The additions are:
 
-- `run.py` + `config.py`: YAML-configured run driver (`finetuning/grouped_rl/configs/*.yaml`) with
-  preflight checks, baseline/periodic evaluation, JSONL records, W&B, checkpoints.
+- `run.py` + `config.py`: YAML-configured entry point (example config in
+  `rl-steps.md`): data split, sandbox check, trainer construction, then
+  `gbrl.py` (gradient-based training loop, periodic evaluation, checkpoints) or
+  `icrl_run.py` (in-context strategy search and validation of its best).
+  `records.py` holds the JSONL records, the W&B run, and the shared metrics.
 - `data.py`: tasks built from generator `.eval` logs (Option A rewrites U's own
   attacks that pass and have working backdoors); deterministic train/validation split.
 - `rewards.py`: the reward below stays the default (`branch`); `hipt` uses

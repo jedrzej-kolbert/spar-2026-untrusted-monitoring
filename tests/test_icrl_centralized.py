@@ -30,9 +30,9 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
     TrainerTeam,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import RewardConfig
-from lasr_labs_2025_control_project.finetuning.grouped_rl.run import (
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
+from lasr_labs_2025_control_project.finetuning.grouped_rl.records import (
     Recorder,
-    run_in_context,
     summary_row,
 )
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (

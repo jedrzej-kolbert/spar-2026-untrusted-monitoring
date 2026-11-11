@@ -10,10 +10,8 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import SearchStat
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
     StrategyBox,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.run import (
-    Recorder,
-    run_in_context,
-)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
+from lasr_labs_2025_control_project.finetuning.grouped_rl.records import Recorder
 from tests.test_hipt_rl import attack_problem
 from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer
 

@@ -42,10 +42,8 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.rewards import (
     compute_reward,
     suspicion_increase,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.run import (
-    core_config,
-    overseer_strength,
-)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.gbrl import overseer_strength
+from lasr_labs_2025_control_project.finetuning.grouped_rl.run import core_config
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
     FrozenYesNoMonitor,
     TinkerSender,
@@ -1587,7 +1585,7 @@ async def test_receiver_teacher_forces_each_label() -> None:
 def test_batches_never_repeat_a_problem_across_epoch_boundaries() -> None:
     import random
 
-    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import next_batch
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.gbrl import next_batch
 
     # The pilot's shape: 108 tasks, 16 per step; epoch boundaries fall mid-batch.
     tasks = [attack_problem(str(2 * i + 1)) for i in range(108)]
@@ -1616,7 +1614,7 @@ def test_batches_never_repeat_a_problem_across_epoch_boundaries() -> None:
 
 
 def test_docker_outage_is_detected_from_rollout_errors() -> None:
-    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import docker_down
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.gbrl import docker_down
 
     healthy = BatchResult(1, [rollout()])
     assert not docker_down(healthy)
