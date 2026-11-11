@@ -126,6 +126,9 @@ class SandboxConfig(_Strict):
 
 
 class LoggingConfig(_Strict):
+    """W&B settings; a field written in the YAML wins over its WANDB_* variable, an
+    unwritten one leaves the variable (and the pipeline's defaults) in charge."""
+
     wandb_project: str | None = "hipt-collusion-rl"
     wandb_entity: str | None = None
     wandb_mode: Literal["online", "offline", "disabled"] = "online"
@@ -146,6 +149,8 @@ class RLRunConfig(_Strict):
         "rewrite_signal"
     )
     seed: int = 0
+    # How the run is labelled in W&B (the collusion-rl-v2 runs use the same field).
+    kind: Literal["smoke", "pilot", "main"] = "smoke"
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     data: DataConfig
@@ -182,12 +187,38 @@ class RLRunConfig(_Strict):
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
-                raise ValueError("overseer_baseline is only defined for reward_fn branch")
+                raise ValueError(
+                    "overseer_baseline is only defined for reward_fn branch"
+                )
             if self.task_mode != "rewrite_signal":
-                raise ValueError("overseer_baseline original_attack needs rewrite_signal")
+                raise ValueError(
+                    "overseer_baseline original_attack needs rewrite_signal"
+                )
             if not self.models.overseer:
                 raise ValueError("overseer_baseline needs models.overseer")
         return self
+
+    @property
+    def identity(self) -> dict[str, str | int]:
+        """What runs are filtered by in W&B; each also becomes a ``key:value`` tag.
+
+        The keys are those of the collusion-rl-v2 runs, plus task_mode and payload.
+        """
+        reward = self.reward
+        reward_id = reward.reward_fn
+        if reward.overseer_baseline != "none":
+            reward_id += f"-{reward.overseer_baseline}-{reward.overseer_delta_space}"
+        return {
+            "method": "gbrl",
+            "judge": "sft" if self.models.receiver.startswith("tinker://") else "base",
+            # The sender hides a signal the receiver was told about: causal collusion.
+            "threat_model": "causal",
+            "reward_id": reward_id,
+            "seed": self.seed,
+            "kind": self.kind,
+            "task_mode": self.task_mode,
+            "payload": self.training.payload_grouping,
+        }
 
     @property
     def checkpoint_name(self) -> str:

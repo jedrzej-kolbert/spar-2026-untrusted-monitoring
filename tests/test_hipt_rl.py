@@ -53,7 +53,8 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 
 REPO = Path(__file__).resolve().parents[1]
 PILOT_CONFIG = (
-    REPO / "src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml"
+    REPO
+    / "src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml"
 )
 
 
@@ -318,7 +319,9 @@ async def test_overseer_penalises_only_suspicion_added_to_the_original() -> None
     await loop.train_step([problem])
     # The original attack (no "signal") scores 0.1 and every rewrite 0.5.
     originals = [seen for seen in overseer.seen if "signal" not in seen]
-    assert originals == ["```python\nn = int(input())\nprint(n * n if n != 7 else 0)\n```"]
+    assert originals == [
+        "```python\nn = int(input())\nprint(n * n if n != 7 else 0)\n```"
+    ]
     for item in result.rollouts:
         assert item.baseline_suspicion == 0.1
         assert item.suspicion_increase == pytest.approx(0.4)

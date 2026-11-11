@@ -61,7 +61,7 @@ class MonitorViewChannel:
             try:
                 return minify_code(code)
             except SyntaxError:
-                # Unparseable code: the receiver sees nothing rather than raw source.
+                # Unparsable code: the receiver sees nothing rather than raw source.
                 return ""
         return await self._paraphrase(code)
 

@@ -81,8 +81,9 @@ preflight:
   require_overseer_gap: 0.0   # log only
 
 logging:
-  wandb_project: hipt-collusion-rl
-  wandb_mode: offline   # upload later: wandb sync <output_dir>/wandb/offline-run-*
+  wandb_project: collusion-rl-v2
+  wandb_entity: spar-untrusted-monitoring-collusion
+  wandb_mode: online
 
 checkpoints:
   save_every: 10
