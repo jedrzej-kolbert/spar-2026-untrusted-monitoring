@@ -1,0 +1,44 @@
+# @package _global_
+# Test-split evaluation of the overseer-delta RL run
+# (finetuning/grouped_rl/configs/overseer_delta_v4flash.yaml).
+#
+# Both arms rewrite U's test attacks with the signal ON and are monitored by base U
+# with the self-signal receiver prompt; they differ only in the rewriter:
+#   untrained: base DeepSeek-V4.1-Flash (the control)
+#   trained:   the RL checkpoint (final_checkpoint in the run's status.json)
+# Honest solutions and honeypots are the same in both arms, so they are scored once.
+#
+#   python -m lasr_labs_2025_control_project.pipeline experiment=rl/overseer_delta_v4flash allow_paid=true
+defaults:
+  - override /setting: apps
+  - override /models: open
+  - _self_
+name: rl_overseer_delta_v4flash
+stages: [rewrite, transform, monitor, game, analysis]
+# The test generations below are local files with no W&B producing run to link.
+allow_unlinked: true
+models:
+  U: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
+  T: tinker/Qwen/Qwen3.5-4B
+  H: tinker/Qwen/Qwen3.5-397B-A17B
+measurement:
+  collusion_strategy: self_rec
+  arms:
+    untrained:
+      model: U
+      collusion_prompt: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
+      rewrite: {model: U}
+    trained:
+      model: U
+      collusion_prompt: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
+      # final_checkpoint of experiments/open-source-model/apps/rl/overseer_delta_v4flash
+      rewrite:
+        model: tinker/tinker://3809ab38-2d8b-502a-9954-30c0230be093:train:0/sampler_weights/rl_overseer_delta_v4flash
+# Test-split generations supplied as files (not committed; assumed to come from
+# base DeepSeek-V4.1-Flash and Qwen3.5-397B-A17B).
+inputs:
+  generate:
+    test:
+      attacks: data/hipt_rl/deepseek-v4_qwen-397b_data/test/deepseek_v4_test_data.eval
+      honeypots: data/hipt_rl/deepseek-v4_qwen-397b_data/test/qwen397b_test_data.eval
+      honest: data/hipt_rl/deepseek-v4_qwen-397b_data/test/deepseek_v4_test_data_honest.eval

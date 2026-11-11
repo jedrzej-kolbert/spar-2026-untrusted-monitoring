@@ -30,7 +30,7 @@ from lasr_labs_2025_control_project.tracking import (
     header_complete,
 )
 
-EVAL_STAGES = ("generate", "transform", "monitor")
+EVAL_STAGES = ("generate", "rewrite", "transform", "monitor")
 MODEL_FILE = "model.json"
 ANALYSIS_FILE = "analysis.json"
 #: stage -> type of the W&B artifact holding its output

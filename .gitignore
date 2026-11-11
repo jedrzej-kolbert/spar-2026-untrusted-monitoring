@@ -54,3 +54,6 @@ src/lasr_labs_2025_control_project/configs/
 
 # Inspect writes a temporary Docker compose file here while a sandboxed eval runs.
 /.compose.yaml
+
+# Committed RL task data (small, filtered exports; raw .eval logs stay local)
+!/data/hipt_rl/**/*.jsonl

@@ -246,6 +246,52 @@ def _generate_basharena(
     shutil.rmtree(staging, ignore_errors=True)
 
 
+# -- rewrite -----------------------------------------------------------------
+
+
+def run_rewrite(node: Node, ctx: RunContext) -> Output:
+    from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
+        RewriteSettings,
+    )
+    from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
+        run_rewrite as rewrite,
+    )
+
+    p = node.params
+    source = ctx.input(node, "input")
+    tracker = ctx.tracker(
+        node,
+        config={
+            "label": "attacks",
+            "model": p["model"],
+            "prompt": p["system_prompt"],
+            "prompt_digest": prompt_digest(get_prompt_by_name(p["system_prompt"])),
+            "signal": p["signal"],
+        },
+        tags=["attacks", "rewrite", node.info.get("rewrite_arm", "")],
+        inputs=[source],
+        models=[p["model"]],
+    )
+    out = ctx.store.output_path(node)
+    rewrite(
+        Path(source.local_path),
+        out,
+        RewriteSettings(
+            model=p["model"],
+            system_prompt=p["system_prompt"],
+            user_prompt=p["user_prompt"],
+            signal=p["signal"],
+            max_tokens=p["max_tokens"],
+        ),
+        tracker,
+        limit=p["limit"],
+        seed=node.seed,
+        temperature=p["temperature"],
+        max_connections=ctx.cfg.generation.max_connections,
+    )
+    return Output(path=str(out))
+
+
 # -- transform ---------------------------------------------------------------
 
 
@@ -620,12 +666,14 @@ def step_artifact(node: Node, ctx: RunContext) -> Optional[ResolvedInput]:
     from lasr_labs_2025_control_project.pipeline.store import ARTIFACT_TYPES
     from lasr_labs_2025_control_project.tracking import (
         artifact_input,
+        available,
         find_pipeline_run,
-        mode,
     )
 
+    if not available():
+        return None  # offline (or no key): artifacts can't be referenced until synced
     artifact = ctx.artifacts.get(node.hash)
-    if artifact is None and mode() == "online":
+    if artifact is None:
         run = find_pipeline_run(node.hash, node.key)
         wanted = ARTIFACT_TYPES.get(node.stage)
         if run is not None:
@@ -666,6 +714,7 @@ def run_analysis(node: Node, ctx: RunContext) -> Output:
 
 EXECUTORS = {
     "generate": run_generate,
+    "rewrite": run_rewrite,
     "transform": run_transform,
     "finetune": run_finetune,
     "monitor": run_monitor,
