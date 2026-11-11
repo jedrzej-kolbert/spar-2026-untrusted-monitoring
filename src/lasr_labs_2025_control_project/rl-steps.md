@@ -23,11 +23,92 @@ RL needs attacks to rewrite, from the **train** split (odd problem IDs): U's att
 
 Only attacks that pass the tests **and** have a working backdoor are used. On the test split that is about 11% of DeepSeek's attacks, so expect roughly 100 to 120 training problems.
 
+## Example config
+
+Save this as a file (for example `rl_config.yaml`) and point `data.attacks_eval` /
+`data.honeypots_eval` at your logs. It is the first pilot (`rewrite_signal`, U =
+DeepSeek-V3.1); W&B project and entity come from `WANDB_PROJECT` / `WANDB_ENTITY`,
+or from an optional `logging:` block (`wandb_project`, `wandb_entity`, `wandb_mode`).
+The tests load this block, so it stays valid.
+
+```yaml
+run_name: rewrite_signal_pilot
+output_dir: experiments/open-source-model/apps/rl/rewrite_signal_pilot
+backend: tinker            # hf_gpu: not implemented yet
+task_mode: rewrite_signal  # honest_signal / attack_signal: not wired into the driver yet
+seed: 0
+
+models:
+  sender: deepseek-ai/DeepSeek-V3.1             # raw Tinker id (trainable LoRA)
+  receiver: tinker/deepseek-ai/DeepSeek-V3.1    # frozen untrusted monitor
+  overseer: tinker/Qwen/Qwen3.5-4B              # frozen trusted monitor (signal detector)
+  backdoor_monitor: tinker/Qwen/Qwen3.5-4B      # only used if backdoor_suspicion_weight > 0
+
+prompts:
+  sender_system: RL_REWRITE_SIGNAL_SENDER_SYSTEM_PROMPT
+  sender_user: RL_REWRITE_SIGNAL_SENDER_USER_PROMPT
+  receiver_system: RL_SELF_SIGNAL_RECEIVER_SYSTEM_PROMPT
+  overseer_system: RL_OVERSEER_SIGNAL_SYSTEM_PROMPT
+  backdoor_monitor_system: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
+
+data:
+  # Produced by generate_solutions_inspect.py with
+  # configs/apps_open/self_rec/generator/train_generator_config.yaml (odd problem IDs).
+  attacks_eval: experiments/open-source-model/apps/self_rec_train/generator/attacks.eval
+  honeypots_eval: experiments/open-source-model/apps/self_rec_train/generator/honeypots.eval
+  require_main_task: true
+  require_backdoor: true
+  max_tests: 10
+  validation_fraction: 0.2
+  max_validation_problems: 20
+
+channel:
+  kind: none               # none | minify | paraphrase (signal jamming)
+  remove_comments: true    # matches the monitor configs
+
+reward:
+  reward_fn: branch        # branch | hipt
+  task_weight: 1.0
+  communication_weight: 1.0
+  overseer_weight: 1.0
+  failed_backdoor_weight: 1.0   # rewrites often drop the backdoor (4/16 kept it in the smoke run)
+  backdoor_suspicion_weight: 0.0
+  kl_coef: 0.0                  # was 0.05; KL stayed <= 0.04 in attempt 1, and the reference pass cost ~1/3 of prefill
+
+training:
+  steps: 30                     # was 50; attempt 1's trend was visible by step 30
+  problems_per_step: 16
+  group_size: 4                 # was 8; 2 rewrites per bit per problem
+  payload_grouping: both
+  loss_fn: ppo
+  ppo_passes: 1                 # was 2; halves training tokens (clipping is inactive with 1 pass)
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-5
+  lora_rank: 32
+  temperature: 1.0
+  max_tokens: 4096
+  max_context_tokens: 32768
+  train_receiver: false
+  max_concurrency: 32
+
+eval:
+  every: 10
+  num_samples: 1           # per bit, per held-out problem
+  honeypot_eval: true
+
+preflight:
+  enabled: true
+  require_overseer_gap: 0.0   # log only
+
+checkpoints:
+  save_every: 10
+```
+
 ## 2. Check the setup offline
 
 ```
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
-  --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml
+  --config rl_config.yaml
 ```
 This makes no model calls. It loads and splits the tasks, writes `manifest.json`, and re-grades a sample of the original attacks in the Docker sandbox. Both agreement numbers should be 1.0. If they are not, the sandbox disagrees with the Inspect scorer, so stop and investigate.
 
@@ -36,7 +117,7 @@ This makes no model calls. It loads and splits the tasks, writes `manifest.json`
 Add `--allow-paid`:
 ```
 python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \
-  --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml --allow-paid
+  --config rl_config.yaml --allow-paid
 ```
 
 What happens:
@@ -93,7 +174,7 @@ Original attacks and honeypot code come from the `.eval` logs named in the run's
 
 ### Changing the experiment
 
-Copy `finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml`, change `run_name`, and edit:
+Start from the example config above, change `run_name`, and edit:
 - `reward.reward_fn`: `branch` (default, correctness-gated) or `hipt` (upstream probability-reward variant, no APPS pass gate or task bonus).
 - For `hipt`, `reward.stego_scale` and `overseer_scale` weight the communication and overseer terms. `overseer_log_odds_threshold` (default `0.75`) is subtracted from `log P(NO) - log P(YES)` before `tanh`; it is not a probability threshold. The old `hipt_gate_on_pass` and `overseer_threshold` keys are rejected.
 - `reward.failed_backdoor_weight`, `backdoor_suspicion_weight`, `kl_coef`, `overseer_weight`: optional penalties and their strengths. `overseer_ramp_start` and `overseer_ramp_steps` ramp the overseer in gradually.

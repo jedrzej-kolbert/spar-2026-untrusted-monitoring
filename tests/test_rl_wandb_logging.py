@@ -19,18 +19,14 @@ import pytest
 
 from lasr_labs_2025_control_project import tracking
 from lasr_labs_2025_control_project.finetuning.grouped_rl import records, run
-from lasr_labs_2025_control_project.finetuning.grouped_rl.config import (
-    LoggingConfig,
-    load_rl_config,
-)
-
+from lasr_labs_2025_control_project.finetuning.grouped_rl.config import LoggingConfig
 from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     BatchResult,
     ExecutionGrade,
     Rollout,
 )
 
-from .test_hipt_rl import PILOT_CONFIG, attack_problem, balanced_trainer, rollout
+from .test_hipt_rl import attack_problem, balanced_trainer, pilot_config, rollout
 
 RECORDS = ("metrics.jsonl", "rollouts.jsonl", "honeypot_scores.jsonl", "manifest.json")
 
@@ -89,7 +85,7 @@ class FakeStageRun:
 
 
 def drive(output_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config = load_rl_config(PILOT_CONFIG).model_copy(
+    config = pilot_config().model_copy(
         update={"output_dir": output_dir, "logging": LoggingConfig()}
     )
     config.training.steps = 2
@@ -182,7 +178,7 @@ def test_wandb_logging_leaves_local_records_unchanged(
     assert [step for step, values in stage.run.logged if "validation/auroc" in values]
     assert stage.rocs and stage.finished is True
     assert stage.models[-1][0] == "tinker/tinker://fake/sampler_weights/rl_" + (
-        load_rl_config(PILOT_CONFIG).run_name
+        pilot_config().run_name
     )
     assert {"metrics.jsonl", "rollouts.jsonl", "manifest.json"} <= set(stage.run.saved)
 
@@ -198,7 +194,7 @@ def test_yaml_logging_fields_win_over_environment(
     )
 
     def recorder(logging: dict[str, Any]) -> records.Recorder:
-        config = load_rl_config(PILOT_CONFIG).model_copy(
+        config = pilot_config().model_copy(
             update={
                 "output_dir": tmp_path,
                 "logging": LoggingConfig.model_validate(logging),

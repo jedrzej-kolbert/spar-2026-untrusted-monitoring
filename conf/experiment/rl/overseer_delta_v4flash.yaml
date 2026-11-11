@@ -1,6 +1,6 @@
 # @package _global_
 # Test-split evaluation of the overseer-delta RL run
-# (finetuning/grouped_rl/configs/overseer_delta_v4flash.yaml).
+# (run name overseer_delta_v4flash).
 #
 # Both arms rewrite U's test attacks with the signal ON and are monitored by base U
 # with the self-signal receiver prompt; they differ only in the rewriter:

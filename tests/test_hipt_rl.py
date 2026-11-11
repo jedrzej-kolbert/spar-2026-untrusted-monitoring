@@ -10,15 +10,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 from lasr_labs_2025_control_project.finetuning.grouped_rl import tinker_backend
 from lasr_labs_2025_control_project.finetuning.grouped_rl.channels import (
     MonitorViewChannel,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.config import (
-    RLRunConfig,
-    load_rl_config,
-)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.config import RLRunConfig
 from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     AppsProblem,
     BatchResult,
@@ -52,10 +50,13 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import 
 )
 
 REPO = Path(__file__).resolve().parents[1]
-PILOT_CONFIG = (
-    REPO
-    / "src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml"
-)
+
+
+def pilot_config() -> RLRunConfig:
+    """The example config in rl-steps.md (its only yaml block)."""
+    doc = (REPO / "src/lasr_labs_2025_control_project/rl-steps.md").read_text()
+    block = doc.split("```yaml\n")[1].split("```")[0]
+    return RLRunConfig.model_validate(yaml.safe_load(block))
 
 
 @pytest.fixture(autouse=True)
@@ -693,7 +694,7 @@ def test_split_is_deterministic_and_disjoint() -> None:
 def test_pilot_config_loads_and_prompts_resolve() -> None:
     from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 
-    config = load_rl_config(PILOT_CONFIG)
+    config = pilot_config()
     assert config.models.sender == "deepseek-ai/DeepSeek-V3.1"
     for name in config.prompts.model_dump().values():
         assert get_prompt_by_name(name)
