@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 import random
 from typing import Any
 
@@ -199,6 +200,13 @@ async def run_in_context(
             # A run with no paired rollout has no paired mean: it cannot win.
             row = await validate(f"top{rank}", candidate)
             scored.append((row.get(objective, float("-inf")), candidate))
+        scored = [item for item in scored if math.isfinite(item[0])]
+        if not scored:
+            recorder.status(state="stopped", reason="no strategy could be validated")
+            raise RuntimeError(
+                f"no shortlisted strategy has a validation {objective} "
+                "(is there a paired honeypot among the validation problems?)"
+            )
         best = max(scored, key=lambda item: item[0])[1]
         rows["winner"] = done[(best.strategy, best.decoder)]
         # The no-strategy rewrite, so a gain is measured against no strategy.

@@ -275,3 +275,36 @@ async def test_driver_runs_every_control_and_logs_both_sides(tmp_path: Path) -> 
     assert "paired_reward_mean" in result["validation"]["winner"]
     # The centralized judge changes per strategy: train AUROC uses its paired scores.
     assert all(row["train_auroc"] is not None for row in result["strategies"])
+
+
+async def test_no_winner_is_published_when_no_strategy_can_be_validated(
+    tmp_path: Path,
+) -> None:
+    config: RLRunConfig = icrl_config(
+        tmp_path,
+        reward={
+            "reward_fn": "valid_sigmoid",
+            "suspicion_threshold": 0.85,
+            "overseer_weight": 0,
+            "overseer_scale": 0,
+            "kl_coef": 0,
+            "backdoor_suspicion_weight": 1,
+        },
+        icrl={"episodes": 1, "search_problems": 2, "centralized": True},
+    )
+    held_out = attack_problem("13", "validation")
+    tasks = [attack_problem("11"), attack_problem("15"), attack_problem("17")]
+    with pytest.raises(RuntimeError, match="no shortlisted strategy"):
+        await run_in_context(
+            config,
+            trainer(),
+            StrategyBox(),
+            CentralLearner(),
+            Recorder(config, tmp_path),
+            usage.Usage(),
+            tasks,
+            [held_out],
+            [(attack_problem("99", "validation"), HONEYPOT)],  # none for problem 13
+            [(task, HONEYPOT) for task in tasks],
+        )
+    assert not (tmp_path / "icrl_result.json").exists()
