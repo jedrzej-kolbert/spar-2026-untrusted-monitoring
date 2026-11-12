@@ -29,6 +29,7 @@ The authoritative live catalogue is
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from collections.abc import Callable, Mapping
@@ -444,7 +445,9 @@ def _inspect_tool_calls(message: Mapping[str, Any]) -> list[ToolCall]:
 # and the answer to a "final" one. Decoding without special tokens runs the two
 # together ("analysis...assistantfinal..."), so a paraphrase or monitor answer
 # would carry the reasoning, which may quote the original code verbatim.
-_HARMONY_FINAL = "<|channel|>final<|message|>"
+# gpt-oss renames the final channel after the prompt's tags ("final_code",
+# "final code", "final <|constrain|>code"): 57% of a 1,033-problem APPS run.
+_HARMONY_FINAL = re.compile(r"<\|channel\|>final.*?<\|message\|>", re.S)
 _HARMONY_ANALYSIS = "<|channel|>analysis<|message|>"
 _HARMONY_SPECIAL = ("<|end|>", "<|return|>", "<|start|>assistant", "<|call|>")
 
@@ -453,11 +456,10 @@ def split_harmony(raw: str) -> tuple[str, str] | None:
     """(reasoning, answer) of a harmony completion decoded with special tokens;
     None if it isn't one. A completion cut off before its final channel has an
     empty answer."""
-    if _HARMONY_ANALYSIS not in raw and _HARMONY_FINAL not in raw:
+    final = _HARMONY_FINAL.search(raw)
+    if _HARMONY_ANALYSIS not in raw and not final:
         return None
-    head, final_marker, answer = raw.partition(_HARMONY_FINAL)
-    if not final_marker:
-        head, answer = raw, ""
+    head, answer = (raw[: final.start()], raw[final.end() :]) if final else (raw, "")
     reasoning = head.replace(_HARMONY_ANALYSIS, "")
     for token in _HARMONY_SPECIAL:
         reasoning = reasoning.replace(token, "")

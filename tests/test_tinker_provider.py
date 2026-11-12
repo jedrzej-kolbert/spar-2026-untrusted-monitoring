@@ -471,3 +471,7 @@ def test_harmony_completions_keep_only_the_final_channel():
         "",
     )
     assert tp.split_harmony("plain Qwen output") is None
+    # gpt-oss names the final channel after the prompt's <final_code> tags
+    for header in ("final_code", "final code", "final <|constrain|>code"):
+        raw = f"<|channel|>analysis<|message|>t<|end|><|start|>assistant<|channel|>{header}<|message|>x=1<|return|>"
+        assert tp.split_harmony(raw) == ("t", "x=1")
