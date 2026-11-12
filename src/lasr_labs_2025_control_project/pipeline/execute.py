@@ -252,6 +252,7 @@ def _generate_basharena(
 def run_rewrite(node: Node, ctx: RunContext) -> Output:
     from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
         RewriteSettings,
+        judge_registered,
         with_strategy_result,
     )
     from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
@@ -270,7 +271,7 @@ def run_rewrite(node: Node, ctx: RunContext) -> Output:
             strategy_result=p.get("strategy_result"),
         )
     )
-    if judge:
+    if judge and not judge_registered(judge):
         # A pipeline step does not write source files; register the judge first.
         raise ValueError(
             "a centralized strategy's judge must be registered first: run "

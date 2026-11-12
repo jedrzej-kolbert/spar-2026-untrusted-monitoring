@@ -353,6 +353,12 @@ def test_inputs_replace_nodes_and_must_exist() -> None:
         graph("experiment=self_rec", "+inputs.finetune.nope.none=x")
 
 
+def test_a_transform_without_source_keeps_its_old_params() -> None:
+    # an added `source: None` would change every cached transform's hash and seed
+    g = graph("experiment=self_rec", "measurement.transforms=[minified]").by_id()
+    assert "source" not in g["transform.test.minified.attacks"].params["transform"]
+
+
 def test_chained_transform_reads_its_source_output() -> None:
     g = graph(
         "experiment=self_rec", "measurement.transforms=[minified_paraphrased]"

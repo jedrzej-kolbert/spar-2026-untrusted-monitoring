@@ -236,7 +236,13 @@ class GraphBuilder:
         spec = self.cfg.transforms[transform]
         if spec.source:
             source = self.transform(split, spec.source, source)
-        params: dict[str, Any] = {"transform": dataclasses.asdict(spec)}
+        # An unset source stays out of the params so older transforms keep their hash.
+        spec_params = {
+            k: v
+            for k, v in dataclasses.asdict(spec).items()
+            if not (k == "source" and v is None)
+        }
+        params: dict[str, Any] = {"transform": spec_params}
         if spec.type == "llm":
             params["temperature"] = self.cfg.generation.temperature
             params["seed"] = self.cfg.seed

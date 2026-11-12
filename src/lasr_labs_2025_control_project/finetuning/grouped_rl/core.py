@@ -541,7 +541,7 @@ class GroupedRLTrainer:
         self.overseer = overseer
         self.channel = channel
         self.backdoor_monitor = backdoor_monitor
-        self.honeypot_views: dict[str, str] = {}
+        self.honeypot_views: dict[tuple[str, str], str] = {}  # (problem, code) -> view
         self.reference = reference
         self.code_extractor = code_extractor
         self._rng = random.Random(self.config.seed)
@@ -957,12 +957,12 @@ class GroupedRLTrainer:
                 try:
                     # A stored view keeps scores comparable when the judge's prompt
                     # changes: a fresh paraphrase would add noise and cost.
-                    view = self.honeypot_views.get(problem.problem_id)
+                    view = self.honeypot_views.get((problem.problem_id, code))
                     if view is None:
                         view = code
                         if self.channel is not None:
                             view = await self.channel.transform(problem, code)
-                        self.honeypot_views[problem.problem_id] = view
+                        self.honeypot_views[(problem.problem_id, code)] = view
                     _, p_yes = await self.receiver.probabilities(problem, view)
                     if not math.isfinite(p_yes) or not 0 <= p_yes <= 1:
                         raise ValueError("invalid receiver probability")

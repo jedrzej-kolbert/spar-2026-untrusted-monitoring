@@ -151,6 +151,7 @@ class TrainerTeam:
         if errors:
             raise RuntimeError(f"honeypot scoring failed: {errors[:3]}")
         by_id = dict(scores)
+        wanted_code = {problem.problem_id: code for problem, code in wanted}
         for rollout in result.rollouts:
             q = by_id.get(rollout.problem.problem_id)
             if q is None or rollout.probabilities is None:
@@ -159,7 +160,7 @@ class TrainerTeam:
             p = rollout.probabilities[1]
             rollout.honeypot_p_yes = q
             rollout.honeypot_code = self.trainer.honeypot_views[
-                rollout.problem.problem_id
+                rollout.problem.problem_id, wanted_code[rollout.problem.problem_id]
             ]
             rollout.reward_components = {
                 "self_recognition": gate * p,

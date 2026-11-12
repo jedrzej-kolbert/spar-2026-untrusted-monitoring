@@ -227,7 +227,8 @@ def core_config(
         train_receiver=training.train_receiver,
         self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
-        trusted_reads_original=True,  # as in the game: comment-stripped code, not the jammed view
+        # self-recognition only, as in the game: comment-stripped code, not the jammed view
+        trusted_reads_original=config.task_mode == "self_recognition",
     )
 
 

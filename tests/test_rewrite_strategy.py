@@ -109,3 +109,5 @@ def test_a_learned_judge_is_registered_once(
     rewrite.register_judge("i2-s0", "count calls")
     with pytest.raises(click.ClickException, match="other instructions"):
         rewrite.register_judge("i2-s0", "something else")
+    assert rewrite.judge_registered("count calls")
+    assert not rewrite.judge_registered("something else")

@@ -123,7 +123,7 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     steps = [step for step, _ in run.logged if step is not None]
     assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
     validation = table("icrl/validation")
-    assert [row[0] for row in validation.data] == ["top1", "top2", "winner", "baseline"]
+    assert [row[0] for row in validation.data] == ["top1", "winner", "baseline"]
     rollouts = rows("rollouts.jsonl")
     assert {r["phase"] for r in rollouts} == {"search", "validation"}
     assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {
@@ -132,7 +132,7 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     }
     result = json.loads((tmp_path / "icrl_result.json").read_text())
     # Both strategies are in the top 3; the no-strategy rewrite is one of them.
-    assert set(result["validation"]) == {"top1", "top2", "winner", "baseline"}
+    assert set(result["validation"]) == {"top1", "winner", "baseline"}
     assert result["validation"]["winner"]["auroc"] == pytest.approx(1.0)
     assert result["validation"]["winner"]["n_honeypots"] == 1
     assert result["winner"]["strategy"] in {"", "keep the original helper names"}
@@ -198,7 +198,7 @@ async def test_frozen_judge_scores_train_honeypots_once_for_the_train_auroc(
         for line in (tmp_path / "strategies.jsonl").read_text().splitlines()
     ]
     assert [row["train_auroc"] for row in strategies] == [1.0, 1.0]
-    assert set(trainer.honeypot_views) == {"21", "13"}
+    assert {pid for pid, _ in trainer.honeypot_views} == {"21", "13"}
 
 
 class FailingSender:

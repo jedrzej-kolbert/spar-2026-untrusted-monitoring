@@ -239,6 +239,12 @@ def for_label(
     return parsed.model_copy(update={"defaults": {"rewrite": settings}, "runs": runs})
 
 
+def judge_registered(instructions: str) -> bool:
+    """Whether some prompt in learned_judge_prompts.py is this judge's filled template."""
+    ns = runpy.run_path(str(LEARNED_JUDGES))
+    return ns["_judge"](instructions) in ns.values()
+
+
 def register_judge(label: str, instructions: str) -> str:
     """Add the learned judge as prompt JUDGE_<LABEL> (the search's template, filled)."""
     name = "JUDGE_" + label.upper().replace("-", "_")

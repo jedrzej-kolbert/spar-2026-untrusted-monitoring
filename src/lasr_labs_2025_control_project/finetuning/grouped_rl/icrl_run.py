@@ -188,11 +188,17 @@ async def run_in_context(
         # The centralized reward is paired; a rewrite whose problem has no
         # honeypot would otherwise count the judge's YES without its cost.
         objective = "paired_reward_mean" if icrl.centralized else "reward"
-        top = sorted(history, key=lambda item: item.reward_mean, reverse=True)
-        scored = [
-            ((await validate(f"top{rank}", candidate))[objective], candidate)
-            for rank, candidate in enumerate(top[: icrl.validate_top], 1)
-        ]
+        # Round 0 is the no-strategy control, validated below as "baseline".
+        top = sorted(
+            (item for item in history if item.round > 0),
+            key=lambda item: item.reward_mean,
+            reverse=True,
+        )
+        scored = []
+        for rank, candidate in enumerate(top[: icrl.validate_top], 1):
+            # A run with no paired rollout has no paired mean: it cannot win.
+            row = await validate(f"top{rank}", candidate)
+            scored.append((row.get(objective, float("-inf")), candidate))
         best = max(scored, key=lambda item: item[0])[1]
         rows["winner"] = done[(best.strategy, best.decoder)]
         # The no-strategy rewrite, so a gain is measured against no strategy.
