@@ -447,26 +447,6 @@ def roc_chart(curves: Mapping[str, Sequence[tuple[float, float]]], title: str) -
     )
 
 
-def line_chart(
-    curves: Mapping[str, Sequence[tuple[float, float]]], title: str, x: str, y: str
-) -> Any:
-    """Lines from (x, y) points, one per label, as one W&B chart to log."""
-    import wandb
-
-    rows: list[Any] = [
-        [label, float(a), float(b)]
-        for label, points in curves.items()
-        for a, b in sorted(points)
-    ]
-    return wandb.plot.line(
-        wandb.Table(columns=["class", x, y], data=rows),
-        x,
-        y,
-        stroke="class",
-        title=title,
-    )
-
-
 class StageRun:
     """One W&B run for one stage invocation on one label (or one condition).
 

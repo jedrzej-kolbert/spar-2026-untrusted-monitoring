@@ -49,17 +49,6 @@ def test_a_centralized_winner_gives_its_judge_text_and_needs_its_sender_prompt(
         with_strategy_result(settings(result(tmp_path, ""), CENTRAL_SENDER))
 
 
-def test_learned_judge_prompts_fill_the_search_judge_template() -> None:
-    from lasr_labs_2025_control_project.prompts.learned_judge_prompts import _judge
-    from lasr_labs_2025_control_project.prompts.rl_prompts import (
-        RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
-    )
-
-    assert _judge("X") == RL_CENTRAL_JUDGE_SYSTEM_PROMPT.format(
-        decoder_instructions="X"
-    )
-
-
 def test_test_rewrite_template_takes_a_label_and_a_source() -> None:
     from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
         RewriteConfig,

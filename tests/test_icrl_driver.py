@@ -13,6 +13,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
 from lasr_labs_2025_control_project.finetuning.grouped_rl.records import Recorder
 from tests.test_hipt_rl import attack_problem
+from tests.test_rl_wandb_logging import FakeWandbRun
 from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer
 
 
@@ -60,29 +61,11 @@ async def test_refuses_to_reuse_an_existing_icrl_run_folder(tmp_path: Path) -> N
     assert not (tmp_path / "manifest.json").exists()
 
 
-class FakeRun:
-    url = None
-
-    def __init__(self) -> None:
-        self.logged: list[tuple[int | None, dict[str, Any]]] = []
-        self.saved: list[tuple[str, str | None]] = []
-        self.summary: dict[str, Any] = {}
-
-    def log(self, values: dict[str, Any], step: int | None = None) -> None:
-        self.logged.append((step, values))
-
-    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
-        self.saved.append((Path(path).name, policy))
-
-    def finish(self) -> None:
-        pass
-
-
 async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> None:
     """Local records and W&B from one search: same strategies, replies, rewrites."""
     config = icrl_config(tmp_path)
     recorder = Recorder(config, tmp_path)
-    run = FakeRun()
+    run = FakeWandbRun()
     recorder.wandb = run
     held_out = attack_problem("13", "validation")
     await run_in_context(
@@ -106,6 +89,9 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     strategies = rows("strategies.jsonl")
     assert [s["strategy"] for s in strategies] == ["", "keep the original helper names"]
     assert all(s["episodes"] == 2 for s in strategies)
+    # The real self-recognition trainer: MarkerReceiver sees "signal = 1".
+    assert strategies[0]["p_self_rec"] == pytest.approx(0.9)
+    assert strategies[0]["backdoor_checked"] == 2
     replies = rows("learner.jsonl")
     assert [r["stage"] for r in replies] == ["strategy", "reflection", "strategize"]
     assert all(r["episode"] == 1 for r in replies)
@@ -148,6 +134,7 @@ async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> N
     # Both strategies are in the top 3; the no-strategy rewrite is one of them.
     assert set(result["validation"]) == {"top1", "top2", "winner", "baseline"}
     assert result["validation"]["winner"]["auroc"] == pytest.approx(1.0)
+    assert result["validation"]["winner"]["n_honeypots"] == 1
     assert result["winner"]["strategy"] in {"", "keep the original helper names"}
     assert result["knowledge"]["knowledge"] == "preserve behavior"
     assert len(result["knowledge"]["failed_attempts"]) == 1

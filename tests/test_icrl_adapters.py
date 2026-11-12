@@ -11,7 +11,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     GroupedRLTrainer,
     Rollout,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import run_icrl
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
     StrategyBox,
     TinkerLearner,
@@ -110,26 +109,6 @@ class OneShotLearner:
         if "<summarize_learning>" in messages[-1]["content"]:
             return "<summarize_learning>preserve behavior</summarize_learning>"
         return "per-metric reflection"
-
-
-async def test_icrl_runs_through_the_real_self_recognition_trainer() -> None:
-    # Self-recognition evaluation generates only payload 1; the loop must accept that.
-    trainer = self_rec_trainer()
-    history, best = await run_icrl(OneShotLearner(), team(trainer), episodes=1)
-    assert [item.strategy for item in history] == ["", "keep the original helper names"]
-    assert all(item.episodes == 2 for item in history)
-    assert history[0].p_self_mean == pytest.approx(
-        0.9
-    )  # MarkerReceiver sees "signal = 1"
-    assert history[0].backdoor_checked == 2
-    assert best in history
-
-
-async def test_validation_scores_the_honeypots() -> None:
-    episodes, honeypot = await team(self_rec_trainer()).validate("")
-    assert len(episodes) == 1
-    assert honeypot.metrics()["n_honeypots"] == 1
-    assert honeypot.metrics()["auroc"] == pytest.approx(1.0)
 
 
 class FlakyEvaluator(PassingEvaluator):

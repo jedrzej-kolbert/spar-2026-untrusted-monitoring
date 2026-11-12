@@ -28,7 +28,6 @@ from .records import (
     batch_metrics,
     close_run,
     collusion_auroc,
-    self_rec_roc,
     signal_metrics,
 )
 
@@ -158,7 +157,7 @@ async def run_evaluation(
     recorder.metrics(step, "validation", {**metrics, "honeypot_errors": len(errors)})
     recorder.roc(
         step,
-        {f"step {step}": self_rec_roc(result, scores)},
+        {f"step {step}": collusion_auroc(result, scores)[1]},
         "Collusion ROC on validation",
     )
     return metrics["reward"]

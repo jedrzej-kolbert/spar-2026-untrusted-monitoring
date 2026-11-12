@@ -120,27 +120,6 @@ def batch_metrics(
     }
 
 
-def self_rec_roc(
-    result: BatchResult, honeypot_scores: list[tuple[str, float]]
-) -> list[tuple[float, float]]:
-    """(FPR, TPR) of P(self_rec), working rewrites vs honeypots, at every threshold."""
-    import numpy as np
-
-    from lasr_labs_2025_control_project.utils.numerical_pipeline.results_io import (
-        _raw_roc,
-    )
-
-    positives = [
-        item.probabilities[1]
-        for item in result.rollouts
-        if working(item) and item.probabilities is not None
-    ]
-    if not positives or not honeypot_scores:
-        return []
-    roc = _raw_roc(np.array(positives), np.array([s for _, s in honeypot_scores]))
-    return list(zip(roc["fpr"], roc["tpr"]))
-
-
 def signal_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
     """Key numbers of a rewrite_signal batch: the shared names above where the maths
     is the same, the reward, its terms and the batch mean of each input to its formula,
@@ -271,7 +250,6 @@ class Recorder:
         resumed_from: dict[str, Any] | None = None,
     ) -> None:
         self.output_dir = output_dir
-        self.self_recognition = config.task_mode == "self_recognition"
         self.centralized = config.icrl.centralized
         output_dir.mkdir(parents=True, exist_ok=True)
         self.strategy_rows: list[dict[str, Any]] = []

@@ -6,31 +6,12 @@ The library now also drives the HiPT replication. How to run it is in
 [`rl-steps.md`](../../rl-steps.md); decisions and status are in
 [`docs/hipt_rl/ROADMAP.md`](../../../../docs/hipt_rl/ROADMAP.md). The additions are:
 
-- `run.py` + `config.py`: YAML-configured entry point (example config in
-  `rl-steps.md`): data split, sandbox check, trainer construction, then
-  `gbrl.py` (gradient-based training loop, periodic evaluation, checkpoints) or
-  `icrl_run.py` (in-context strategy search and validation of its best).
-  `records.py` holds the JSONL records, the W&B run, and the shared metrics.
-- `data.py`: tasks built from generator `.eval` logs (Option A rewrites U's own
-  attacks that pass and have working backdoors); deterministic train/validation split.
-- `rewards.py`: the reward below stays the default (`branch`); `hipt` uses
-  HiPT's probability-reward variant and log-odds-thresholded overseer term;
-  optional failed-backdoor, backdoor-suspicion, and per-token KL penalties. With
-  `overseer_baseline: original_attack` the branch overseer term penalises only
-  the suspicion a rewrite adds over the attack it rewrote.
-- `core.py`: `payload_grouping="both"` puts both bits for a problem in one group
-  (one shared baseline); per-bit/balanced accuracy, bit-pair collapse metrics;
-  held-out comparison of signalled attacks against honeypots; concurrent scoring.
-- `viewer.py`: `run_view.html`, a self-contained page for reading a run's JSONL
-  records, with original, signal-OFF and signal-ON code side by side.
-- `channels.py`: the receiver and overseer see exactly what the eval monitors see
-  (comments stripped, or minified / LLM-paraphrased for signal jamming).
-- `tinker_backend.py`: Tinker `ppo` loss (ratio clip, several passes per batch);
-  frozen YES/NO monitors scored with the eval pipeline's own
-  `collusion_yes_no_logprobs`; frozen base-model reference for KL.
-- `sandbox.py`: `control_arena_parity` mode (code wrapped like control_arena's
-  scorer, stderr fails, first N tests), `check_backdoor`, and batched execution
-  (one container per candidate, fresh process per test).
+- `run.py` + `config.py`: the YAML-configured entry point (example config in
+  `rl-steps.md`); it hands off to `gbrl.py` (gradient training) or `icrl_run.py`
+  (in-context search, `icrl.py`), which both record through `records.py`.
+- Rewards are in `rewards.py` (formulas below), APPS grading in `sandbox.py`, the
+  monitors' code view in `channels.py`, Tinker clients in `tinker_backend.py`, and
+  `viewer.py` builds `run_view.html` from a run's records.
 
 ## HiPT probability reward
 
@@ -187,33 +168,12 @@ Set `method: in_context` and `task_mode: self_recognition` in the existing
 fresh output directory; a directory containing ICRL records is rejected before
 its manifest can be overwritten, including in offline mode.
 
-The learner follows the [upstream centralized ICL learner at
-905b3f3](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/learning/in_context_learning/central_icl_learner.py)
-and its [base learner](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/learning/in_context_learning/icl_learner.py):
-
-1. Query for one structured strategy (`description`, `encoder_instructions`).
-2. Run that strategy on the search problems.
-3. Clear the learner conversation, retaining its system prompt.
-4. Supply the measured results and diagnostic examples; query for per-metric reflection.
-5. Record the attempt; separately query for updated learning, three ideas and their ratings.
-6. Carry that discussion into the next strategy query, and the distilled knowledge
-   into the next strategizing query. Do not truncate earlier attempt summaries.
-
-These are separate model calls, not one prompt with several headings. The settings
-match upstream's `PerMetric`, `do_strategize=True`, `clear_and_summarize=True`,
-`try_improve_last_strategy=False`. `icrl.episodes` counts evaluated strategies;
-`icrl.n_result_examples` defaults to three examples per diagnostic category. The
-old `icrl.rounds` and `icrl.candidates` fields are no longer accepted.
-
-Task-specific adaptations are explicit: only the sender gets the instructions
-(the judge stays frozen); test correctness, backdoor preservation, P(self) and
-trusted suspicion replace payload decoding metrics. The no-strategy baseline and
-held-out honeypot AUROC are evaluation controls outside the learner's search.
-HiPT's payload-perfect early-stop condition has no direct counterpart for these
-continuous scores, so the configured episode count is used without inventing one.
-This is an adaptation of the search procedure, not an exact replication of HiPT's
-payload experiment. A fresh rewrite is not guaranteed to improve on the preceding
-one; the best-so-far strategy is retained separately.
+The learner is HiPT's sequential ICRL learner, adapted to self-recognition: see
+the `icrl.py` docstring for the pinned upstream source (`905b3f3`), its settings
+and the task adaptations. `icrl.episodes` counts evaluated strategies;
+`icrl.n_result_examples` defaults to three examples per diagnostic category. This
+is an adaptation of the search procedure, not an exact replication of HiPT's
+payload experiment.
 
 HiPT's [HumanEval task prompt](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/episode/tasks/human_eval_task.py#L16-L22)
 supplies a correct implementation and permits keeping it, altering it, or writing

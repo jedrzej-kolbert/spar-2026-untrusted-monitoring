@@ -43,15 +43,15 @@ class FakeWandbRun:
     url = "https://wandb.example/run"
 
     def __init__(self) -> None:
-        self.logged: list[tuple[int, dict[str, Any]]] = []
+        self.logged: list[tuple[int | None, dict[str, Any]]] = []
         self.summary: dict[str, Any] = {}
-        self.saved: list[str] = []
+        self.saved: list[tuple[str, str | None]] = []
 
-    def log(self, values: dict[str, Any], step: int) -> None:
+    def log(self, values: dict[str, Any], step: int | None = None) -> None:
         self.logged.append((step, values))
 
-    def save(self, path: str, base_path: str, policy: str) -> None:
-        self.saved.append(Path(path).name)
+    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
+        self.saved.append((Path(path).name, policy))
 
 
 class FakeStageRun:
@@ -180,7 +180,9 @@ def test_wandb_logging_leaves_local_records_unchanged(
     assert stage.models[-1][0] == "tinker/tinker://fake/sampler_weights/rl_" + (
         pilot_config().run_name
     )
-    assert {"metrics.jsonl", "rollouts.jsonl", "manifest.json"} <= set(stage.run.saved)
+    assert {"metrics.jsonl", "rollouts.jsonl", "manifest.json"} <= {
+        name for name, _ in stage.run.saved
+    }
 
 
 def test_yaml_logging_fields_win_over_environment(

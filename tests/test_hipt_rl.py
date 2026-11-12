@@ -1050,7 +1050,10 @@ async def test_yes_no_receiver_scores_and_trains_the_same_answer_tokens() -> Non
         answer_prefix="<answer>",
         answer_suffix="</answer>",
     )
-    await receiver.probabilities(attack_problem(), "print(1)")
+    p_no, p_yes = await receiver.probabilities(attack_problem(), "print(1)")
+    # Each label's tokens sum: NO (2 tokens) -0.2 vs YES (3 tokens) -0.3, normalized.
+    assert p_yes == pytest.approx(1 / (1 + math.exp(0.1)))
+    assert p_no + p_yes == pytest.approx(1)
     prefix = [1, 2, *b"<answer>"]
     assert sampler.prompts == [prefix + list(b"NO"), prefix + list(b"YES")]
     await receiver.update(
@@ -1487,40 +1490,6 @@ def test_usage_reserves_concurrent_requests_and_keeps_failed_request_cost() -> N
     with pytest.raises(ValueError, match="no budget price"):
         with meter.request("unknown/model", train=1):
             pytest.fail("unpriced request dispatched")
-
-
-async def test_receiver_teacher_forces_each_label() -> None:
-    class Tokenizer:
-        vocab = {"<answer>": [900], "YES": [10], "NO": [20]}
-
-        def encode(self, text: str, **kwargs: Any) -> list[int]:
-            return list(self.vocab[text])
-
-        def apply_chat_template(self, messages: Any, **kwargs: Any) -> list[int]:
-            return [1, 2, 3, 4, 5, 6, 7, 8]
-
-    class Sampler:
-        calls: list[list[int]] = []
-
-        async def compute_logprobs_async(self, prompt: Any) -> Any:
-            tokens = prompt.to_ints()
-            self.calls.append(tokens)
-            return [None, *[-0.1] * (len(tokens) - 2), {20: -3.0, 10: -0.5}[tokens[-1]]]
-
-    sampler = Sampler()
-    receiver = tinker_backend.TinkerReceiver(
-        None,
-        sampler,
-        Tokenizer(),
-        allow_paid=True,
-        labels=("NO", "YES"),
-        answer_prefix="<answer>",
-    )
-    p_no, p_yes = await receiver.probabilities(attack_problem(), "print(1)")
-    assert p_yes == pytest.approx(1 / (1 + math.exp(-2.5)))
-    assert p_no + p_yes == pytest.approx(1)
-    prefix = [1, 2, 3, 4, 5, 6, 7, 8, 900]
-    assert sampler.calls == [prefix + [20], prefix + [10]]
 
 
 # --------------------------------------------------------------------------- #

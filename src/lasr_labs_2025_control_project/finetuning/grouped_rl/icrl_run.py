@@ -34,7 +34,7 @@ from lasr_labs_2025_control_project.prompts.rl_prompts import (
     RL_WHILE_LOOP_JUDGE_INSTRUCTIONS,
     RL_WHILE_LOOP_SENDER_INSTRUCTIONS,
 )
-from .records import Recorder, batch_metrics, self_rec_roc, summary_row
+from .records import Recorder, batch_metrics, collusion_auroc, summary_row
 
 logger = logging.getLogger(__name__)
 
@@ -135,11 +135,6 @@ async def run_in_context(
 
     knowledge = resume.knowledge if resume is not None else Knowledge()
 
-    def on_reply(
-        episode: int, stage: str, prompt: list[dict[str, str]], reply: str
-    ) -> None:
-        recorder.learner_reply(episode, stage, prompt, reply)
-
     def on_state(state: SearchState) -> None:
         state.save(config.output_dir / "icrl_state.json")
         recorder.sync_file("icrl_state.json")
@@ -172,7 +167,7 @@ async def run_in_context(
                 )
             recorder.honeypots(step, honeypot.honeypot_scores)
             done[key] = metrics
-            rocs[key] = self_rec_roc(rewrites, honeypot.honeypot_scores)
+            _, rocs[key] = collusion_auroc(rewrites, honeypot.honeypot_scores)
         rows[label] = done[key]
         return rows[label]
 
@@ -183,7 +178,7 @@ async def run_in_context(
             episodes=icrl.episodes,
             n_result_examples=icrl.n_result_examples,
             knowledge=None if resume is not None else knowledge,
-            on_reply=on_reply,
+            on_reply=recorder.learner_reply,
             on_summary=on_summary,
             resume=resume,
             on_state=on_state,

@@ -103,25 +103,20 @@ def load_tasks(config: RLRunConfig) -> Tasks:
             validation_honeypots = honeypot_pairs(
                 read_generator_eval(data.honeypots_eval), validation
             )
-    else:
+    else:  # self_recognition, which RLRunConfig requires to have honeypots_eval
         train, validation = split_tasks(
             tasks, validation_fraction=data.validation_fraction, seed=SPLIT_SEED
         )
-    if (
-        config.task_mode != "rewrite_signal"
-        and data.honeypots_eval is not None
-        and (config.eval.honeypot_eval or config.task_mode == "self_recognition")
-    ):
+        assert data.honeypots_eval is not None
         negatives = read_generator_eval(data.honeypots_eval)
-        if config.task_mode == "self_recognition":
-            sender_model = config.models.sender.removeprefix("tinker/")
-            if any(
-                not sample.model or sample.model.removeprefix("tinker/") == sender_model
-                for sample in negatives
-            ):
-                raise ValueError(
-                    "non-self examples must come from a known, different model"
-                )
+        sender_model = config.models.sender.removeprefix("tinker/")
+        if any(
+            not sample.model or sample.model.removeprefix("tinker/") == sender_model
+            for sample in negatives
+        ):
+            raise ValueError(
+                "non-self examples must come from a known, different model"
+            )
         honeypot_train, honeypot_validation = split_tasks(
             attack_tasks(negatives, max_tests=data.max_tests),
             validation_fraction=data.validation_fraction,

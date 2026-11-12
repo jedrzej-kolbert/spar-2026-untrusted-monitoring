@@ -8,7 +8,7 @@ For the design, the decisions behind it, and what is still to come, see [`docs/h
 
 Run `uv sync`, and put your Tinker API key in `.env` as `TINKER_API_KEY`. Docker must be running: the training loop grades code in a locked-down container. The first run pulls a pinned `python:3.12-slim` image.
 
-Weights & Biases works as in the pipeline: each run is a stage run (job type `icrl` or `gbrl`) in `WANDB_ENTITY`/`WANDB_PROJECT`, with `WANDB_MODE=offline` to log locally. A field written in the config's `logging:` block wins over its `WANDB_*` variable for that run; the `rewrite_signal` configs use it to log to the team project `collusion-rl-v2`. `train/` and `validation/` hold the key numbers, `*_detail/` everything else, and the run is tagged with its identity (`method`, `judge`, `threat_model`, `reward_id`, `seed`, `kind`; `rewrite_signal` runs add `task_mode` and `payload`). Pass `--allow-unlinked` when an input log's producing W&B run cannot be linked.
+Weights & Biases works as in the pipeline: each run is a stage run (job type `icrl` or `gbrl`) in `WANDB_ENTITY`/`WANDB_PROJECT`, with `WANDB_MODE=offline` to log locally. A field written in the config's `logging:` block wins over its `WANDB_*` variable for that run (e.g. `wandb_project: collusion-rl-v2` for the team project). `train/` and `validation/` hold the key numbers, `*_detail/` everything else, and the run is tagged with its identity (`method`, `judge`, `threat_model`, `reward_id`, `seed`, `kind`; `rewrite_signal` runs add `task_mode` and `payload`). Pass `--allow-unlinked` when an input log's producing W&B run cannot be linked.
 
 Models are set per RL config (`models:`) and, for evaluation, per pipeline experiment (`conf/experiment/rl/`). The current run (`overseer_delta_v4flash`) uses:
 - U, the untrusted model: `deepseek-ai/DeepSeek-V4.1-Flash:peft:262144`. It is the sender being trained and, frozen, the receiver.
@@ -220,13 +220,8 @@ receiver's SFT step size separately (our SFT runs use 1e-4). The receiver scores
 and NO with one teacher-forced request each: since 2026-10-21 Tinker returns no
 `target_prompt_logprobs` (SDK 0.30.0), so main's single-prefill path fails.
 
-`receiver_examples.jsonl` records all receiver inputs and labels. W&B groups the
-metrics a reader needs into sections: `reward/` (total and every component),
-`loss/` (sender, receiver per example), `scores/` (P(self), pass rate, kept-backdoor
-rate, trusted suspicion, per training step), `eval/` (held-out AUROC, P(self),
-self and honeypot YES rates, suspicion) and `progress/` (epoch, estimated cost per
-step and in total, prefill/sample/train tokens). Everything else is under
-`zz_other/`. `usage.json` holds the token counts per model.
+`receiver_examples.jsonl` records all receiver inputs and labels; W&B sections are
+as in Setup. `usage.json` holds the token counts per model.
 
 Costs are estimated from every Tinker request the process makes, priced from
 Tinker's published rates (`usage.py`). `training.max_cost_usd` reserves each
