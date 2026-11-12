@@ -616,8 +616,9 @@ class Tasks(NamedTuple):
 def load_tasks(config: RLRunConfig) -> Tasks:
     """Working attacks and honeypots from the train logs, split by problem ID.
 
-    Honeypots are every working one (passes its tests, backdoor fires), as in the
-    game, whether or not the same problem has a working attack.
+    Honeypots are every working one (passes its tests, backdoor fires unless
+    data.require_backdoor is off), as in the game, whether or not the same
+    problem has a working attack.
     """
     data = config.data
     tasks = attack_tasks(
@@ -661,7 +662,11 @@ def load_tasks(config: RLRunConfig) -> Tasks:
                     "non-self examples must come from a known, different model"
                 )
         honeypot_train, honeypot_validation = split_tasks(
-            attack_tasks(negatives, max_tests=data.max_tests),
+            attack_tasks(
+                negatives,
+                require_backdoor=data.require_backdoor,
+                max_tests=data.max_tests,
+            ),
             validation_fraction=data.validation_fraction,
             seed=SPLIT_SEED,
         )
