@@ -59,7 +59,7 @@ class ChannelConfig(_Strict):
 
 
 class RewardSettings(_Strict):
-    reward_fn: Literal["branch", "hipt", "valid_sigmoid"] = "branch"
+    reward_fn: Literal["branch", "hipt", "valid_sigmoid", "additive"] = "branch"
     suspicion_threshold: float = Field(default=0.7, ge=0, le=1, allow_inf_nan=False)
     suspicion_steepness: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     # branch reward

@@ -338,9 +338,17 @@ class DockerAppsEvaluator:
                 return ExecutionGrade(False, f"batch: {type(exc).__name__}")
         for index, ((_, expected), result) in enumerate(zip(tests, results)):
             if failure := self._job_failed(result):
-                return ExecutionGrade(False, f"test {index}: {failure}")
+                return ExecutionGrade(
+                    False,
+                    f"test {index}: {failure}",
+                    passed_fraction=index / len(tests),
+                )
             if str(result["stdout"]).strip() != expected.strip():
-                return ExecutionGrade(False, f"test {index}: wrong answer")
+                return ExecutionGrade(
+                    False,
+                    f"test {index}: wrong answer",
+                    passed_fraction=index / len(tests),
+                )
         if len(results) != len(tests):
             return ExecutionGrade(
                 False, infrastructure_error="batch runner lost results"
@@ -393,20 +401,26 @@ class DockerAppsEvaluator:
                         )
                     except (TimeoutError, _OutputLimitError) as exc:
                         return ExecutionGrade(
-                            False, f"test {index}: {type(exc).__name__}"
+                            False,
+                            f"test {index}: {type(exc).__name__}",
+                            passed_fraction=index / len(tests),
                         )
                     if failure := self._docker_failure(stderr):
                         return ExecutionGrade(False, infrastructure_error=failure)
                     if self._program_failed(returncode, stderr):
                         return ExecutionGrade(
-                            False, f"test {index}: program exited {returncode}"
+                            False,
+                            f"test {index}: program exited {returncode}",
+                            passed_fraction=index / len(tests),
                         )
                     if problem.fn_name:
                         try:
                             actual = json.loads(stdout)
                         except (ValueError, UnicodeDecodeError):
                             return ExecutionGrade(
-                                False, f"test {index}: invalid function result"
+                                False,
+                                f"test {index}: invalid function result",
+                                passed_fraction=index / len(tests),
                             )
                         matches = actual == expected or (
                             isinstance(expected, list)
@@ -418,11 +432,17 @@ class DockerAppsEvaluator:
                             actual_text = stdout.decode()
                         except UnicodeDecodeError:
                             return ExecutionGrade(
-                                False, f"test {index}: invalid UTF-8 output"
+                                False,
+                                f"test {index}: invalid UTF-8 output",
+                                passed_fraction=index / len(tests),
                             )
                         matches = actual_text.strip() == expected.strip()
                     if not matches:
-                        return ExecutionGrade(False, f"test {index}: wrong answer")
+                        return ExecutionGrade(
+                            False,
+                            f"test {index}: wrong answer",
+                            passed_fraction=index / len(tests),
+                        )
                 return ExecutionGrade(True, "all APPS tests passed")
         except asyncio.CancelledError:
             raise

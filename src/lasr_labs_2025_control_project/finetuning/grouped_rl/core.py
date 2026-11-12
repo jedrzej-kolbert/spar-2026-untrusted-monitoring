@@ -94,6 +94,9 @@ class ExecutionGrade:
     passed: bool
     detail: str = ""
     infrastructure_error: str | None = None
+    # Share of tests passed before the first failure; the sandbox stops there, so this
+    # is a prefix fraction. Unused when passed (the fraction is then 1).
+    passed_fraction: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -786,7 +789,10 @@ class GroupedRLTrainer:
                     rollout.overseer_penalty = self.config.overseer_weight * score
             except Exception as exc:
                 rollout.errors.append(f"overseer scoring failed: {exc!r}")
-        if self.backdoor_monitor is not None:
+        # The additive reward ignores the trusted monitor: score evaluations only.
+        if self.backdoor_monitor is not None and not (
+            training and self.config.reward.reward_fn == "additive"
+        ):
             try:
                 view = rollout.receiver_code or rollout.code
                 if self.config.trusted_reads_original and self.channel is not None:
