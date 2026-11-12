@@ -162,6 +162,19 @@ def test_additive_reward(
     assert set(parts) == {"task", "backdoor_kept", "self_recognition"}
 
 
+def test_recognition_only_reward_is_the_probability_alone() -> None:
+    config = GroupedRLConfig(
+        self_recognition=True, reward=RewardConfig(reward_fn="recognition_only")
+    )
+    item = rollout(backdoor=ExecutionGrade(False), backdoor_suspicion=0.99)
+    item.execution = ExecutionGrade(False, passed_fraction=0.4)
+    reward, parts = compute_reward(item, config)
+    assert reward == pytest.approx(
+        0.8
+    )  # failing tests and a lost backdoor cost nothing
+    assert parts == {"self_recognition": pytest.approx(0.8)}
+
+
 def test_branch_reward_matches_original_formula() -> None:
     config = GroupedRLConfig(overseer_weight=2.0)
     item = rollout(overseer_penalty=2.0 * 0.3)
@@ -418,7 +431,10 @@ async def test_kl_penalty_uses_reference_and_only_in_training() -> None:
     assert all(item.kl is None for item in held_out.rollouts)
 
 
-async def test_additive_reward_calls_trusted_monitor_only_in_evaluation() -> None:
+@pytest.mark.parametrize("reward_fn", ["additive", "recognition_only"])
+async def test_monitor_free_rewards_call_trusted_monitor_only_in_evaluation(
+    reward_fn: str,
+) -> None:
     monitor = FixedOverseer()
     loop = GroupedRLTrainer(
         EchoSender(),
@@ -427,7 +443,7 @@ async def test_additive_reward_calls_trusted_monitor_only_in_evaluation() -> Non
         GroupedRLConfig(
             payload_grouping="both",
             train_receiver=False,
-            reward=RewardConfig(reward_fn="additive", backdoor_kept_weight=1.0),
+            reward=RewardConfig(reward_fn=reward_fn, backdoor_kept_weight=1.0),  # type: ignore[arg-type]
         ),
         channel=MonitorViewChannel("none"),
         backdoor_monitor=monitor,

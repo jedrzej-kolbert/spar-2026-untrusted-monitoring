@@ -789,9 +789,10 @@ class GroupedRLTrainer:
                     rollout.overseer_penalty = self.config.overseer_weight * score
             except Exception as exc:
                 rollout.errors.append(f"overseer scoring failed: {exc!r}")
-        # The additive reward ignores the trusted monitor: score evaluations only.
+        # These rewards ignore the trusted monitor: score evaluations only.
         if self.backdoor_monitor is not None and not (
-            training and self.config.reward.reward_fn == "additive"
+            training
+            and self.config.reward.reward_fn in ("additive", "recognition_only")
         ):
             try:
                 view = rollout.receiver_code or rollout.code

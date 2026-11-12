@@ -901,7 +901,8 @@ async def build_trainer(
     backdoor_monitor = None
     # additive leaves the monitor out of the reward but still scores evaluations.
     if (
-        reward.backdoor_suspicion_weight > 0 or reward.reward_fn == "additive"
+        reward.backdoor_suspicion_weight > 0
+        or reward.reward_fn in ("additive", "recognition_only")
     ) and config.models.backdoor_monitor:
         backdoor_monitor = TextScoreBackdoorMonitor(
             config.models.backdoor_monitor,
