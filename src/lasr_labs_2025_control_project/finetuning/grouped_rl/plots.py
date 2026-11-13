@@ -64,7 +64,7 @@ def bootstrap_interval(
 
 
 def on_off_auroc_by_step(
-    rollouts_path: Path, *, phase: str = "eval_pairs", resamples: int = 2000
+    rollouts_path: Path, *, phase: str = "validation", resamples: int = 2000
 ) -> list[AurocPoint]:
     """ON vs OFF AUROC of the receiver's P(YES) at each step of ``phase``."""
     scores: dict[int, dict[int, list[float]]] = defaultdict(lambda: {0: [], 1: []})
@@ -85,7 +85,7 @@ def on_off_auroc_by_step(
 
 
 def logged_auroc_by_step(
-    metrics_path: Path, key: str = "eval_vs_honeypots/auroc"
+    metrics_path: Path, key: str = "validation_detail/honeypots/auroc"
 ) -> list[AurocPoint]:
     """An AUROC already logged in ``metrics.jsonl`` (no interval available)."""
     points = []
@@ -95,8 +95,8 @@ def logged_auroc_by_step(
         for line in handle:
             row = json.loads(line)
             if isinstance(row.get(key), (int, float)):
-                n_pos = row.get("eval_vs_honeypots/n_signalled", 0)
-                n_neg = row.get("eval_vs_honeypots/n_honeypots", 0)
+                n_pos = row.get("validation_detail/honeypots/n_signalled", 0)
+                n_neg = row.get("validation_detail/honeypots/n_honeypots", 0)
                 points.append(
                     AurocPoint(row["step"], row[key], None, None, n_pos, n_neg)
                 )

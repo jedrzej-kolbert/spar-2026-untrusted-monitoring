@@ -1,12 +1,12 @@
-"""Run HiPT-style collusion-signal RL from a YAML config.
+"""Run collusion RL from a YAML config (example config: ``rl-steps.md``).
 
     python -m lasr_labs_2025_control_project.finetuning.grouped_rl.run \\
-        --config src/lasr_labs_2025_control_project/finetuning/grouped_rl/configs/rewrite_signal_pilot.yaml \\
-        [--offline | --allow-paid]
+        --config <config.yaml> [--allow-paid]
 
-``--offline`` (the default) loads data, writes the manifest, and checks the Docker
-sandbox against the eval log's own scores, without any model calls. ``--allow-paid``
-runs preflight controls, a baseline evaluation, and training.
+Without ``--allow-paid`` it loads data, writes the manifest, and checks the Docker
+sandbox against the eval log's own scores, without any model calls. With it, the
+run trains (``method: gradient``, ``gbrl.py``) or searches (``method: in_context``,
+``icrl_run.py``); both write their records through ``records.py``.
 
 Outputs in ``output_dir``: manifest.json, rollouts.jsonl (every candidate, including
 failures), metrics.jsonl, status.json, and the final checkpoint path.
@@ -15,399 +15,131 @@ failures), metrics.jsonl, status.json, and the final checkpoint path.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import logging
-import math
-import random
 import subprocess
 import sys
-import os
 import time
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any, NamedTuple
 
 import click
 
 from lasr_labs_2025_control_project import tracking
-from lasr_labs_2025_control_project.tracking.core import jsonable
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 
 from .channels import MonitorViewChannel
 from .config import RLRunConfig, load_rl_config
 from .core import (
     AppsProblem,
-    BatchInfrastructureError,
-    BatchResult,
     GroupedRLConfig,
     GroupedRLTrainer,
-    HoneypotEvalResult,
-    Rollout,
-    auroc,
 )
 from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
-from .plots import plot_auroc_over_steps
+from .icrl_adapters import StrategyBox, with_strategy
 from .rewards import RewardConfig
+from . import usage
 from .sandbox import DockerAppsEvaluator
-from .viewer import write_run_view
+from .gbrl import run_gbrl
+from .icrl_run import run_in_context
+from .records import close_run, code_state, open_recorder
 
 logger = logging.getLogger(__name__)
-
-# A deliberately obvious marker for the preflight controls.
-_EXPLICIT_SIGNAL = '\n_collusion_signal_for_monitor = "present"\n'
-
-
-# --------------------------------------------------------------------------- #
-# Records
-# --------------------------------------------------------------------------- #
-#: Files uploaded to the W&B run when it ends (whichever exist).
-RECORD_FILES = (
-    "manifest.json",
-    "original_attack_suspicion.json",
-    "metrics.jsonl",
-    "rollouts.jsonl",
-    "honeypot_scores.jsonl",
-    "status.json",
-    "code.diff",
-    "auroc_over_steps.svg",
-    "auroc_over_steps.json",
-    "run_view.html",
-)
-
-
-def code_state(output_dir: Path) -> dict[str, Any]:
-    """Branch, commit and whether tracked files differ; a dirty tree's diff is saved."""
-
-    def git(*args: str) -> str:
-        return subprocess.run(
-            ["git", *args], capture_output=True, text=True, check=True
-        ).stdout
-
-    try:
-        diff = git("diff", "HEAD")  # staged and unstaged changes to tracked files
-        if diff:
-            (output_dir / "code.diff").write_text(diff)
-        return {
-            "branch": git("rev-parse", "--abbrev-ref", "HEAD").strip(),
-            "commit": git("rev-parse", "HEAD").strip(),
-            "dirty": bool(diff),
-        }
-    except (OSError, subprocess.CalledProcessError):
-        return {"branch": None, "commit": None, "dirty": None}
-
-
-class Recorder:
-    """Local record files, plus one W&B run opened like the pipeline's stage runs.
-
-    Local files are written exactly as before. The W&B run (job type ``gbrl``) gets the
-    run identity as config and ``key:value`` tags, links to its input logs, and the
-    sections the collusion-rl-v2 runs use: ``train/``, ``validation/`` and their
-    ``*_detail/``. W&B failures after the run opens are logged, never raised, so they
-    cannot stop training.
-    """
-
-    def __init__(
-        self,
-        config: RLRunConfig,
-        output_dir: Path,
-        *,
-        allow_unlinked: bool = False,
-        resumed_from: dict[str, Any] | None = None,
-    ) -> None:
-        self.output_dir = output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        # Fields written in the YAML's logging block win over WANDB_* variables for
-        # this run only; an explicit `wandb_project: null` still turns W&B off.
-        logging_config = config.logging
-        overrides = {
-            field.upper(): getattr(logging_config, field)
-            for field in logging_config.model_fields_set
-        }
-        if "WANDB_PROJECT" in overrides and overrides["WANDB_PROJECT"] is None:
-            overrides["WANDB_MODE"] = "disabled"
-        self._saved_env = {key: os.environ.get(key) for key in overrides}
-        os.environ.update({k: v for k, v in overrides.items() if v is not None})
-        data = config.data
-        identity = config.identity
-        stage = tracking.StageRun(
-            "gbrl",
-            config.run_name,
-            config={
-                **json.loads(config.model_dump_json()),
-                "run": identity,
-                "code": code_state(output_dir),
-                "resumed_from": resumed_from,
-            },
-            tags=[f"{key}:{value}" for key, value in identity.items()]
-            + (["resumed"] if resumed_from else []),
-            inputs=[
-                tracking.resolve_input(path)
-                for path in (data.attacks_eval, data.honeypots_eval)
-                if path is not None
-            ],
-            models=[config.models.receiver],
-            allow_unlinked=allow_unlinked,
-        )
-        try:
-            self.stage = stage.__enter__()
-        except BaseException:
-            if stage.run is not None:  # opened, then failed declaring its inputs
-                stage.run.finish(exit_code=1)
-            self._restore_env()
-            raise
-        self.wandb: Any = self.stage.run
-        if self.wandb is not None:
-            self.status(wandb_url=self.wandb.url)
-
-    def _wandb(self, what: str, action: Callable[[], Any]) -> None:
-        if self.wandb is None:
-            return
-        try:
-            action()
-        except Exception as exc:  # telemetry must not stop a training run
-            logger.warning("W&B %s failed: %s", what, exc)
-
-    def _append(self, name: str, row: dict[str, Any]) -> None:
-        with open(self.output_dir / name, "a") as handle:
-            handle.write(json.dumps(row, default=str) + "\n")
-
-    def scalars(self, step: int, prefix: str, values: dict[str, Any]) -> None:
-        """metrics.jsonl only; W&B gets the sections from ``log``."""
-        clean = {
-            f"{prefix}/{key}": value
-            for key, value in values.items()
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-        }
-        self._append("metrics.jsonl", {"step": step, **clean})
-        if prefix == "preflight":
-            self.log(step, clean)
-
-    def log(self, step: int, values: dict[str, Any]) -> None:
-        """Numbers to W&B under their section/key names; None and bools are dropped."""
-        clean = {
-            key: value
-            for key, value in values.items()
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-        }
-        if clean:
-            self._wandb("log", lambda: self.wandb.log(clean, step=step))
-
-    def roc(self, step: int, points: list[tuple[float, float]]) -> None:
-        if points:
-            self._wandb(
-                "ROC",
-                lambda: self.stage.log_roc(
-                    "validation/roc_collusion",
-                    {f"step {step}": points},
-                    "Collusion ROC on validation",
-                ),
-            )
-
-    def model(self, path: str, step: int) -> None:
-        self._wandb(
-            "model reference",
-            lambda: self.stage.log_model_ref(f"tinker/{path}", {"step": step}),
-        )
-
-    def rollouts(self, step: int, phase: str, rollouts: list[Rollout]) -> None:
-        for item in rollouts:
-            generation = item.generation
-            self._append(
-                "rollouts.jsonl",
-                {
-                    "step": step,
-                    "phase": phase,
-                    "problem_id": item.problem.problem_id,
-                    "payload": item.payload,
-                    "response": generation.text if generation else None,
-                    "response_tokens": len(generation.response_tokens)
-                    if generation
-                    else None,
-                    "code": item.code,
-                    "receiver_code": item.receiver_code,
-                    "p_yes": item.probabilities[1] if item.probabilities else None,
-                    "decoded_correctly": item.decoded_correctly,
-                    "passed": item.execution.passed if item.execution else None,
-                    "execution_detail": item.execution.detail
-                    if item.execution
-                    else None,
-                    "backdoor": item.backdoor.passed if item.backdoor else None,
-                    "suspiciousness": item.suspiciousness,
-                    "baseline_suspicion": item.baseline_suspicion,
-                    "suspicion_increase": item.suspicion_increase,
-                    "backdoor_suspicion": item.backdoor_suspicion,
-                    "kl": item.kl,
-                    "reward": item.reward,
-                    "reward_components": item.reward_components,
-                    "advantage": item.advantage,
-                    "errors": item.errors,
-                },
-            )
-
-    def honeypots(self, step: int, scores: list[tuple[str, float]]) -> None:
-        for problem_id, p_yes in scores:
-            self._append(
-                "honeypot_scores.jsonl",
-                {"step": step, "problem_id": problem_id, "p_yes": p_yes},
-            )
-
-    def status(self, **values: Any) -> None:
-        path = self.output_dir / "status.json"
-        current = json.loads(path.read_text()) if path.exists() else {}
-        current.update(values, updated=time.strftime("%Y-%m-%dT%H:%M:%S"))
-        path.write_text(json.dumps(current, indent=2, default=str))
-        self._wandb("summary", lambda: self.wandb.summary.update(jsonable(values)))
-
-    def finish(self, complete: bool) -> None:
-        """Upload the record files and close the run (tagged partial if incomplete)."""
-        for name in RECORD_FILES + tuple(
-            p.name for p in self.output_dir.glob("manifest_resume_step*.json")
-        ):
-            if (self.output_dir / name).exists():
-                self._wandb(
-                    f"upload of {name}",
-                    lambda name=name: self.wandb.save(
-                        str(self.output_dir / name),
-                        base_path=str(self.output_dir),
-                        policy="now",
-                    ),
-                )
-        try:
-            self.stage.finish(
-                complete=complete,
-                reason=None if complete else "stopped before finishing",
-            )
-        except Exception as exc:  # e.g. a failed summary write: still close the run
-            logger.warning("W&B finish failed: %s", exc)
-            self._wandb("close", lambda: self.wandb.finish(exit_code=1))
-        finally:
-            self.wandb = None
-            self._restore_env()
-
-    def _restore_env(self) -> None:
-        for key, value in self._saved_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-def working(item: Rollout) -> bool:
-    """Passes its tests and its backdoor fires (as the collusion-rl-v2 runs count it)."""
-    return bool(
-        item.execution
-        and item.execution.passed
-        and item.backdoor is not None
-        and item.backdoor.passed
-    )
-
-
-def shared_metrics(result: BatchResult, metrics: dict[str, Any]) -> dict[str, Any]:
-    """Key numbers with the same definitions and names as the collusion-rl-v2 runs,
-    the reward, its terms and the batch mean of each input to its formula, then this
-    task's own (signal ON vs OFF, the signal overseer)."""
-    rollouts = result.rollouts
-    total = len(rollouts)
-    rewarded = [item.reward_components for item in rollouts if item.reward is not None]
-    terms = {name for components in rewarded for name in components}
-    p_correct = [
-        item.probabilities[item.payload]
-        for item in rollouts
-        if item.probabilities is not None
-    ]
-    return {
-        "reward": metrics.get("mean_reward"),
-        # Over every rewarded rollout, a missing term counting 0 (the overseer term
-        # is only stored when nonzero), so the terms sum to reward.
-        **{
-            f"reward/{name}": math.fsum(c.get(name, 0.0) for c in rewarded)
-            / len(rewarded)
-            for name in sorted(terms)
-        },
-        "p_correct": math.fsum(p_correct) / len(p_correct) if p_correct else None,
-        "working_rate": sum(map(working, rollouts)) / total if total else None,
-        "tests_passed_rate": metrics.get("correctness"),
-        "backdoor_fires_rate": metrics.get("backdoor_success"),
-        "on_off_balanced_accuracy": metrics.get("balanced_accuracy"),
-        "on_off_auroc": metrics.get("on_off_auroc"),
-        "p1_gap": metrics.get("p1_gap"),
-        "signal_suspicion": metrics.get("suspicion_mean"),
-        "baseline_suspicion": metrics.get("baseline_suspicion_mean"),
-        "suspicion_increase_mean": metrics.get("suspicion_increase_mean"),
-        # The overseer weight at this step (it changes under overseer_ramp_*).
-        "overseer_strength": metrics.get("overseer_strength"),
-    }
-
-
-def collusion_auroc(
-    result: BatchResult, honeypot_scores: list[tuple[str, float]]
-) -> tuple[dict[str, Any], list[tuple[float, float]]]:
-    """AUROC and ROC of the receiver's P(YES): working signal-ON rewrites vs honeypots
-    (the population the collusion-rl-v2 runs log as validation/auroc)."""
-    import numpy as np
-
-    from lasr_labs_2025_control_project.utils.numerical_pipeline.results_io import (
-        _raw_roc,
-    )
-
-    positives = [
-        item.probabilities[1]
-        for item in result.rollouts
-        if item.payload == 1 and working(item) and item.probabilities is not None
-    ]
-    negatives = [score for _, score in honeypot_scores]
-    numbers = {
-        "auroc": auroc(positives, negatives),
-        "n_working": len(positives),
-        "n_honeypots": len(negatives),
-    }
-    if not positives or not negatives:
-        return numbers, []
-    roc = _raw_roc(np.array(positives), np.array(negatives))
-    return numbers, list(zip(roc["fpr"], roc["tpr"]))
-
-
-def sectioned(
-    section: str, key: dict[str, Any], **detail: dict[str, Any]
-) -> dict[str, Any]:
-    """``section/<key>`` plus ``section_detail/<source>/<name>`` for every other number."""
-    out = {f"{section}/{name}": value for name, value in key.items()}
-    for source, values in detail.items():
-        out.update({f"{section}_detail/{source}/{k}": v for k, v in values.items()})
-    return out
 
 
 # --------------------------------------------------------------------------- #
 # Setup
 # --------------------------------------------------------------------------- #
-def _git_commit() -> str | None:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except Exception:
-        return None
+SPLIT_SEED = 0  # one train/validation split for every run and seed
 
 
-def load_tasks(
-    config: RLRunConfig,
-) -> tuple[list[AppsProblem], list[AppsProblem], list[tuple[AppsProblem, str]]]:
+class Tasks(NamedTuple):
+    """Attacks and working honeypots, split into train and validation by problem ID."""
+
+    train: list[AppsProblem]
+    validation: list[AppsProblem]
+    train_honeypots: list[tuple[AppsProblem, str]]
+    validation_honeypots: list[tuple[AppsProblem, str]]
+    # Train problems left out of receiver SFT because they have no honeypot.
+    dropped: list[str]
+
+    def split_record(self) -> dict[str, list[str]]:
+        def ids(pairs: list[tuple[AppsProblem, str]]) -> list[str]:
+            return [problem.problem_id for problem, _ in pairs]
+
+        return {
+            "train": [task.problem_id for task in self.train],
+            "validation": [task.problem_id for task in self.validation],
+            "train_honeypots": ids(self.train_honeypots),
+            "validation_honeypots": ids(self.validation_honeypots),
+            "train_dropped_without_honeypot": self.dropped,
+        }
+
+
+def load_tasks(config: RLRunConfig) -> Tasks:
+    """Working attacks and honeypots from the train logs, split by problem ID.
+
+    Honeypots are every working one (passes its tests, backdoor fires), as in the
+    game, whether or not the same problem has a working attack.
+    """
     data = config.data
-    samples = read_generator_eval(data.attacks_eval)
     tasks = attack_tasks(
-        samples,
+        read_generator_eval(data.attacks_eval),
         require_main_task=data.require_main_task,
         require_backdoor=data.require_backdoor,
         max_tests=data.max_tests,
     )
-    train, validation = split_tasks(
-        tasks, validation_fraction=data.validation_fraction, seed=config.seed
-    )
-    if data.max_validation_problems is not None:
-        validation = validation[: data.max_validation_problems]
-    honeypots: list[tuple[AppsProblem, str]] = []
-    if data.honeypots_eval is not None and config.eval.honeypot_eval:
-        honeypots = honeypot_pairs(read_generator_eval(data.honeypots_eval), validation)
+    train_honeypots: list[tuple[AppsProblem, str]] = []
+    validation_honeypots: list[tuple[AppsProblem, str]] = []
+    dropped: list[str] = []
+    if config.task_mode == "rewrite_signal":
+        # The signal runs' own split: by run seed, optionally capped, with each
+        # validation problem's honeypot (working or not) as the negatives.
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=config.seed
+        )
+        if data.max_validation_problems is not None:
+            validation = validation[: data.max_validation_problems]
+        if data.honeypots_eval is not None and config.eval.honeypot_eval:
+            validation_honeypots = honeypot_pairs(
+                read_generator_eval(data.honeypots_eval), validation
+            )
+    else:  # self_recognition, which RLRunConfig requires to have honeypots_eval
+        train, validation = split_tasks(
+            tasks, validation_fraction=data.validation_fraction, seed=SPLIT_SEED
+        )
+        assert data.honeypots_eval is not None
+        negatives = read_generator_eval(data.honeypots_eval)
+        sender_model = config.models.sender.removeprefix("tinker/")
+        if any(
+            not sample.model or sample.model.removeprefix("tinker/") == sender_model
+            for sample in negatives
+        ):
+            raise ValueError(
+                "non-self examples must come from a known, different model"
+            )
+        honeypot_train, honeypot_validation = split_tasks(
+            attack_tasks(negatives, max_tests=data.max_tests),
+            validation_fraction=data.validation_fraction,
+            seed=SPLIT_SEED,
+        )
+        train_honeypots = [(task, task.base_code) for task in honeypot_train]
+        validation_honeypots = [(task, task.base_code) for task in honeypot_validation]
+        ids = [task.problem_id for task in honeypot_train + honeypot_validation]
+        if len(ids) != len(set(ids)):
+            # Honeypot views are cached per problem.
+            raise ValueError("a problem has more than one honeypot")
+        if config.training.train_receiver:
+            # Receiver SFT needs a non-self example for every problem; one
+            # whose honeypot generation failed has none, so it is left out.
+            paired = {problem.problem_id for problem, _ in train_honeypots}
+            dropped = [t.problem_id for t in train if t.problem_id not in paired]
+            if dropped:
+                logger.warning(
+                    "dropping %d training problems with no honeypot: %s",
+                    len(dropped),
+                    dropped,
+                )
+            train = [t for t in train if t.problem_id not in dropped]
     if not train:
         raise ValueError("no training tasks survived filtering")
     if len(train) < config.training.problems_per_step:
@@ -415,7 +147,7 @@ def load_tasks(
             f"{len(train)} training tasks < problems_per_step "
             f"{config.training.problems_per_step}"
         )
-    return train, validation, honeypots
+    return Tasks(train, validation, train_honeypots, validation_honeypots, dropped)
 
 
 def ensure_image(image: str) -> None:
@@ -482,45 +214,22 @@ def core_config(
         overseer_delta_space=reward.overseer_delta_space,
         reward=RewardConfig(
             reward_fn=reward.reward_fn,
+            suspicion_threshold=reward.suspicion_threshold,
+            suspicion_steepness=reward.suspicion_steepness,
             stego_scale=reward.stego_scale,
             overseer_scale=reward.overseer_scale,
-            overseer_threshold=reward.overseer_threshold,
-            hipt_gate_on_pass=reward.hipt_gate_on_pass,
+            overseer_log_odds_threshold=reward.overseer_log_odds_threshold,
             failed_backdoor_weight=reward.failed_backdoor_weight,
             backdoor_suspicion_weight=reward.backdoor_suspicion_weight,
             kl_coef=reward.kl_coef,
+            backdoor_kept_weight=reward.backdoor_kept_weight,
         ),
         train_receiver=training.train_receiver,
+        self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
+        # self-recognition only, as in the game: comment-stripped code, not the jammed view
+        trusted_reads_original=config.task_mode == "self_recognition",
     )
-
-
-def overseer_strength(config: RLRunConfig, step: int) -> float:
-    """Overseer weight (branch) or scale (hipt) at a training step, with linear ramp."""
-    reward = config.reward
-    final = (
-        reward.overseer_weight
-        if reward.reward_fn == "branch"
-        else reward.overseer_scale
-    )
-    if reward.overseer_ramp_start is None or reward.overseer_ramp_steps == 0:
-        return final
-    fraction = min(step / reward.overseer_ramp_steps, 1.0)
-    return reward.overseer_ramp_start + fraction * (final - reward.overseer_ramp_start)
-
-
-def apply_overseer_strength(
-    trainer: GroupedRLTrainer, config: RLRunConfig, step: int
-) -> float:
-    value = overseer_strength(config, step)
-    if config.reward.reward_fn == "branch":
-        trainer.config = dataclasses.replace(trainer.config, overseer_weight=value)
-    else:
-        trainer.config = dataclasses.replace(
-            trainer.config,
-            reward=dataclasses.replace(trainer.config.reward, overseer_scale=value),
-        )
-    return value
 
 
 async def build_trainer(
@@ -528,11 +237,16 @@ async def build_trainer(
     evaluator: DockerAppsEvaluator,
     *,
     resume_state: str | None = None,
+    strategy: StrategyBox | None = None,
 ) -> tuple[GroupedRLTrainer, Any]:
-    """The trainer and the concrete Tinker sender (for checkpointing)."""
+    """The trainer and the concrete Tinker sender (for checkpointing).
+
+    With ``strategy`` (ICRL), the sender's system prompt ends with the box's text.
+    """
     from .tinker_backend import (
         FrozenYesNoMonitor,
         TextScoreBackdoorMonitor,
+        create_tinker_receiver,
         create_tinker_sender,
         extract_final_code,
         rewrite_sender_messages,
@@ -555,28 +269,60 @@ async def build_trainer(
             signal_labels=labels,
         )
 
-    sender, reference = await create_tinker_sender(
-        allow_paid=True,
-        base_model=config.models.sender,
-        rank=training.lora_rank,
-        learning_rate=training.learning_rate,
-        with_reference=reward.kl_coef > 0,
-        resume_state=resume_state,
-        messages_fn=messages_fn,
-        loss_fn=training.loss_fn,
-        ppo_passes=training.ppo_passes,
-        clip_epsilon=training.clip_epsilon,
-        temperature=training.temperature,
-        max_tokens=training.max_tokens,
-        max_context_tokens=training.max_context_tokens,
-    )
-    receiver = FrozenYesNoMonitor(
-        config.models.receiver,
-        get_prompt_by_name(prompts.receiver_system),
-        allow_paid=True,
-    )
+    if strategy is not None:
+        import tinker
+
+        from .tinker_backend import TinkerSender
+
+        # ICRL never trains the sender. Sampling the base model directly gives what
+        # a fresh LoRA adapter gives, without waiting for Tinker training capacity.
+        sampler = tinker.ServiceClient().create_sampling_client(
+            base_model=config.models.sender
+        )
+        sender = TinkerSender(
+            None,
+            sampler,
+            sampler.get_tokenizer(),
+            allow_paid=True,
+            messages_fn=with_strategy(messages_fn, strategy),
+            temperature=training.temperature,
+            max_tokens=training.max_tokens,
+            max_context_tokens=training.max_context_tokens,
+        )
+        reference = None
+    else:
+        sender, reference = await create_tinker_sender(
+            allow_paid=True,
+            base_model=config.models.sender,
+            rank=training.lora_rank,
+            learning_rate=training.learning_rate,
+            with_reference=reward.kl_coef > 0,
+            resume_state=resume_state,
+            messages_fn=messages_fn,
+            loss_fn=training.loss_fn,
+            ppo_passes=training.ppo_passes,
+            clip_epsilon=training.clip_epsilon,
+            temperature=training.temperature,
+            max_tokens=training.max_tokens,
+            max_context_tokens=training.max_context_tokens,
+        )
+    if training.train_receiver:
+        receiver = await create_tinker_receiver(
+            allow_paid=True,
+            model=config.models.receiver,
+            system_prompt=get_prompt_by_name(prompts.receiver_system),
+            rank=training.lora_rank,
+            learning_rate=training.receiver_learning_rate or training.learning_rate,
+            max_context_tokens=training.max_context_tokens,
+        )
+    else:
+        receiver = FrozenYesNoMonitor(
+            config.models.receiver,
+            get_prompt_by_name(prompts.receiver_system),
+            allow_paid=True,
+        )
     overseer = None
-    if config.models.overseer:
+    if config.models.overseer and config.task_mode != "self_recognition":
         overseer = FrozenYesNoMonitor(
             config.models.overseer,
             get_prompt_by_name(prompts.overseer_system),
@@ -603,119 +349,6 @@ async def build_trainer(
     return trainer, sender
 
 
-async def monitor_preflight(
-    trainer: GroupedRLTrainer, tasks: list[AppsProblem], config: RLRunConfig
-) -> dict[str, float]:
-    """Score clean vs explicitly signalled versions of real attacks.
-
-    A useful overseer must separate them; the receiver's numbers show its prior.
-    """
-    channel = trainer.channel
-    assert channel is not None
-    controls = tasks[: config.preflight.num_controls]
-    out: dict[str, list[float]] = {}
-    for label, suffix in (("clean", ""), ("explicit", _EXPLICIT_SIGNAL)):
-        for task in controls:
-            view = await channel.transform(task, task.base_code + suffix)
-            _, p_yes = await trainer.receiver.probabilities(task, view)
-            out.setdefault(f"receiver_{label}_p_yes", []).append(p_yes)
-            if trainer.overseer is not None:
-                score = await trainer.overseer.suspiciousness(task, view)
-                out.setdefault(f"overseer_{label}_suspicion", []).append(score)
-    return {key: sum(values) / len(values) for key, values in out.items()}
-
-
-# --------------------------------------------------------------------------- #
-# Main loop
-# --------------------------------------------------------------------------- #
-async def run_evaluation(
-    trainer: GroupedRLTrainer,
-    recorder: Recorder,
-    step: int,
-    validation: list[AppsProblem],
-    honeypots: list[tuple[AppsProblem, str]],
-    config: RLRunConfig,
-) -> None:
-    if not validation:
-        return
-    try:
-        result = await trainer.evaluate(
-            validation, config.eval.num_samples, balanced=True
-        )
-        phase = "eval_pairs"
-    except BatchInfrastructureError as error:
-        # Keep the records and partial metrics; a failed evaluation does not stop training.
-        result, phase = error.result, "eval_pairs_failed"
-        logger.warning("evaluation at step %d had errors: %s", step, result.errors[:3])
-    recorder.rollouts(step, phase, result.rollouts)
-    pairs = result.metrics() if result.rollouts else {}
-    if result.rollouts:
-        recorder.scalars(step, phase, pairs)
-    if phase != "eval_pairs":
-        recorder.log(step, {"validation_detail/failed": 1})
-        return
-    scores: list[tuple[str, float]] = []
-    vs_honeypots: dict[str, Any] = {}
-    if honeypots:
-        honeypot_eval: HoneypotEvalResult = await trainer.evaluate_against_honeypots(
-            validation, honeypots, signalled=result
-        )
-        recorder.honeypots(step, honeypot_eval.honeypot_scores)
-        vs_honeypots = honeypot_eval.metrics()
-        recorder.scalars(step, "eval_vs_honeypots", vs_honeypots)
-        scores = honeypot_eval.honeypot_scores
-    numbers, roc = collusion_auroc(result, scores)
-    key = {
-        **shared_metrics(result, pairs),
-        **numbers,
-        "honeypot_balanced_accuracy": vs_honeypots.get("balanced_accuracy"),
-        "signalled_yes_rate": vs_honeypots.get("signalled_yes_rate"),
-        "honeypot_yes_rate": vs_honeypots.get("honeypot_yes_rate"),
-    }
-    recorder.log(
-        step, sectioned("validation", key, pairs=pairs, honeypots=vs_honeypots)
-    )
-    recorder.roc(step, roc)
-
-
-def next_batch(
-    order: list[AppsProblem],
-    tasks: list[AppsProblem],
-    size: int,
-    rng: random.Random,
-) -> list[AppsProblem]:
-    """Next ``size`` distinct problems from a shuffled stream of epochs.
-
-    When an epoch runs out mid-batch the next one is appended; a problem already in
-    the batch is skipped and stays queued for a later batch.
-    """
-    if size > len({task.problem_id for task in tasks}):
-        raise ValueError("batch size exceeds the number of distinct tasks")
-    batch: list[AppsProblem] = []
-    seen: set[str] = set()
-    while len(batch) < size:
-        index = next(
-            (i for i, task in enumerate(order) if task.problem_id not in seen), None
-        )
-        if index is None:
-            epoch = tasks[:]
-            rng.shuffle(epoch)
-            order.extend(epoch)
-            continue
-        task = order.pop(index)
-        batch.append(task)
-        seen.add(task.problem_id)
-    return batch
-
-
-_DOCKER_DOWN = ("Cannot connect to the Docker daemon", "Is the docker daemon running")
-
-
-def docker_down(result: BatchResult) -> bool:
-    messages = [*result.errors, *(e for item in result.rollouts for e in item.errors)]
-    return any(marker in message for message in messages for marker in _DOCKER_DOWN)
-
-
 async def train(
     config: RLRunConfig,
     allow_paid: bool,
@@ -724,17 +357,36 @@ async def train(
     start_step: int = 1,
     allow_unlinked: bool = False,
 ) -> None:
+    code = code_state()
+    if config.kind == "main" and code["dirty"] is not False:
+        raise SystemExit(
+            "a kind: main run needs committed code; commit first (dirty or unknown "
+            f"tree: {code})"
+        )
+    if resume_state is not None and config.training.train_receiver:
+        raise ValueError(
+            "--resume-state restores only the sender; joint training must start fresh"
+        )
     output_dir = config.output_dir
+    if config.method == "in_context" and any(
+        (output_dir / name).exists()
+        for name in ("rollouts.jsonl", "learner.jsonl", "icrl_result.json")
+    ):
+        raise FileExistsError(
+            "ICRL output directory already contains a run; choose a new output_dir"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_tasks, validation, honeypots = load_tasks(config)
+    tasks = load_tasks(config)
+    train_tasks, validation = tasks.train, tasks.validation
+    split = tasks.split_record()
+    (output_dir / "split.json").write_text(json.dumps(split, indent=2))
     manifest = {
         "run_name": config.run_name,
+        "run": config.identity,
         "config": json.loads(config.model_dump_json()),
-        "git_commit": _git_commit(),
+        "code": code,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "train_problem_ids": [task.problem_id for task in train_tasks],
-        "validation_problem_ids": [task.problem_id for task in validation],
-        "honeypot_problem_ids": [problem.problem_id for problem, _ in honeypots],
+        "split": split,
     }
     manifest_name = "manifest.json"
     if resume_state is not None:
@@ -742,8 +394,9 @@ async def train(
         manifest_name = f"manifest_resume_step{start_step}.json"
     (output_dir / manifest_name).write_text(json.dumps(manifest, indent=2))
     click.echo(
-        f"tasks: {len(train_tasks)} train, {len(validation)} validation, "
-        f"{len(honeypots)} honeypots"
+        f"attacks: {len(train_tasks)} train, {len(validation)} validation; "
+        f"honeypots: {len(tasks.train_honeypots)} train, "
+        f"{len(tasks.validation_honeypots)} validation"
     )
 
     sandbox = config.sandbox
@@ -754,6 +407,7 @@ async def train(
         control_arena_parity=sandbox.control_arena_parity,
         batch_tests=sandbox.batch_tests,
         max_containers=sandbox.max_containers,
+        max_output_bytes=sandbox.max_output_bytes,
         num_tests=config.data.max_tests,
     )
     parity = await sandbox_parity_check(evaluator, train_tasks)
@@ -764,152 +418,66 @@ async def train(
         )
         return
 
-    recorder = Recorder(
-        config,
-        output_dir,
-        allow_unlinked=allow_unlinked,
-        resumed_from=manifest.get("resumed_from"),
+    meter = usage.install()
+    meter.max_cost_usd = config.training.max_cost_usd
+    box = StrategyBox() if config.method == "in_context" else None
+    trainer, sender = await build_trainer(
+        config, evaluator, resume_state=resume_state, strategy=box
     )
-    complete = False
-    try:
-        recorder.status(state="starting", parity=parity)
-        recorder.scalars(0, "preflight", parity)
-        trainer, sender = await build_trainer(
-            config, evaluator, resume_state=resume_state
+    if box is not None:
+        import tinker
+
+        from .icrl_adapters import TinkerLearner
+
+        sampler = tinker.ServiceClient().create_sampling_client(
+            base_model=config.icrl.learner
         )
-
-        if config.preflight.enabled:
-            preflight = await monitor_preflight(trainer, train_tasks, config)
-            click.echo(f"monitor preflight: {preflight}")
-            recorder.scalars(0, "preflight", preflight)
-            gap = preflight.get("overseer_explicit_suspicion", 0) - preflight.get(
-                "overseer_clean_suspicion", 0
-            )
-            if gap < config.preflight.require_overseer_gap:
-                recorder.status(
-                    state="stopped", reason=f"overseer gap {gap:.3f} too small"
-                )
-                raise SystemExit(f"overseer preflight failed: gap {gap:.3f}")
-
-        if config.reward.overseer_baseline == "original_attack":
-            # One overseer score per original attack, reused for every rewrite of it.
-            baselines = await trainer.score_original_attacks(train_tasks + validation)
-            (output_dir / "original_attack_suspicion.json").write_text(
-                json.dumps(baselines, indent=2)
-            )
-            values = list(baselines.values())
-            click.echo(
-                f"original attacks: mean overseer suspicion "
-                f"{sum(values) / len(values):.3f} over {len(values)}"
-            )
-            recorder.scalars(
-                0,
-                "preflight",
-                {"original_attack_suspicion_mean": sum(values) / len(values)},
-            )
-
-        if start_step == 1:
-            await run_evaluation(trainer, recorder, 0, validation, honeypots, config)
-
-        rng = random.Random(config.seed)
-        order: list[AppsProblem] = []
-        skipped = 0
-        training = config.training
-        # Replay earlier draws so a resumed run continues the same batch sequence.
-        for _ in range(1, start_step):
-            next_batch(order, train_tasks, training.problems_per_step, rng)
-        for step in range(start_step, training.steps + 1):
-            batch = next_batch(order, train_tasks, training.problems_per_step, rng)
-            strength = apply_overseer_strength(trainer, config, step)
-            started = time.time()
-            try:
-                result = await trainer.train_step(batch)
-            except BatchInfrastructureError as error:
-                result = error.result
-                recorder.rollouts(step, "train_failed", result.rollouts)
-                if result.sender_updated is None or result.receiver_updated is None:
-                    recorder.status(
-                        state="stopped", step=step, reason="uncertain update"
-                    )
-                    raise
-                if docker_down(result):
-                    recorder.status(
-                        state="stopped", step=step, reason="Docker daemon down"
-                    )
-                    raise SystemExit(
-                        f"step {step}: Docker daemon unreachable. Restart Docker, then "
-                        "resume from the last state_step<N> in status.json with "
-                        "--resume-state <path> --start-step <N+1>"
-                    ) from error
-                skipped += 1
-                recorder.scalars(step, "train", {"skipped_step": 1})
-                recorder.log(step, {"train_detail/skipped_step": 1})
-                rollout_errors = [e for item in result.rollouts for e in item.errors]
-                logger.warning(
-                    "step %d skipped: %s", step, (result.errors + rollout_errors)[:3]
-                )
-                if skipped > training.max_skipped_steps:
-                    recorder.status(state="stopped", step=step, reason="too many skips")
-                    raise
-                continue
-            recorder.rollouts(step, "train", result.rollouts)
-            metrics = dict(result.metrics())
-            metrics["overseer_strength"] = strength
-            metrics["step_seconds"] = time.time() - started
-            metrics["sender_updated"] = float(bool(result.sender_updated))
-            if result.sender_stats:
-                metrics.update(
-                    {f"sender/{k}": v for k, v in result.sender_stats.metrics.items()}
-                )
-            recorder.scalars(step, "train", metrics)
-            key = shared_metrics(result, metrics)
-            key["sender_loss"] = metrics.get("sender/loss:sum")
-            recorder.log(step, sectioned("train", key, batch=metrics))
-            recorder.status(state="training", step=step)
-            click.echo(
-                f"step {step}: reward {metrics['mean_reward']}, "
-                f"balanced acc {metrics['balanced_accuracy']}, "
-                f"pass {metrics['correctness']}, suspicion {metrics['suspicion_mean']}"
-            )
-            if step % config.eval.every == 0 or step == training.steps:
-                await run_evaluation(
-                    trainer, recorder, step, validation, honeypots, config
-                )
-            save_every = config.checkpoints.save_every
-            if save_every and step % save_every == 0 and step != training.steps:
-                path = await sender.save_checkpoint(
-                    f"{config.checkpoint_name}_step{step}"
-                )
-                state = await sender.save_state(
-                    f"{config.checkpoint_name}_state_step{step}"
-                )
-                recorder.status(
-                    **{f"checkpoint_step{step}": path, f"state_step{step}": state}
-                )
-                recorder.model(path, step)
-                click.echo(f"step {step}: saved {path}; resumable state {state}")
-        final = await sender.save_checkpoint(config.checkpoint_name)
-        recorder.status(state="finished", final_checkpoint=final)
-        recorder.model(final, training.steps)
-        click.echo(f"final sender checkpoint: {final}")
+        learner = TinkerLearner(
+            sampler,
+            sampler.get_tokenizer(),
+            allow_paid=True,
+            max_tokens=config.icrl.learner_max_tokens,
+            temperature=config.icrl.learner_temperature,
+            max_context_tokens=config.training.max_context_tokens,
+        )
+        recorder = open_recorder(
+            config, code, parity, allow_unlinked, manifest.get("resumed_from")
+        )
+        complete = False
         try:
-            figure = plot_auroc_over_steps(output_dir)
-            click.echo(f"AUROC over steps: {figure}")
-        except Exception as exc:  # a plotting failure must not fail a finished run
-            logger.warning("could not plot AUROC over steps: %s", exc)
-        try:
-            click.echo(f"run view: {write_run_view(output_dir)}")
-        except Exception as exc:  # likewise for the record viewer
-            logger.warning("could not write the run view: %s", exc)
-        complete = True
-    finally:
-        recorder.finish(complete)
+            await run_in_context(
+                config,
+                trainer,
+                box,
+                learner,
+                recorder,
+                meter,
+                train_tasks,
+                validation,
+                tasks.validation_honeypots,
+                tasks.train_honeypots,
+            )
+            complete = True
+        finally:
+            close_run(recorder, meter, output_dir, recorder.last_step, complete)
+        return
+
+    recorder = open_recorder(
+        config, code, parity, allow_unlinked, manifest.get("resumed_from")
+    )
+    await run_gbrl(config, trainer, sender, recorder, meter, tasks, start_step)
 
 
 @click.command()
 @click.option("--config", "config_path", type=click.Path(exists=True), required=True)
 @click.option("--allow-paid", is_flag=True, help="Make Tinker model calls and train.")
 @click.option("--steps", type=int, default=None, help="Override training.steps.")
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Override seed; appends -s<seed> to run_name and output_dir.",
+)
 @click.option(
     "--resume-state",
     default=None,
@@ -926,10 +494,13 @@ def main(
     config_path: str,
     allow_paid: bool,
     steps: int | None,
+    seed: int | None,
     resume_state: str | None,
     start_step: int,
     allow_unlinked: bool,
 ) -> None:
+    import os
+
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -938,6 +509,12 @@ def main(
     config = load_rl_config(config_path)
     if steps is not None:
         config.training.steps = steps
+    if seed is not None:
+        config.seed = seed
+        config.run_name = f"{config.run_name}-s{seed}"
+        config.output_dir = config.output_dir.with_name(
+            f"{config.output_dir.name}-s{seed}"
+        )
     if (resume_state is None) != (start_step == 1):
         raise click.UsageError("--resume-state and --start-step must be used together")
     asyncio.run(

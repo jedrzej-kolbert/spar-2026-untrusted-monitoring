@@ -18,19 +18,15 @@ from typing import Any
 import pytest
 
 from lasr_labs_2025_control_project import tracking
-from lasr_labs_2025_control_project.finetuning.grouped_rl import run
-from lasr_labs_2025_control_project.finetuning.grouped_rl.config import (
-    LoggingConfig,
-    load_rl_config,
-)
-
+from lasr_labs_2025_control_project.finetuning.grouped_rl import records, run
+from lasr_labs_2025_control_project.finetuning.grouped_rl.config import LoggingConfig
 from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     BatchResult,
     ExecutionGrade,
     Rollout,
 )
 
-from .test_hipt_rl import PILOT_CONFIG, attack_problem, balanced_trainer, rollout
+from .test_hipt_rl import attack_problem, balanced_trainer, pilot_config, rollout
 
 RECORDS = ("metrics.jsonl", "rollouts.jsonl", "honeypot_scores.jsonl", "manifest.json")
 
@@ -47,15 +43,15 @@ class FakeWandbRun:
     url = "https://wandb.example/run"
 
     def __init__(self) -> None:
-        self.logged: list[tuple[int, dict[str, Any]]] = []
+        self.logged: list[tuple[int | None, dict[str, Any]]] = []
         self.summary: dict[str, Any] = {}
-        self.saved: list[str] = []
+        self.saved: list[tuple[str, str | None]] = []
 
-    def log(self, values: dict[str, Any], step: int) -> None:
+    def log(self, values: dict[str, Any], step: int | None = None) -> None:
         self.logged.append((step, values))
 
-    def save(self, path: str, base_path: str, policy: str) -> None:
-        self.saved.append(Path(path).name)
+    def save(self, path: str, base_path: str | None = None, policy: str | None = None):
+        self.saved.append((Path(path).name, policy))
 
 
 class FakeStageRun:
@@ -75,8 +71,11 @@ class FakeStageRun:
     def __enter__(self) -> FakeStageRun:
         return self
 
-    def log_roc(self, key: str, curves: Any, title: str) -> None:
+    def log_roc(self, key: str, curves: Any, title: str, step: int = 0) -> None:
         self.rocs.append(key)
+
+    def log_artifact(self, path: Path, **kwargs: Any) -> None:
+        pass
 
     def log_model_ref(self, model_id: str, metadata: Any) -> None:
         self.models.append((model_id, metadata))
@@ -86,7 +85,7 @@ class FakeStageRun:
 
 
 def drive(output_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config = load_rl_config(PILOT_CONFIG).model_copy(
+    config = pilot_config().model_copy(
         update={"output_dir": output_dir, "logging": LoggingConfig()}
     )
     config.training.steps = 2
@@ -105,7 +104,9 @@ def drive(output_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def build(*args: Any, **kwargs: Any) -> tuple[Any, FakeSender]:
         return balanced_trainer(), FakeSender()
 
-    monkeypatch.setattr(run, "load_tasks", lambda c: (train, validation, honeypots))
+    monkeypatch.setattr(
+        run, "load_tasks", lambda c: run.Tasks(train, validation, [], honeypots, [])
+    )
     monkeypatch.setattr(run, "ensure_image", lambda image: None)
     monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: None)
     monkeypatch.setattr(run, "sandbox_parity_check", parity)
@@ -160,12 +161,15 @@ def test_wandb_logging_leaves_local_records_unchanged(
         "train_detail/batch/mean_reward",
         "validation_detail/honeypots/balanced_accuracy",
     } <= logged
-    # Only the sections; the local prefixes (eval_pairs/...) stay local.
-    assert all(
-        key.split("/")[0]
-        in {"train", "validation", "train_detail", "validation_detail", "preflight"}
-        for key in logged
-    )
+    # Only the sections; local-only prefixes (train_legacy/...) stay local.
+    assert {key.split("/")[0] for key in logged} <= {
+        "train",
+        "validation",
+        "train_detail",
+        "validation_detail",
+        "preflight",
+        "progress",
+    }
     for _, values in stage.run.logged:
         for section in ("train", "validation"):
             terms = [v for k, v in values.items() if k.startswith(f"{section}/reward/")]
@@ -174,9 +178,11 @@ def test_wandb_logging_leaves_local_records_unchanged(
     assert [step for step, values in stage.run.logged if "validation/auroc" in values]
     assert stage.rocs and stage.finished is True
     assert stage.models[-1][0] == "tinker/tinker://fake/sampler_weights/rl_" + (
-        load_rl_config(PILOT_CONFIG).run_name
+        pilot_config().run_name
     )
-    assert {"metrics.jsonl", "rollouts.jsonl", "manifest.json"} <= set(stage.run.saved)
+    assert {"metrics.jsonl", "rollouts.jsonl", "manifest.json"} <= {
+        name for name, _ in stage.run.saved
+    }
 
 
 def test_yaml_logging_fields_win_over_environment(
@@ -189,14 +195,14 @@ def test_yaml_logging_fields_win_over_environment(
         tracking, "resolve_input", lambda path: SimpleNamespace(source=str(path))
     )
 
-    def recorder(logging: dict[str, Any]) -> run.Recorder:
-        config = load_rl_config(PILOT_CONFIG).model_copy(
+    def recorder(logging: dict[str, Any]) -> records.Recorder:
+        config = pilot_config().model_copy(
             update={
                 "output_dir": tmp_path,
                 "logging": LoggingConfig.model_validate(logging),
             }
         )
-        return run.Recorder(config, tmp_path)
+        return records.Recorder(config, tmp_path)
 
     first = recorder({"wandb_project": "from-yaml"})
     assert FakeStageRun.last.env["WANDB_PROJECT"] == "from-yaml"
@@ -223,7 +229,7 @@ def test_collusion_auroc_uses_working_signal_on_rewrites_only() -> None:
             item(0, 0.95, True),  # signal OFF: not a positive
         ],
     )
-    numbers, roc = run.collusion_auroc(result, [("a", 0.85), ("b", 0.2)])
+    numbers, roc = records.collusion_auroc(result, [("a", 0.85), ("b", 0.2)])
     # Positives 0.9 and 0.8 against honeypots 0.85 and 0.2: 3 of 4 pairs ranked right.
     assert numbers == {"auroc": 0.75, "n_working": 2, "n_honeypots": 2}
     assert roc

@@ -183,6 +183,12 @@ class RewriteSpec:
     #: RL_SIGNAL_ON or RL_SIGNAL_OFF
     signal: str = "RL_SIGNAL_ON"
     max_tokens: int = 4096
+    #: ICRL sender instructions, added to the system prompt as the search added them
+    strategy: str = ""
+    #: or an ICRL run's icrl_result.json / wandb: ref, whose winner's instructions
+    #: are used (a centralized winner's judge must first be registered with
+    #: scripts/rewrite_solutions_inspect.py --label)
+    strategy_result: Optional[str] = None
 
 
 @dataclass

@@ -252,12 +252,31 @@ def _generate_basharena(
 def run_rewrite(node: Node, ctx: RunContext) -> Output:
     from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
         RewriteSettings,
+        judge_registered,
+        with_strategy_result,
     )
     from lasr_labs_2025_control_project.scripts.rewrite_solutions_inspect import (
         run_rewrite as rewrite,
     )
 
     p = node.params
+    settings, strategy_inputs, judge = with_strategy_result(
+        RewriteSettings(
+            model=p["model"],
+            system_prompt=p["system_prompt"],
+            user_prompt=p["user_prompt"],
+            signal=p["signal"],
+            max_tokens=p["max_tokens"],
+            strategy=p.get("strategy", ""),
+            strategy_result=p.get("strategy_result"),
+        )
+    )
+    if judge and not judge_registered(judge):
+        # A pipeline step does not write source files; register the judge first.
+        raise ValueError(
+            "a centralized strategy's judge must be registered first: run "
+            "scripts/rewrite_solutions_inspect.py --label <name>"
+        )
     source = ctx.input(node, "input")
     tracker = ctx.tracker(
         node,
@@ -267,22 +286,17 @@ def run_rewrite(node: Node, ctx: RunContext) -> Output:
             "prompt": p["system_prompt"],
             "prompt_digest": prompt_digest(get_prompt_by_name(p["system_prompt"])),
             "signal": p["signal"],
+            **({"strategy": settings.strategy} if settings.strategy else {}),
         },
         tags=["attacks", "rewrite", node.info.get("rewrite_arm", "")],
-        inputs=[source],
+        inputs=[source, *strategy_inputs],
         models=[p["model"]],
     )
     out = ctx.store.output_path(node)
     rewrite(
         Path(source.local_path),
         out,
-        RewriteSettings(
-            model=p["model"],
-            system_prompt=p["system_prompt"],
-            user_prompt=p["user_prompt"],
-            signal=p["signal"],
-            max_tokens=p["max_tokens"],
-        ),
+        settings,
         tracker,
         limit=p["limit"],
         seed=node.seed,

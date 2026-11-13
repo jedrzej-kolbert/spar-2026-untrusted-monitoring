@@ -246,6 +246,11 @@ class DockerAppsEvaluator:
             finally:
                 if process.returncode is None:
                     process.kill()
+                # Unread output pauses the pipes, and wait() only returns once they
+                # close; the CLI is dead, so reading to EOF ends.
+                for stream in (stdout_stream, stderr_stream):
+                    while await stream.read(65536):
+                        pass
                 await process.wait()
 
     def _write_program(self, directory: Path, name: str, code: str) -> None:
@@ -449,6 +454,7 @@ class DockerAppsEvaluator:
                     directory, "reference.py", problem.reference_solution
                 )
                 self._write_program(directory, "solution.py", code)
+                results = None
                 if self.batch_tests:
                     jobs: list[dict[str, str | None]] = [
                         {"program": program, "input": problem.secret_input}
@@ -458,10 +464,11 @@ class DockerAppsEvaluator:
                         results = await self._execute_batch(directory, jobs)
                     except _InfrastructureError as exc:
                         return ExecutionGrade(False, infrastructure_error=str(exc))
-                    except (TimeoutError, _OutputLimitError) as exc:
-                        return ExecutionGrade(
-                            False, f"secret input: {type(exc).__name__}"
-                        )
+                    except (_OutputLimitError, TimeoutError):
+                        # The pair overflowed the cap or the batch timed out as a whole:
+                        # run each program alone below, which handles both per program.
+                        results = None
+                if results is not None:
                     if self._job_failed(results[0]):
                         return None  # the reference itself fails: check not applicable
                     if len(results) < 2:

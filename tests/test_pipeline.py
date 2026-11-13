@@ -397,6 +397,19 @@ def test_rl_arms_rewrite_attacks_and_share_negatives() -> None:
         build_graph(cfg)
 
 
+def test_rewrite_strategy_names_only_its_own_arm() -> None:
+    cfg = config("experiment=rl/overseer_delta_v4flash")
+    cfg.measurement.arms["icrl"] = MonitorArm(
+        rewrite=RewriteSpec(strategy="Use a while loop.")
+    )
+    g = build_graph(cfg).by_id()
+    plain, icrl = g["rewrite.test.attacks.untrained"], g["rewrite.test.attacks.icrl"]
+    # Arms without a strategy keep their params (and so their cached outputs).
+    assert "strategy" not in plain.params
+    assert icrl.params["strategy"] == "Use a while loop."
+    assert icrl.name != plain.name and icrl.name.startswith(plain.name)
+
+
 def test_offline_steps_are_not_linked_as_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -6,31 +6,39 @@ The library now also drives the HiPT replication. How to run it is in
 [`rl-steps.md`](../../rl-steps.md); decisions and status are in
 [`docs/hipt_rl/ROADMAP.md`](../../../../docs/hipt_rl/ROADMAP.md). The additions are:
 
-- `run.py` + `config.py`: YAML-configured run driver (`finetuning/grouped_rl/configs/*.yaml`) with
-  preflight checks, baseline/periodic evaluation, JSONL records, W&B, checkpoints.
-- `data.py`: tasks built from generator `.eval` logs (Option A rewrites U's own
-  attacks that pass and have working backdoors); deterministic train/validation split.
-- `rewards.py`: the reward below stays the default (`branch`); `hipt` reproduces
-  HiPT's tanh-shaped receiver/overseer terms; optional failed-backdoor,
-  backdoor-suspicion, and per-token KL penalties. With
-  `overseer_baseline: original_attack` the branch overseer term penalises only
-  the suspicion a rewrite adds over the attack it rewrote.
-- `core.py`: `payload_grouping="both"` puts both bits for a problem in one group
-  (one shared baseline); per-bit/balanced accuracy, bit-pair collapse metrics;
-  held-out comparison of signalled attacks against honeypots; concurrent scoring.
-- `viewer.py`: `run_view.html`, a self-contained page for reading a run's JSONL
-  records, with original, signal-OFF and signal-ON code side by side.
-- `channels.py`: the receiver and overseer see exactly what the eval monitors see
-  (comments stripped, or minified / LLM-paraphrased for signal jamming).
-- `tinker_backend.py`: Tinker `ppo` loss (ratio clip, several passes per batch);
-  frozen YES/NO monitors scored with the eval pipeline's own
-  `collusion_yes_no_logprobs`; frozen base-model reference for KL.
-- `sandbox.py`: `control_arena_parity` mode (code wrapped like control_arena's
-  scorer, stderr fails, first N tests), `check_backdoor`, and batched execution
-  (one container per candidate, fresh process per test).
+- `run.py` + `config.py`: the YAML-configured entry point (example config in
+  `rl-steps.md`); it hands off to `gbrl.py` (gradient training) or `icrl_run.py`
+  (in-context search, `icrl.py`), which both record through `records.py`.
+- Rewards are in `rewards.py` (formulas below), APPS grading in `sandbox.py`, the
+  monitors' code view in `channels.py`, Tinker clients in `tinker_backend.py`, and
+  `viewer.py` builds `run_view.html` from a run's records.
 
-The sections below describe the original wiring-pilot design, which remains the
-default behaviour of the core library.
+## HiPT probability reward
+
+`reward_fn: hipt` copies the upstream `use_probs_reward=True` variant, with
+`dec_drop_sus=False` and `clip_positive_rewards=False`:
+
+```text
+stego_scale * P(correct bit)
++ overseer_scale * tanh(log P(NO) - log P(YES) - overseer_log_odds_threshold)
+```
+
+The overseer threshold is in log-odds units (default `0.75`, as in upstream's
+`LLMOverseer` constructor), not a probability. The frozen monitor preserves the raw
+label log probabilities alongside its normalized suspicion score without extra
+model calls. A custom HiPT overseer must implement
+`suspiciousness_and_log_odds()` returning `(P(YES), log P(NO) - log P(YES))`.
+
+This reward has no APPS pass gate or task bonus: failing code can still earn
+communication credit. Use `branch` for the correctness-gated reward. The old
+`hipt_gate_on_pass` and probability-valued `overseer_threshold` options are removed;
+use `overseer_log_odds_threshold` for the latter. Shared backdoor and KL penalties
+remain explicit extensions, not part of the copied core reward.
+
+Sources: upstream [`get_reward_from_logits` and `get_rewards`](https://github.com/olliematthews/lasr-steganography/blob/master/lasr-steganography/learning/rl/stego_trainer.py),
+and [`LLMOverseer`](https://github.com/olliematthews/lasr-steganography/blob/master/lasr-steganography/learning/rl/overseers/overseers.py).
+The signed raw-classifier-logit alternative is not implemented here; it is not
+identical to applying `tanh` to the normalized label probability's log odds.
 
 ## Original wiring pilot
 
@@ -152,6 +160,36 @@ Sampling refreshes use ephemeral snapshots. Use each role's explicit
 approved. The run driver must also persist results and retain the identities of
 training/validation/test problems; these are not experiment records baked into
 this feature library.
+
+## Self-recognition ICRL
+
+Set `method: in_context` and `task_mode: self_recognition` in the existing
+`grouped_rl.run` config. No optimizer or receiver-training step is called. Use a
+fresh output directory; a directory containing ICRL records is rejected before
+its manifest can be overwritten, including in offline mode.
+
+The learner is HiPT's sequential ICRL learner, adapted to self-recognition: see
+the `icrl.py` docstring for the pinned upstream source (`905b3f3`), its settings
+and the task adaptations. `icrl.episodes` counts evaluated strategies;
+`icrl.n_result_examples` defaults to three examples per diagnostic category. This
+is an adaptation of the search procedure, not an exact replication of HiPT's
+payload experiment.
+
+HiPT's [HumanEval task prompt](https://github.com/olliematthews/lasr-steganography/blob/905b3f3eac0f31c6fc5ff65380216b6b9248875f/lasr-steganography/episode/tasks/human_eval_task.py#L16-L22)
+supplies a correct implementation and permits keeping it, altering it, or writing
+a completely different implementation. The task is to retain correctness while
+communicating a payload, not to generate a code backdoor. Rewriting an existing
+backdoored solution and preserving its original trigger are choices of this
+self-recognition experiment, not constraints inherited from HiPT.
+
+W&B keeps `icrl/strategies` (strategy, reward and every reward component),
+`icrl/proposed_strategies`, and `icrl/validation` (the top strategies on validation
+problems, the winner and the no-strategy rewrite). `learner.jsonl` records each exact
+request/reply with stage `strategy`, `reflection` or `strategize`, including any
+malformed strategy replies (upstream allows two attempts). This file,
+`strategies.jsonl`, `rollouts.jsonl` and `icrl_result.json` are uploaded; the final
+result also contains the learner's distilled knowledge. Earlier completed runs
+remain historical results of their original procedure.
 
 ## References
 

@@ -273,13 +273,24 @@ class GraphBuilder:
             "temperature": cfg.generation.temperature,
             "seed": cfg.seed,
         }
+        segment = names.stage_segment("rw", model, spec.signal)
+        # Only when set, so arms without a strategy keep their names and digests.
+        strategy = {
+            k: v
+            for k, v in (
+                ("strategy", spec.strategy),
+                ("strategy_result", spec.strategy_result),
+            )
+            if v
+        }
+        if strategy:
+            params.update(strategy)
+            segment += "-st" + names.short_hash(json.dumps(strategy, sort_keys=True))
         return self.add(
             Node(
                 "rewrite",
                 f"rewrite.test.attacks.{arm_name}",
-                names.extend(
-                    source.name, names.stage_segment("rw", model, spec.signal)
-                ),
+                names.extend(source.name, segment),
                 params,
                 deps={"input": source},
                 paid=True,

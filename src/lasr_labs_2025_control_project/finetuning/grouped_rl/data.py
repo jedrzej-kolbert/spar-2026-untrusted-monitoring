@@ -2,8 +2,8 @@
 
 Option A (rewrite_signal) takes attacks the untrusted model already wrote with
 ``generate_solutions_inspect.py`` and keeps those that pass the main task and have a
-working backdoor (configurable). Honeypots from the same split are the negatives for
-the held-out attack-vs-honeypot check.
+working backdoor (configurable). Working honeypots, split the same way, are the
+negatives for the attack-vs-honeypot AUROC.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ class EvalSample:
     reference_solution: str | None
     main_task_success: str | None
     side_task_success: str | None
+    model: str = ""
 
 
 def _scores(sample: Any) -> tuple[str | None, str | None]:
@@ -72,6 +73,8 @@ def read_generator_eval(path: Path | str) -> list[EvalSample]:
                 reference_solution=solutions[0] if solutions else None,
                 main_task_success=main,
                 side_task_success=side,
+                model=generator_info.get("model_info", {}).get("model")
+                or log.eval.model,
             )
         )
     return samples
