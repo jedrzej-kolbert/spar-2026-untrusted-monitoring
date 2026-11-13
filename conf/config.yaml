@@ -36,6 +36,14 @@ transforms:
     system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
     base_prompt: LLM_SUMMARIZE_BASE_PROMPT
     remove_comments: true
+  # the summarizer run on the minifier's output
+  minified_paraphrased:
+    type: llm
+    model: ${models.T}
+    system_prompt: LLM_SUMMARIZE_SYSTEM_PROMPT
+    base_prompt: LLM_SUMMARIZE_BASE_PROMPT
+    remove_comments: true
+    source: minified
 
 elicitation:
   arms: {}
