@@ -304,6 +304,11 @@ async def run_gbrl(
                 result = error.result
                 recorder.rollouts(step, "train_failed", result.rollouts)
                 recorder.receiver_examples(step, result.receiver_examples)
+                if result.sender_updated is None or result.receiver_updated is None:
+                    recorder.status(
+                        state="stopped", step=step, reason="uncertain update"
+                    )
+                    raise
                 if meter.exhausted:
                     recorder.status(
                         state="stopping",
@@ -313,11 +318,6 @@ async def run_gbrl(
                     )
                     click.echo(f"step {step}: budget exhausted; saving current weights")
                     break
-                if result.sender_updated is None or result.receiver_updated is None:
-                    recorder.status(
-                        state="stopped", step=step, reason="uncertain update"
-                    )
-                    raise
                 if docker_down(result):
                     recorder.status(
                         state="stopped", step=step, reason="Docker daemon down"
@@ -409,7 +409,9 @@ async def run_gbrl(
                 path = await sender.save_checkpoint(
                     f"{config.checkpoint_name}_step{step}"
                 )
-                recorder.stage.log_model_ref(f"tinker/{path}", {"step": step})
+                recorder.attempt(
+                    recorder.stage.log_model_ref, f"tinker/{path}", {"step": step}
+                )
                 state = await sender.save_state(
                     f"{config.checkpoint_name}_state_step{step}"
                 )
@@ -448,7 +450,9 @@ async def run_gbrl(
                 completed,
             )
         final = await sender.save_checkpoint(config.checkpoint_name)
-        recorder.stage.log_model_ref(f"tinker/{final}", {"step": completed})
+        recorder.attempt(
+            recorder.stage.log_model_ref, f"tinker/{final}", {"step": completed}
+        )
         # Resumable sender state, so a finished run can be extended with more steps.
         final_state = await sender.save_state(
             f"{config.checkpoint_name}_state_step{completed}"

@@ -269,7 +269,8 @@ async def run_in_context(
     )
     recorder.sync_file("icrl_result.json")
     # The test rewrite takes the winner from this artifact, which links the two runs.
-    recorder.stage.log_artifact(
+    recorder.attempt(
+        recorder.stage.log_artifact,
         config.output_dir / "icrl_result.json",
         type="strategy",
         name=f"strategy-{config.run_name}",

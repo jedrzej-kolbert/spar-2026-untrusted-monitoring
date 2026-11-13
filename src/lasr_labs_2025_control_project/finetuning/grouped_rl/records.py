@@ -294,6 +294,14 @@ class Recorder:
         if self.wandb is not None:
             self.status(wandb_url=self.wandb.url)
 
+    @staticmethod
+    def attempt(call: Any, *args: Any, **kwargs: Any) -> None:
+        # A W&B outage must not abort training; the local record files stay complete.
+        try:
+            call(*args, **kwargs)
+        except Exception as exc:
+            logger.warning("W&B call failed, continuing: %s", exc)
+
     def _append(self, name: str, row: dict[str, Any]) -> None:
         with open(self.output_dir / name, "a") as handle:
             handle.write(json.dumps(row, default=str) + "\n")
@@ -308,7 +316,7 @@ class Recorder:
         self.last_step = max(self.last_step, step)
         logged = {k: v for k, v in clean.items() if k.startswith(WANDB_PREFIXES)}
         if self.wandb is not None and logged:
-            self.wandb.log(logged, step=step)
+            self.attempt(self.wandb.log, logged, step=step)
 
     def metrics(
         self,
@@ -331,7 +339,8 @@ class Recorder:
     ) -> None:
         """The collusion ROC (the judge's P(self_rec)): working rewrites vs honeypots."""
         if any(curves.values()):
-            self.stage.log_roc(
+            self.attempt(
+                self.stage.log_roc,
                 "validation/roc_collusion",
                 {label: points for label, points in curves.items() if points},
                 title,
@@ -428,7 +437,9 @@ class Recorder:
             [row.get(c, 0.0 if c.startswith("reward/") else None) for c in columns]
             for row in rows
         ]
-        self.wandb.log({key: wandb.Table(columns=columns, data=data)}, step=step)
+        self.attempt(
+            self.wandb.log, {key: wandb.Table(columns=columns, data=data)}, step=step
+        )
 
     def learner_reply(
         self,
@@ -478,7 +489,8 @@ class Recorder:
     def sync_file(self, name: str) -> None:
         # Upload the file to the W&B run and keep it in sync as it grows.
         if self.wandb is not None:
-            self.wandb.save(
+            self.attempt(
+                self.wandb.save,
                 str(self.output_dir / name),
                 base_path=str(self.output_dir),
                 policy="live",
@@ -490,7 +502,7 @@ class Recorder:
         current.update(values, updated=time.strftime("%Y-%m-%dT%H:%M:%S"))
         path.write_text(json.dumps(current, indent=2, default=str))
         if self.wandb is not None:
-            self.wandb.summary.update(values)
+            self.attempt(self.wandb.summary.update, values)
 
     def finish(self, complete: bool, reason: str | None = None) -> None:
         """Upload the record files and close the run (tagged partial if incomplete)."""

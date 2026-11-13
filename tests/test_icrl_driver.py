@@ -233,3 +233,15 @@ async def test_a_failed_batch_records_its_cause(tmp_path: Path) -> None:
     ]
     assert [row["phase"] for row in rows] == ["search_failed", "search_failed"]
     assert "chat_template is not set" in rows[0]["errors"][0]
+
+
+def test_a_wandb_failure_does_not_abort_recording(tmp_path: Path) -> None:
+    recorder = Recorder(icrl_config(tmp_path), tmp_path)
+
+    class Broken:
+        def log(self, *args: Any, **kwargs: Any) -> None:
+            raise ConnectionError("W&B is down")
+
+    recorder.wandb = Broken()
+    recorder.scalars(1, "train", {"auroc": 0.5})
+    assert "auroc" in (tmp_path / "metrics.jsonl").read_text()
