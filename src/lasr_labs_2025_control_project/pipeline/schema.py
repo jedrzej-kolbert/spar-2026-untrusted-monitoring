@@ -103,8 +103,6 @@ class TransformConfig:
     system_prompt: Optional[str] = None
     base_prompt: Optional[str] = None
     remove_comments: bool = True
-    #: a transform applied first; this one then reads its output
-    source: Optional[str] = None
 
 
 @dataclass

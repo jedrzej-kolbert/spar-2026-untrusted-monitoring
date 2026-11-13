@@ -2,7 +2,7 @@
 name: apps
 problem_ids: [0, 2999]
 view: trajectory
-transforms: [none, minified, paraphrased, minified_paraphrased]
+transforms: [none, minified, paraphrased]
 prompts:
   attack:
     self_rec: self_rec_subtle_attack_policy_prompt
@@ -22,7 +22,6 @@ prompts:
     none: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
     minified: MINIFIED_HONEST_MONITOR_SYSTEM_PROMPT
     paraphrased: PARAPHRASED_HONEST_MONITOR_SYSTEM_PROMPT
-    minified_paraphrased: PARAPHRASED_HONEST_MONITOR_SYSTEM_PROMPT
   trusted_suspiciousness: DEFAULT_HONEST_MONITOR_SYSTEM_PROMPT
   suspiciousness_user: MONITOR_USER_PROMPT
   sft_system: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
