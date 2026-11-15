@@ -1387,6 +1387,32 @@ async def test_budget_refusal_during_baseline_or_first_step_saves_without_oversp
     assert wb.summary["estimated_cost_usd"] == meter.cost_usd
 
 
+async def test_an_uncertain_update_stops_the_run_even_when_the_budget_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+        BatchInfrastructureError,
+    )
+
+    run, trainer, wb, meter, config = driven_run(
+        monkeypatch, tmp_path, steps=10, max_cost_usd=3.0
+    )
+
+    async def refused(examples: list[SenderExample]) -> UpdateStats:
+        # The sender update fails with the budget refused: its outcome is unknown.
+        with meter.request("deepseek-ai/DeepSeek-V3.1", train=1_000_000):
+            return UpdateStats()
+
+    monkeypatch.setattr(trainer.sender, "update", refused)
+    with pytest.raises(BatchInfrastructureError):
+        await run.train(config, allow_paid=True)
+    assert meter.exhausted
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "stopped" and status["reason"] == "uncertain update"
+    assert "final_checkpoint" not in status  # no weights saved after an unknown update
+    assert wb.summary["complete"] is False
+
+
 def test_usage_counts_every_tinker_call_and_prices_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
