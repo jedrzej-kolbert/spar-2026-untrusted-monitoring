@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL run viewer</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f7f6f3; --panel: #ffffff; --ink: #24231f; --muted: #6b6a64; --line: #dedcd5;
+  --accent: #2a78d6; --on: #eb6834; --off: #2a78d6; --changed: #fff0c2; --warn: #fdf0e3;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18181a; --panel: #212124; --ink: #e9e8e4; --muted: #a3a29c; --line: #38383c;
+    --accent: #6aa8ee; --on: #f0915f; --off: #6aa8ee; --changed: #4d4120; --warn: #43301f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { padding: 12px 16px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { margin: 0; font-size: 18px; }
+h2 { margin: 0; font-size: 14px; }
+.meta { margin: 2px 0 8px; color: var(--muted); font-size: 13px; }
+#notes { margin: 0 0 8px; padding: 6px 10px 6px 26px; background: var(--warn); border-radius: 6px; }
+#notes:empty { display: none; }
+nav { display: flex; gap: 4px; }
+nav button {
+  padding: 6px 12px; border: 0; border-bottom: 2px solid transparent; background: none;
+  color: var(--muted); font: inherit; cursor: pointer;
+}
+nav button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+main { flex: 1; min-height: 0; }
+main > section { height: 100%; }
+main > section[hidden] { display: none; }
+#rollouts { display: grid; grid-template-columns: 320px minmax(0, 1fr); }
+aside { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
+label.check { flex-direction: row; align-items: center; gap: 6px; grid-column: 1 / -1; }
+select, input[type="search"] {
+  width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--bg); color: var(--ink); font: inherit;
+}
+#count { padding: 6px 10px; color: var(--muted); font-size: 12px; }
+#list { flex: 1; min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+#list button {
+  display: block; width: 100%; padding: 7px 10px; border: 0; border-top: 1px solid var(--line);
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+#list button:hover { background: var(--bg); }
+#list button[aria-current="true"] { background: var(--bg); box-shadow: inset 3px 0 var(--accent); }
+.sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tag { margin-left: 4px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; }
+#detail { min-height: 0; padding: 12px; overflow-y: auto; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 10px; }
+.toolbar label { width: 190px; }
+details.question { margin-bottom: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+details.question div { margin-top: 6px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+.columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.column { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line); border-top-width: 3px; border-radius: 6px; background: var(--panel); }
+.column.off { border-top-color: var(--off); }
+.column.on { border-top-color: var(--on); }
+.samples { display: flex; gap: 4px; }
+.samples button { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.samples button[aria-pressed="true"] { border-color: var(--accent); font-weight: 600; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+.code { margin: 0; max-height: 70vh; padding: 6px 0; overflow: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); font: 12px/1.45 var(--mono); }
+.code div { min-height: 1.45em; padding: 0 8px; white-space: pre; }
+.code div.changed { background: var(--changed); }
+.empty { color: var(--muted); }
+.scroll { height: 100%; padding: 12px; overflow: auto; }
+table { border-collapse: separate; border-spacing: 0; background: var(--panel); font-size: 12px; font-variant-numeric: tabular-nums; }
+th, td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+thead th { position: sticky; top: -12px; z-index: 1; background: var(--panel); }
+tbody th, thead th:first-child { position: sticky; left: -12px; background: var(--panel); }
+thead th:first-child { z-index: 2; }
+.honeypot { margin-bottom: 4px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.honeypot summary { cursor: pointer; font-variant-numeric: tabular-nums; }
+.honeypot .code { margin-top: 6px; }
+@media (max-width: 900px) {
+  main { overflow-y: auto; }
+  main > section { height: auto; }
+  #rollouts { grid-template-columns: minmax(0, 1fr); }
+  #list { max-height: 240px; }
+  .columns { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <p class="meta" id="summary"></p>
+  <ul id="notes"></ul>
+  <nav role="tablist">
+    <button role="tab" data-tab="rollouts" aria-selected="true">Rollouts</button>
+    <button role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+    <button role="tab" data-tab="honeypots" aria-selected="false">Honeypots</button>
+  </nav>
+</header>
+<main>
+  <section id="rollouts">
+    <aside>
+      <div class="filters">
+        <label>Phase <select id="phase"></select></label>
+        <label>Step <select id="step"></select></label>
+        <label>Problem ID <input id="problem" type="search"></label>
+        <label>Sort by
+          <select id="sort">
+            <option value="step">Step</option>
+            <option value="gap-desc">ON − OFF P(YES), high first</option>
+            <option value="gap-asc">ON − OFF P(YES), low first</option>
+          </select>
+        </label>
+        <label class="check"><input id="identical" type="checkbox"> Only identical ON/OFF code</label>
+      </div>
+      <div id="count"></div>
+      <ul id="list"></ul>
+    </aside>
+    <div id="detail"></div>
+  </section>
+  <section id="metrics" hidden>
+    <div class="scroll">
+      <div class="toolbar"><label>Section <select id="section"></select></label></div>
+      <table id="metric-table"></table>
+    </div>
+  </section>
+  <section id="honeypots" hidden>
+    <div class="scroll">
+      <div class="toolbar"><label>Step <select id="honeypot-step"></select></label></div>
+      <p class="meta">The receiver should say NO to these. Highest P(YES) first.</p>
+      <div id="honeypot-list"></div>
+    </div>
+  </section>
+</main>
+<script id="run-data" type="application/json">__RUN_DATA__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("run-data").textContent);
+const $ = (id) => document.getElementById(id);
+
+// Everything from the run is inserted as text, never as HTML.
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key === "onclick") node.onclick = value;
+    else if (key === "class") node.className = value;
+    else node.setAttribute(key, value);
+  }
+  node.append(...children);
+  return node;
+}
+const num = (value, digits = 3) =>
+  typeof value === "number" ? value.toFixed(digits) : "–";
+const yesNo = (value) => (value === null || value === undefined ? "–" : value ? "yes" : "no");
+const mean = (values) => {
+  const known = values.filter((value) => typeof value === "number");
+  return known.length ? known.reduce((a, b) => a + b, 0) / known.length : null;
+};
+function fill(select, options) {
+  select.replaceChildren(...options.map(([value, label]) => el("option", { value }, label)));
+}
+
+// -- header ------------------------------------------------------------------
+$("title").textContent = data.run_name;
+document.title = `${data.run_name}: RL run`;
+const reward = data.reward || {};
+$("summary").textContent = [
+  data.started && `started ${data.started}`,
+  data.models?.sender && `sender ${data.models.sender}`,
+  data.models?.overseer && `overseer ${data.models.overseer}`,
+  reward.reward_fn && `reward ${reward.reward_fn}`,
+  reward.overseer_baseline && `overseer baseline ${reward.overseer_baseline}`,
+].filter(Boolean).join(" · ");
+$("notes").replaceChildren(...data.notes.map((note) => el("li", {}, note)));
+for (const tab of document.querySelectorAll("nav button")) {
+  tab.onclick = () => {
+    for (const other of document.querySelectorAll("nav button")) {
+      other.setAttribute("aria-selected", String(other === tab));
+      $(other.dataset.tab).hidden = other !== tab;
+    }
+  };
+}
+
+// -- rollouts ----------------------------------------------------------------
+const gap = (group) => {
+  const on = mean(group.on.map((item) => item.p_yes));
+  const off = mean(group.off.map((item) => item.p_yes));
+  return on === null || off === null ? null : on - off;
+};
+const failed = (group) =>
+  [...group.on, ...group.off].some((item) => (item.errors || []).length);
+const state = { group: null, on: 0, off: 0 };
+
+fill($("phase"), [["", "All"], ...[...new Set(data.groups.map((g) => g.phase))].sort().map((p) => [p, p])]);
+fill($("step"), [["", "All"], ...[...new Set(data.groups.map((g) => g.step))]
+  .sort((a, b) => a - b).map((s) => [String(s), String(s)])]);
+
+function visibleGroups() {
+  const phase = $("phase").value, step = $("step").value, problem = $("problem").value.trim();
+  const groups = data.groups.filter((group) =>
+    (!phase || group.phase === phase) &&
+    (!step || String(group.step) === step) &&
+    (!problem || group.problem_id.includes(problem)) &&
+    (!$("identical").checked || group.identical));
+  const sort = $("sort").value;
+  if (sort === "step") return groups;
+  const sign = sort === "gap-desc" ? -1 : 1;
+  const known = groups.filter((group) => gap(group) !== null);
+  known.sort((a, b) => sign * (gap(a) - gap(b)));
+  return [...known, ...groups.filter((group) => gap(group) === null)];
+}
+
+function renderList() {
+  const groups = visibleGroups();
+  $("count").textContent = `${groups.length} of ${data.groups.length} groups`;
+  $("list").replaceChildren(...groups.map((group) => {
+    const title = el("div", {}, `Step ${group.step} · problem ${group.problem_id}`);
+    if (group.phase !== "train") title.append(el("span", { class: "tag" }, group.phase));
+    if (group.identical) title.append(el("span", { class: "tag" }, "identical"));
+    if (failed(group)) title.append(el("span", { class: "tag" }, "error"));
+    const on = mean(group.on.map((item) => item.p_yes));
+    const off = mean(group.off.map((item) => item.p_yes));
+    const button = el("button", {
+      onclick: () => { state.group = group; state.on = 0; state.off = 0; renderList(); renderDetail(); },
+    }, title, el("div", { class: "sub" }, `P(YES) OFF ${num(off, 2)} · ON ${num(on, 2)}`));
+    if (group === state.group) button.setAttribute("aria-current", "true");
+    return el("li", {}, button);
+  }));
+}
+
+function codeBlock(text, against) {
+  const reference = against === null ? null :
+    new Set(against.split("\n").map((line) => line.trim()));
+  const lines = (text ?? "").split("\n").map((line) => {
+    const changed = reference !== null && line.trim() && !reference.has(line.trim());
+    return el("div", changed ? { class: "changed" } : {}, line);
+  });
+  return el("pre", { class: "code" }, ...lines);
+}
+
+function stats(pairs) {
+  const list = el("dl");
+  for (const [name, value] of pairs) list.append(el("dt", {}, name), el("dd", {}, value));
+  return list;
+}
+
+function sampleStats(item) {
+  const pairs = [
+    ["Receiver P(YES)", num(item.p_yes)],
+    ["Tests passed", yesNo(item.passed)],
+    ["Backdoor works", yesNo(item.backdoor)],
+    ["Overseer suspicion", num(item.suspiciousness)],
+  ];
+  if (item.suspicion_increase !== undefined && item.suspicion_increase !== null) {
+    pairs.push(["Added suspicion", num(item.suspicion_increase)]);
+  }
+  pairs.push(["Reward", num(item.reward)], ["Advantage", num(item.advantage)]);
+  const parts = Object.entries(item.reward_components || {});
+  if (parts.length) {
+    pairs.push(["Reward terms", parts.map(([key, value]) => `${key} ${num(value, 2)}`).join(", ")]);
+  }
+  if (item.execution_detail) pairs.push(["Grader", item.execution_detail]);
+  if ((item.errors || []).length) pairs.push(["Errors", item.errors.join("; ")]);
+  return stats(pairs);
+}
+
+const shown = (item) =>
+  item && ($("view")?.value === "monitor" ? item.receiver_code ?? item.code : item.code);
+
+function sampleColumn(kind, title, items, against) {
+  const column = el("div", { class: `column ${kind}` }, el("h2", {}, title));
+  if (!items.length) {
+    column.append(el("p", { class: "empty" }, "No samples for this bit in this group."));
+    return column;
+  }
+  const index = Math.min(state[kind], items.length - 1);
+  if (items.length > 1) {
+    column.append(el("div", { class: "samples" }, ...items.map((_, i) =>
+      el("button", {
+        "aria-pressed": String(i === index),
+        onclick: () => { state[kind] = i; renderDetail(); },
+      }, `Sample ${i + 1}`))));
+  }
+  const item = items[index];
+  column.append(sampleStats(item), codeBlock(shown(item), against));
+  if (item.response) {
+    column.append(el("details", {}, el("summary", {}, "Full response"), codeBlock(item.response, null)));
+  }
+  return column;
+}
+
+function renderDetail() {
+  const group = state.group;
+  if (!group) {
+    $("detail").replaceChildren(el("p", { class: "empty" }, "Pick a group on the left."));
+    return;
+  }
+  const mode = $("highlight")?.value ?? "original";
+  const view = $("view")?.value ?? "code";
+  const problem = data.problems[group.problem_id];
+  const original = problem?.original ?? null;
+  const off = group.off[Math.min(state.off, group.off.length - 1)];
+  const on = group.on[Math.min(state.on, group.on.length - 1)];
+
+  const highlight = el("select", { id: "highlight" },
+    el("option", { value: "original" }, "Changes from the original"),
+    el("option", { value: "pair" }, "Differences between OFF and ON"),
+    el("option", { value: "none" }, "Nothing"));
+  highlight.value = mode;
+  highlight.onchange = renderDetail;
+  const viewSelect = el("select", { id: "view" },
+    el("option", { value: "code" }, "Code as written"),
+    el("option", { value: "monitor" }, "What the monitors saw"));
+  viewSelect.value = view;
+  viewSelect.onchange = renderDetail;
+
+  const parts = [
+    el("h2", {}, `Step ${group.step} · problem ${group.problem_id} · ${group.phase}`),
+    el("div", { class: "toolbar" },
+      el("label", {}, "Highlight", highlight), el("label", {}, "Show", viewSelect)),
+  ];
+  if (problem?.question) {
+    parts.push(el("details", { class: "question" }, el("summary", {}, "Problem statement"),
+      el("div", {}, problem.question)));
+  }
+  const originalColumn = el("div", { class: "column" }, el("h2", {}, "Original attack"));
+  if (original === null) {
+    originalColumn.append(el("p", { class: "empty" }, "Not available for this run."));
+  } else {
+    originalColumn.append(
+      stats([["Overseer suspicion", num(problem.original_suspicion)]]),
+      codeBlock(original, null));
+  }
+  // Render into the page first so `shown` sees the current selects.
+  $("detail").replaceChildren(...parts);
+  const against = (other) =>
+    mode === "original" ? original : mode === "pair" && other ? shown(other) : null;
+  $("detail").append(el("div", { class: "columns" }, originalColumn,
+    sampleColumn("off", "Signal OFF", group.off, against(on)),
+    sampleColumn("on", "Signal ON", group.on, against(off))));
+}
+
+for (const id of ["phase", "step", "problem", "sort", "identical"]) {
+  $(id).addEventListener("input", renderList);
+}
+
+// -- metrics -----------------------------------------------------------------
+const sections = {};
+for (const row of data.metrics) {
+  for (const [key, value] of Object.entries(row)) {
+    if (key === "step" || !key.includes("/")) continue;
+    const slash = key.indexOf("/");
+    const section = (sections[key.slice(0, slash)] ??= {});
+    (section[row.step] ??= {})[key.slice(slash + 1)] = value;
+  }
+}
+function renderMetrics() {
+  const section = sections[$("section").value] ?? {};
+  const steps = Object.keys(section).map(Number).sort((a, b) => a - b);
+  const names = [...new Set(steps.flatMap((step) => Object.keys(section[step])))].sort();
+  $("metric-table").replaceChildren(
+    el("thead", {}, el("tr", {}, el("th", {}, "Step"), ...names.map((name) => el("th", {}, name)))),
+    el("tbody", {}, ...steps.map((step) => el("tr", {}, el("th", {}, String(step)),
+      ...names.map((name) => el("td", {}, num(section[step][name])))))));
+}
+const sectionNames = Object.keys(sections).sort();
+fill($("section"), sectionNames.map((name) => [name, name]));
+if (sectionNames.includes("train")) $("section").value = "train";
+$("section").oninput = renderMetrics;
+
+// -- honeypots ---------------------------------------------------------------
+function renderHoneypots() {
+  const step = $("honeypot-step").value;
+  const rows = data.honeypots.filter((row) => !step || String(row.step) === step)
+    .sort((a, b) => (b.p_yes ?? -1) - (a.p_yes ?? -1));
+  $("honeypot-list").replaceChildren(...rows.map((row) => {
+    const code = data.problems[row.problem_id]?.honeypot;
+    return el("details", { class: "honeypot" },
+      el("summary", {}, `P(YES) ${num(row.p_yes)} · step ${row.step} · problem ${row.problem_id}`),
+      code ? codeBlock(code, null) : el("p", { class: "empty" }, "Code not available for this run."));
+  }));
+  if (!rows.length) $("honeypot-list").append(el("p", { class: "empty" }, "No honeypot records."));
+}
+const honeypotSteps = [...new Set(data.honeypots.map((row) => row.step))].sort((a, b) => a - b);
+fill($("honeypot-step"), [["", "All"], ...honeypotSteps.map((s) => [String(s), String(s)])]);
+if (honeypotSteps.length) $("honeypot-step").value = String(honeypotSteps.at(-1));
+$("honeypot-step").oninput = renderHoneypots;
+
+renderMetrics();
+renderHoneypots();
+state.group = visibleGroups()[0] ?? null;
+renderList();
+renderDetail();
+</script>
+</body>
+</html>
