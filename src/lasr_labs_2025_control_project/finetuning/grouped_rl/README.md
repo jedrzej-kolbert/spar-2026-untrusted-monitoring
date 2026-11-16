@@ -3,8 +3,7 @@
 ## HiPT-style collusion-signal RL (added on `feat/hipt-rl`)
 
 The library now also drives the HiPT replication. How to run it is in
-[`rl-steps.md`](../../rl-steps.md); decisions and status are in
-[`docs/hipt_rl/ROADMAP.md`](../../../../docs/hipt_rl/ROADMAP.md). The additions are:
+[`rl-steps.md`](../../rl-steps.md). The additions are:
 
 - `run.py` + `config.py`: the YAML-configured entry point (example config in
   `rl-steps.md`); it hands off to `gbrl.py` (gradient training) or `icrl_run.py`

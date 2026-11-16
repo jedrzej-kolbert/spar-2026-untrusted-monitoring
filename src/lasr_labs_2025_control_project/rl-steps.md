@@ -2,8 +2,6 @@
 
 This trains the untrusted model (U) with reinforcement learning to hide a collusion signal in its code, following the GBRL method in *Hidden in Plain Text* (HiPT). The current setup is **Option A**: U rewrites attacks it already wrote, with the signal switched ON or OFF, and is rewarded when a frozen copy of itself (the untrusted monitor) can tell the two apart while the trusted monitor cannot.
 
-For the design, the decisions behind it, and what is still to come, see [`docs/hipt_rl/ROADMAP.md`](../../docs/hipt_rl/ROADMAP.md).
-
 ## Setup
 
 Run `uv sync`, and put your Tinker API key in `.env` as `TINKER_API_KEY`. Docker must be running: the training loop grades code in a locked-down container. The first run pulls a pinned `python:3.12-slim` image.
