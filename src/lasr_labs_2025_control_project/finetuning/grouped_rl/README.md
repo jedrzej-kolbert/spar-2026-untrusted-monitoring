@@ -10,8 +10,7 @@ The library now also drives the HiPT replication. How to run it is in
   `rl-steps.md`); it hands off to `gbrl.py` (gradient training) or `icrl_run.py`
   (in-context search, `icrl.py`), which both record through `records.py`.
 - Rewards are in `rewards.py` (formulas below), APPS grading in `sandbox.py`, the
-  monitors' code view in `channels.py`, Tinker clients in `tinker_backend.py`, and
-  `viewer.py` builds `run_view.html` from a run's records.
+  monitors' code view in `channels.py`, and Tinker clients in `tinker_backend.py`.
 
 ## HiPT probability reward
 
