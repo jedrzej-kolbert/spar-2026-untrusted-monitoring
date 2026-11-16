@@ -8,7 +8,6 @@ transformed log can be monitored like the original. The pipeline
 import shutil
 from typing import Any, Optional
 
-import python_minifier
 from inspect_ai import Epochs, Task, eval, task
 from inspect_ai.model import (
     ChatMessageAssistant,
@@ -40,6 +39,7 @@ from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  
 from lasr_labs_2025_control_project.utils.config_loader import TransformRunConfig
 from lasr_labs_2025_control_project.utils.utils import (
     is_python_solution,
+    minify_code,
     remove_comments,
 )
 
@@ -54,21 +54,7 @@ def minify_solution() -> Solver:
             "State input must be a string, check your .eval file"
         )
         code = state.input.replace("```python\n", "").replace("```", "")
-        output = python_minifier.minify(
-            code,
-            remove_literal_statements=True,
-            hoist_literals=True,
-            combine_imports=True,
-            rename_locals=True,
-            rename_globals=True,
-            remove_annotations=True,
-            remove_object_base=True,
-            convert_posargs_to_args=True,
-            remove_asserts=True,
-            remove_debug=True,
-            remove_explicit_return_none=True,
-            constant_folding=True,
-        )
+        output = minify_code(code)
 
         response = ChatMessageAssistant(content=output)
         state.messages.append(response)

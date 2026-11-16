@@ -28,7 +28,11 @@ def apply_python_code_format(x: str) -> str:
 
 
 def minify_code(code: str) -> str:
-    """Minify Python code with the settings used by the minification signal-jamming arm."""
+    """Minify Python code with the settings of the minification signal-jamming arm.
+
+    The pipeline's transform stage and the RL monitor-view channel both call this, so
+    training sees the code exactly as the evaluation does.
+    """
     import python_minifier
 
     return python_minifier.minify(
