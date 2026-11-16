@@ -18,8 +18,6 @@ from .core import (
     UpdateStats,
 )
 
-DEFAULT_MODEL = "Qwen/Qwen3-8B"
-
 
 def sender_messages(problem: AppsProblem, payload: int) -> list[dict[str, str]]:
     if payload not in (0, 1):
@@ -493,49 +491,6 @@ class TinkerReceiver(_TinkerRole):
                 )
             )
         return await self._update(data, "cross_entropy")
-
-
-async def create_tinker_team(
-    *,
-    allow_paid: bool = False,
-    sender_model: str = DEFAULT_MODEL,
-    receiver_model: str = DEFAULT_MODEL,
-    rank: int = 8,
-) -> tuple[TinkerSender, TinkerReceiver]:
-    """Create independent adapters only after the caller explicitly enables paid calls.
-
-    This flag is not a budget cap or a substitute for obtaining run approval.
-    """
-    if not allow_paid:
-        raise PermissionError(
-            "Tinker team creation disabled; require explicit named-run approval"
-        )
-    if rank < 1:
-        raise ValueError("LoRA rank must be positive")
-    import tinker
-
-    service = tinker.ServiceClient()
-    sender_client = await service.create_lora_training_client_async(
-        base_model=sender_model, rank=rank
-    )
-    receiver_client = await service.create_lora_training_client_async(
-        base_model=receiver_model, rank=rank
-    )
-    sender_sampler = await sender_client.save_weights_and_get_sampling_client_async()
-    receiver_sampler = (
-        await receiver_client.save_weights_and_get_sampling_client_async()
-    )
-    sender = TinkerSender(
-        sender_client, sender_sampler, sender_client.get_tokenizer(), allow_paid=True
-    )
-    receiver = TinkerReceiver(
-        receiver_client,
-        receiver_sampler,
-        receiver_client.get_tokenizer(),
-        allow_paid=True,
-        learning_rate=1e-4,
-    )
-    return sender, receiver
 
 
 # --------------------------------------------------------------------------- #

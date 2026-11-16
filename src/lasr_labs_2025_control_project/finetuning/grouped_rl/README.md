@@ -147,12 +147,10 @@ or unavailable daemon is an infrastructure failure, not incorrect code. Review a
 pin the worker image before a live run. Docker isolation is not a formal security
 guarantee; use an isolated execution worker for adversarial generated code.
 
-There is intentionally no default paid-run CLI or experiment configuration here.
-`create_tinker_team()` refuses to create clients unless the caller explicitly opts
-in. **That flag is not spending approval and does not enforce a dollar cap.**
-Before any live pilot, obtain named-run approval, validate the actual SDK/model and
-sandbox, and specify a budget-aware run driver covering sampling, scoring, training,
-and evaluation. The discussed $5 ceiling is not authorization to spend.
+Paid calls need an explicit opt-in (`allow_paid`, or `--allow-paid` on the `run.py`
+CLI). **That flag is not spending approval**; `training.max_cost_usd` caps the
+estimated token cost. Before any live run, obtain named-run approval and validate
+the actual SDK/model and sandbox.
 
 Sampling refreshes use ephemeral snapshots. Use each role's explicit
 `save_checkpoint(name)` to keep persistent sampler weights when a live run is

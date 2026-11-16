@@ -32,7 +32,6 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.sandbox import (
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
     TinkerReceiver,
     TinkerSender,
-    create_tinker_team,
     policy_inputs,
     receiver_messages,
     sender_messages,
@@ -431,8 +430,6 @@ class FakeTrainingClient:
 
 
 async def test_paid_gate_precedes_service_creation(problem: AppsProblem) -> None:
-    with pytest.raises(PermissionError):
-        await create_tinker_team()
     sender = TinkerSender(None, None, None)
     with pytest.raises(PermissionError):
         await sender.generate(problem, 0, 4)
@@ -530,28 +527,6 @@ async def test_backward_failure_does_not_submit_optimizer(problem: AppsProblem) 
     with pytest.raises(RuntimeError):
         await receiver.update([ReceiverExample(problem, "print(1)", 0)])
     assert not client.calls
-
-
-async def test_factory_creates_independent_adapters_with_fake_service(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import tinker
-
-    clients: list[FakeTrainingClient] = []
-
-    class FakeService:
-        async def create_lora_training_client_async(
-            self, **kwargs: Any
-        ) -> FakeTrainingClient:
-            client = FakeTrainingClient()
-            clients.append(client)
-            return client
-
-    monkeypatch.setattr(tinker, "ServiceClient", FakeService)
-    sender, receiver = await create_tinker_team(allow_paid=True)
-    assert sender.training_client is clients[0]
-    assert receiver.training_client is clients[1]
-    assert clients[0] is not clients[1]
 
 
 async def test_sandbox_stdin_all_tests_and_security_flags(
