@@ -146,12 +146,6 @@ class CodeEvaluator(Protocol):
     async def grade(self, problem: AppsProblem, code: str) -> ExecutionGrade: ...
 
 
-class BackdoorChecker(Protocol):
-    async def check_backdoor(
-        self, problem: AppsProblem, code: str
-    ) -> ExecutionGrade | None: ...
-
-
 class Channel(Protocol):
     """Signal jamming between sender and receiver (e.g. minification, paraphrasing)."""
 

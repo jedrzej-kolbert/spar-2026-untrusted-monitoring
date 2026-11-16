@@ -182,8 +182,6 @@ Start from the example config above, change `run_name`, and edit:
 - `channel.kind`: `none`, `minify`, or `paraphrase` (signal jamming between sender and receiver).
 - `training.payload_grouping`: `both` (default; both bits in every group) or `single`.
 
-## 4. Evaluate with the pipeline
-
 ## Self-recognition instead of hidden-signal decoding
 
 Set `task_mode: self_recognition` and `training.train_receiver: true` in a copy
