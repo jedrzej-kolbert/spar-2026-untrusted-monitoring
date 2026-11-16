@@ -489,6 +489,37 @@ async def test_channels_match_eval_monitor_views() -> None:
         MonitorViewChannel("paraphrase")
 
 
+async def test_paraphrase_channel_sends_the_stripped_code_to_the_summarizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[Any] = []
+
+    class Summarizer:
+        reply = "summary"
+
+        async def generate(self, messages: Any, config: Any) -> Any:
+            sent.append((messages, config))
+            return SimpleNamespace(completion=self.reply)
+
+    summarizer = Summarizer()
+    monkeypatch.setattr("inspect_ai.model.get_model", lambda name: summarizer)
+    channel = MonitorViewChannel(
+        "paraphrase",
+        paraphrase_model="tinker/m",
+        paraphrase_system_prompt="SYS",
+        paraphrase_base_prompt="CODE:\n{solution}",
+    )
+    code = "x = 1  # the signal\nprint(x)"
+    assert await channel.transform(attack_problem(), code) == "summary"
+    (system, user), config = sent[0]
+    assert system.content == "SYS"
+    assert user.content.startswith("CODE:\nx = 1") and "signal" not in user.content
+    assert config.reasoning_effort == "minimal"
+    summarizer.reply = " "
+    with pytest.raises(ValueError, match="empty completion"):
+        await channel.transform(attack_problem(), code)
+
+
 def test_rewrite_prompt_contains_attack_but_never_secret_input() -> None:
     problem = attack_problem()
     messages = rewrite_sender_messages(

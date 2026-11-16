@@ -3,10 +3,10 @@
 Mirrors the evaluation pipeline so training rewards match reported metrics:
 - ``none``: ``monitor_solutions_inspect`` strips comments (``remove_comments: true`` in
   the monitor configs) and wraps the code in a Python fence.
-- ``minify``: ``transform_solutions_inspect.minify_solution``; the monitor reads the
-  minified text as is.
-- ``paraphrase``: ``transform_solutions_inspect.summarize_solution`` (the LLM
-  summarizer); comments are stripped before the summarizer sees the code.
+- ``minify``: ``utils.minify_code``, which ``transform_solutions_inspect``'s minify
+  transform also calls; the monitor reads the minified text as is.
+- ``paraphrase``: ``utils.summarize_code``, which ``transform_solutions_inspect``'s
+  summarizer also calls; comments are stripped before the summarizer sees the code.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from lasr_labs_2025_control_project.utils.utils import (
     apply_python_code_format,
     minify_code,
     remove_comments,
+    summarize_code,
 )
 
 from .core import AppsProblem
@@ -72,26 +73,17 @@ class MonitorViewChannel:
         return await self._paraphrase(code)
 
     async def _paraphrase(self, code: str) -> str:
-        from inspect_ai.model import (
-            ChatMessageSystem,
-            ChatMessageUser,
-            GenerateConfig,
-            get_model,
-        )
+        from inspect_ai.model import GenerateConfig, get_model
 
         from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401
 
         assert self.paraphrase_system_prompt and self.paraphrase_base_prompt
-        model = get_model(self.paraphrase_model)
-        solution = _strip_comments(code) if self.remove_comments else code
-        output = await model.generate(
-            [
-                ChatMessageSystem(content=self.paraphrase_system_prompt),
-                ChatMessageUser(
-                    content=self.paraphrase_base_prompt.format(solution=solution)
-                ),
-            ],
-            config=GenerateConfig(reasoning_effort="minimal"),
+        output = await summarize_code(
+            get_model(self.paraphrase_model),
+            self.paraphrase_system_prompt,
+            self.paraphrase_base_prompt,
+            _strip_comments(code) if self.remove_comments else code,
+            GenerateConfig(reasoning_effort="minimal"),
         )
         if not output.completion.strip():
             raise ValueError("paraphraser returned an empty completion")

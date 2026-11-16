@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from inspect_ai.log import read_eval_log
+from inspect_ai.model import (
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateConfig,
+    Model,
+    ModelOutput,
+)
 
 from lasr_labs_2025_control_project.utils.basharena_views import (
     ACTION_VIEW,
@@ -49,6 +56,26 @@ def minify_code(code: str) -> str:
         remove_debug=True,
         remove_explicit_return_none=True,
         constant_folding=True,
+    )
+
+
+async def summarize_code(
+    model: Model,
+    system_prompt: str,
+    base_prompt: str,
+    code: str,
+    config: GenerateConfig | None = None,
+) -> ModelOutput:
+    """The paraphrase call; ``base_prompt`` has a ``{solution}`` placeholder.
+
+    The pipeline's transform stage and the RL monitor-view channel both call this.
+    """
+    return await model.generate(
+        [
+            ChatMessageSystem(content=system_prompt),
+            ChatMessageUser(content=base_prompt.format(solution=code)),
+        ],
+        config=config or GenerateConfig(),
     )
 
 
