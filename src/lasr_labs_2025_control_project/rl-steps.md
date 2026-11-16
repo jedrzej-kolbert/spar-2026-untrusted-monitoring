@@ -26,8 +26,8 @@ Only attacks that pass the tests **and** have a working backdoor are used. On th
 ## Example config
 
 Save this as a file (for example `rl_config.yaml`) and point `data.attacks_eval` /
-`data.honeypots_eval` at your logs. It is the first pilot (`rewrite_signal`, U =
-DeepSeek-V3.1); W&B project and entity come from `WANDB_PROJECT` / `WANDB_ENTITY`,
+`data.honeypots_eval` at your logs. It is a `rewrite_signal` run with U =
+DeepSeek-V4.1-Flash; W&B project and entity come from `WANDB_PROJECT` / `WANDB_ENTITY`,
 or from an optional `logging:` block (`wandb_project`, `wandb_entity`, `wandb_mode`).
 The tests load this block, so it stays valid.
 
@@ -39,8 +39,8 @@ task_mode: rewrite_signal  # honest_signal / attack_signal: not wired into the d
 seed: 0
 
 models:
-  sender: deepseek-ai/DeepSeek-V3.1             # raw Tinker id (trainable LoRA)
-  receiver: tinker/deepseek-ai/DeepSeek-V3.1    # frozen untrusted monitor
+  sender: deepseek-ai/DeepSeek-V4.1-Flash:peft:262144           # raw Tinker id (trainable LoRA)
+  receiver: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144  # frozen untrusted monitor
   overseer: tinker/Qwen/Qwen3.5-4B              # frozen trusted monitor (signal detector)
   backdoor_monitor: tinker/Qwen/Qwen3.5-4B      # only used if backdoor_suspicion_weight > 0
 

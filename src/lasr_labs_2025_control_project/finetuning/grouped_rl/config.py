@@ -19,9 +19,9 @@ class _Strict(BaseModel):
 
 class ModelsConfig(_Strict):
     # Raw Tinker base-model id for the trainable sender (no tinker/ prefix).
-    sender: str = "deepseek-ai/DeepSeek-V3.1"
+    sender: str = "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
     # tinker/<base model> or a tinker:// checkpoint; frozen unless train_receiver.
-    receiver: str = "tinker/deepseek-ai/DeepSeek-V3.1"
+    receiver: str = "tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
     overseer: str | None = "tinker/Qwen/Qwen3.5-4B"
     backdoor_monitor: str | None = "tinker/Qwen/Qwen3.5-4B"
 
@@ -161,7 +161,7 @@ class IcrlConfig(_Strict):
     episodes: int = Field(default=20, ge=1)  # strategies tried, one per episode
     n_result_examples: int = Field(default=3, ge=0)  # HiPT's diagnostic examples
     search_problems: int = Field(default=32, ge=1)  # training problems per strategy
-    learner: str = "deepseek-ai/DeepSeek-V3.1"  # Tinker base model, sampled only
+    learner: str = "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"  # sampled only
     learner_max_tokens: int = Field(default=4096, ge=1)
     learner_temperature: float = Field(default=1.0, gt=0)
     # A SearchState file to continue from; episodes then counts the earlier ones too.

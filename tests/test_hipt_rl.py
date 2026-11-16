@@ -695,7 +695,7 @@ def test_pilot_config_loads_and_prompts_resolve() -> None:
     from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 
     config = pilot_config()
-    assert config.models.sender == "deepseek-ai/DeepSeek-V3.1"
+    assert config.models.sender == "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
     for name in config.prompts.model_dump().values():
         assert get_prompt_by_name(name)
 
@@ -971,7 +971,7 @@ def test_self_recognition_loader_keeps_training_and_validation_negatives_separat
     assert [p.problem_id for p in train2] == [p.problem_id for p in train[1:]]
     assert validation2 == validation
     negatives[:] = full
-    negatives[0] = replace(negatives[0], model="deepseek-ai/DeepSeek-V3.1")
+    negatives[0] = replace(negatives[0], model=self_rec_config().models.sender)
     with pytest.raises(ValueError, match="different model"):
         run.load_tasks(self_rec_config())
 
