@@ -792,7 +792,8 @@ class GroupedRLTrainer:
         # These rewards ignore the trusted monitor: score evaluations only.
         if self.backdoor_monitor is not None and not (
             training
-            and self.config.reward.reward_fn in ("additive", "recognition_only")
+            and self.config.reward.reward_fn
+            in ("additive", "recognition_only", "gated_log_odds")
         ):
             try:
                 view = rollout.receiver_code or rollout.code
