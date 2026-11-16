@@ -110,6 +110,11 @@ class TrainingConfig(_Strict):
     # Receiver SFT step size; None uses learning_rate. Our self-recognition SFT
     # runs use 1e-4.
     receiver_learning_rate: float | None = Field(default=None, gt=0)
+    # HiPT alternates n_r receiver and n_s sender updates (2 and 5 in its CV runs):
+    # buffer receiver examples for receiver_every sender steps, then take
+    # receiver_updates optimizer steps on disjoint chunks of that buffer.
+    receiver_every: int = Field(default=1, ge=1)
+    receiver_updates: int = Field(default=1, ge=1)
     # Request-level token-cost cap, reserving maximum outputs before dispatch.
     # Published-rate estimate, not an invoice cap; None disables the cap.
     max_cost_usd: float | None = Field(default=None, gt=0)

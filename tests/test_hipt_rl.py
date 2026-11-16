@@ -1059,6 +1059,28 @@ async def test_self_recognition_balances_origin_labels() -> None:
     assert result.receiver_examples == examples
 
 
+async def test_receiver_schedule_buffers_steps_then_splits_updates() -> None:
+    from dataclasses import replace
+
+    trainer = self_rec_trainer()
+    trainer.config = replace(trainer.config, receiver_every=3, receiver_updates=2)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    problem = attack_problem()
+    honeypots = [(problem, "# other model\nprint(7)")]
+    for step in range(3):
+        result = await trainer.train_step([problem], honeypots=honeypots)
+        assert len(result.receiver_examples) == 4  # this step's 2 YES + 2 NO
+        assert bool(result.receiver_updated) == (step == 2)
+    chunks = trainer.receiver.updates
+    assert [len(chunk) for chunk in chunks] == [6, 6]  # 12 buffered examples, split
+    assert sum(e.payload for chunk in chunks for e in chunk) == 6
+    assert result.receiver_trained_on == 12
+    assert result.receiver_stats is not None
+    assert result.receiver_stats.metrics["loss:sum"] == 2.0  # summed over updates
+    await trainer.train_step([problem], honeypots=honeypots)
+    assert len(trainer.receiver.updates) == 2  # next update only after 3 more steps
+
+
 @pytest.mark.parametrize(
     "bad_pairs", [[], [(attack_problem(split="validation"), "print(7)")]]
 )

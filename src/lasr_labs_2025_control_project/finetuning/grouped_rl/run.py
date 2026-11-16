@@ -773,6 +773,8 @@ def core_config(
             backdoor_kept_weight=reward.backdoor_kept_weight,
         ),
         train_receiver=training.train_receiver,
+        receiver_every=training.receiver_every,
+        receiver_updates=training.receiver_updates,
         self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
         trusted_reads_original=True,  # as in the game: comment-stripped code, not the jammed view
@@ -1608,7 +1610,7 @@ async def train(
                 if "loss:sum" in result.receiver_stats.metrics:
                     metrics["receiver_loss_per_example"] = (
                         result.receiver_stats.metrics["loss:sum"]
-                        / len(result.receiver_examples)
+                        / result.receiver_trained_on
                     )
             recorder.scalars(step, "train_legacy", metrics)  # metrics.jsonl only
             if config.task_mode == "rewrite_signal":

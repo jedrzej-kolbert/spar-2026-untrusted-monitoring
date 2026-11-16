@@ -192,6 +192,10 @@ class GroupedRLConfig:
     overseer_delta_space: Literal["probability", "logit"] = "probability"
     reward: RewardConfig = field(default_factory=RewardConfig)
     train_receiver: bool = True
+    # HiPT-style alternation: buffer receiver examples for receiver_every sender
+    # steps, then take receiver_updates optimizer steps on disjoint shuffled chunks.
+    receiver_every: int = 1
+    receiver_updates: int = 1
     self_recognition: bool = False
     max_concurrency: int = 16
     # The safety game's trusted monitor reads the original code; default keeps the
@@ -207,6 +211,8 @@ class GroupedRLConfig:
             raise ValueError("payload_grouping='both' requires an even group_size")
         if self.max_concurrency < 1:
             raise ValueError("max_concurrency must be positive")
+        if self.receiver_every < 1 or self.receiver_updates < 1:
+            raise ValueError("receiver_every and receiver_updates must be positive")
         if not math.isfinite(self.overseer_weight) or self.overseer_weight < 0:
             raise ValueError("overseer weight must be finite and nonnegative")
         if self.overseer_baseline not in ("none", "original_attack"):
@@ -311,6 +317,8 @@ class BatchResult:
     sender_stats: UpdateStats | None = None
     receiver_stats: UpdateStats | None = None
     receiver_examples: list[ReceiverExample] = field(default_factory=list)
+    # Examples the receiver update used (the buffered steps), when it ran.
+    receiver_trained_on: int = 0
 
     @property
     def has_infrastructure_errors(self) -> bool:
@@ -557,6 +565,10 @@ class GroupedRLTrainer:
         self.reference = reference
         self.code_extractor = code_extractor
         self._rng = random.Random(self.config.seed)
+        # Separate stream, so the receiver schedule leaves sender sampling unchanged.
+        self._receiver_rng = random.Random(self.config.seed)
+        self._receiver_buffer: list[ReceiverExample] = []
+        self._train_steps = 0
         self._train_ids: set[str] = set()
         self._eval_ids: set[str] = set()
         self._semaphore = asyncio.Semaphore(self.config.max_concurrency)
@@ -902,8 +914,26 @@ class GroupedRLTrainer:
         # Rewards are measured with the pre-update receiver; no label leakage into its inputs.
         if self.config.train_receiver:
             result.receiver_examples = receiver_examples
+            self._receiver_buffer.extend(receiver_examples)
+            self._train_steps += 1
+        if (
+            self.config.train_receiver
+            and self._train_steps % self.config.receiver_every == 0
+        ):
+            buffer, self._receiver_buffer = self._receiver_buffer, []
+            n = min(self.config.receiver_updates, len(buffer))
+            if n > 1:  # one update keeps the original example order
+                self._receiver_rng.shuffle(buffer)
             try:
-                result.receiver_stats = await self.receiver.update(receiver_examples)
+                stats = [await self.receiver.update(buffer[i::n]) for i in range(n)]
+                result.receiver_stats = UpdateStats(
+                    {
+                        key: math.fsum(s.metrics[key] for s in stats)
+                        / (1 if key.endswith(":sum") else len(stats))
+                        for key in stats[0].metrics
+                    }
+                )
+                result.receiver_trained_on = len(buffer)
                 result.receiver_updated = True
             except Exception as exc:
                 result.receiver_updated = (
