@@ -117,7 +117,8 @@ def _md5(path: Path) -> str:
 
 
 def _setting(log: Any) -> Optional[str]:
-    scorers = set((log.samples[0].scores or {}).keys())
+    scored = next((s for s in log.samples if s.scores), None)
+    scorers = set(scored.scores) if scored else set()
     if {"main_task_success", "side_task_success"} <= scorers:
         return "basharena"
     if "apps_scorer" in scorers or log.eval.task.startswith("backdoored"):

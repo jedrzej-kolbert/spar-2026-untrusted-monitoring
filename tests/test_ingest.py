@@ -2,6 +2,7 @@
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -225,3 +226,15 @@ def test_pipeline_run_folders_relog_their_steps(tmp_path: Path, capsys: Any) -> 
     shutil.rmtree(exp / "apps" / "generate")
     ingest.main([str(run_dir)])
     assert "no finished output" in capsys.readouterr().out
+
+
+def test_setting_skips_samples_without_scores() -> None:
+    scored = {
+        "main_task_success": Score(value=0.5),
+        "side_task_success": Score(value="C"),
+    }
+    log = SimpleNamespace(
+        samples=[SimpleNamespace(scores={}), SimpleNamespace(scores=scored)],
+        eval=SimpleNamespace(task="bash_arena"),
+    )  # e.g. a BashArena log whose first sample timed out
+    assert ingest._setting(log) == "basharena"
