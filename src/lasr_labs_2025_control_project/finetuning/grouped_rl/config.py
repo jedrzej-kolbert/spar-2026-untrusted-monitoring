@@ -304,6 +304,12 @@ class RLRunConfig(_Strict):
             "seed": self.seed,
             "kind": self.kind,
         }
+        if self.training.train_receiver and not centralized:
+            # e.g. "5x2": receiver_updates receiver steps every receiver_every sender steps.
+            training = self.training
+            identity["receiver_schedule"] = (
+                f"{training.receiver_every}x{training.receiver_updates}"
+            )
         if self.task_mode == "rewrite_signal":
             # The sender hides a signal the receiver was told about: causal collusion.
             settings = self.reward

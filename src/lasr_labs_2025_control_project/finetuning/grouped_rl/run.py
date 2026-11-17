@@ -450,6 +450,7 @@ class Recorder:
                     "problem_id": example.problem.problem_id,
                     "code": example.code,
                     "label": "YES" if example.payload else "NO",
+                    "weight": example.weight,
                 },
             )
 
@@ -1594,7 +1595,7 @@ async def train(
                 e.payload == 1 for e in result.receiver_examples
             )
             metrics["receiver_negative_examples"] = sum(
-                e.payload == 0 for e in result.receiver_examples
+                e.weight for e in result.receiver_examples if e.payload == 0
             )
             if result.sender_stats:
                 metrics.update(

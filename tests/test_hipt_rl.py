@@ -1043,7 +1043,12 @@ async def test_self_recognition_balances_origin_labels() -> None:
     )  # backdoor preservation differs across the two rewrites
     assert result.receiver_updated
     examples = trainer.receiver.updates[0]
-    assert [example.payload for example in examples] == [1, 0, 1, 0]
+    # One honeypot per problem, weighted as many times as there are rewrites.
+    assert [(example.payload, example.weight) for example in examples] == [
+        (1, 1.0),
+        (1, 1.0),
+        (0, 2),
+    ]
     expected_negative = await trainer.channel.transform(
         problem, "# other model\nprint(7)"
     )
@@ -1069,12 +1074,12 @@ async def test_receiver_schedule_buffers_steps_then_splits_updates() -> None:
     honeypots = [(problem, "# other model\nprint(7)")]
     for step in range(3):
         result = await trainer.train_step([problem], honeypots=honeypots)
-        assert len(result.receiver_examples) == 4  # this step's 2 YES + 2 NO
+        assert len(result.receiver_examples) == 3  # 2 YES + 1 NO of weight 2
         assert bool(result.receiver_updated) == (step == 2)
     chunks = trainer.receiver.updates
-    assert [len(chunk) for chunk in chunks] == [6, 6]  # 12 buffered examples, split
+    assert [len(chunk) for chunk in chunks] == [5, 4]  # 9 buffered examples, split
     assert sum(e.payload for chunk in chunks for e in chunk) == 6
-    assert result.receiver_trained_on == 12
+    assert result.receiver_trained_on == 12  # total weight: 6 YES + 3 NO x 2
     assert result.receiver_stats is not None
     assert result.receiver_stats.metrics["loss:sum"] == 2.0  # summed over updates
     await trainer.train_step([problem], honeypots=honeypots)
@@ -1389,7 +1394,11 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
         json.loads(line)
         for line in (tmp_path / "receiver_examples.jsonl").read_text().splitlines()
     ]
-    assert [row["label"] for row in rows] == ["YES", "NO", "YES", "NO"]
+    assert [(row["label"], row["weight"]) for row in rows] == [
+        ("YES", 1.0),
+        ("YES", 1.0),
+        ("NO", 2),
+    ]
     assert {row["problem_id"] for row in rows} == {train_problem.problem_id}
     # Every metric is in metrics.jsonl; the old GBRL set is train_legacy, never on W&B.
     detail = next(
@@ -1435,6 +1444,8 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     # The run is a pipeline-style stage run: job type, filter tags, split artifact.
     assert wb.stage.stage == "gbrl"
     assert "judge:trained" in wb.stage.kwargs["tags"]
+    assert "receiver_schedule:1x1" in wb.stage.kwargs["tags"]
+    assert wb.stage.kwargs["config"]["training"]["receiver_every"] == 1
     assert wb.stage.kwargs["config"]["run"]["kind"] == "smoke"
     assert ("split.json", "split") in wb.artifacts
     assert wb.summary["complete"] is True

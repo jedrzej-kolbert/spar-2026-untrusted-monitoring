@@ -104,6 +104,8 @@ class ReceiverExample:
     problem: AppsProblem
     code: str
     payload: int
+    # Loss weight: one honeypot stands in for as many copies as the problem has rewrites.
+    weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -318,7 +320,7 @@ class BatchResult:
     receiver_stats: UpdateStats | None = None
     receiver_examples: list[ReceiverExample] = field(default_factory=list)
     # Examples the receiver update used (the buffered steps), when it ran.
-    receiver_trained_on: int = 0
+    receiver_trained_on: float = 0.0
 
     @property
     def has_infrastructure_errors(self) -> bool:
@@ -907,10 +909,12 @@ class GroupedRLTrainer:
                         rollout.payload,
                     )
                 )
-                if negative_views:
-                    receiver_examples.append(
-                        ReceiverExample(problem, negative_views[problem.problem_id], 0)
+            if negative_views:
+                receiver_examples.append(
+                    ReceiverExample(
+                        problem, negative_views[problem.problem_id], 0, len(group)
                     )
+                )
         # Rewards are measured with the pre-update receiver; no label leakage into its inputs.
         if self.config.train_receiver:
             result.receiver_examples = receiver_examples
@@ -933,7 +937,7 @@ class GroupedRLTrainer:
                         for key in stats[0].metrics
                     }
                 )
-                result.receiver_trained_on = len(buffer)
+                result.receiver_trained_on = math.fsum(e.weight for e in buffer)
                 result.receiver_updated = True
             except Exception as exc:
                 result.receiver_updated = (

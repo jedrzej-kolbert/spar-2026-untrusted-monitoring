@@ -358,6 +358,7 @@ def test_policy_and_sft_alignment() -> None:
         "target_tokens": [2, 3, 4, 5],
         "weights": [0, 0, 1, 1],
     }
+    assert supervised_inputs([1, 2, 3], [4, 5], 8.0)["weights"] == [0, 0, 8, 8]
 
 
 class FakeFuture:

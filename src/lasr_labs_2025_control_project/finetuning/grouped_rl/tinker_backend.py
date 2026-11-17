@@ -148,14 +148,14 @@ def policy_inputs(
 
 
 def supervised_inputs(
-    prompt: list[int], answer: list[int]
+    prompt: list[int], answer: list[int], weight: float = 1.0
 ) -> dict[str, list[int] | list[float]]:
     if not prompt or not answer:
         raise ValueError("supervised examples require prompt and answer tokens")
     full = prompt + answer
     return {
         "target_tokens": full[1:],
-        "weights": [0.0] * (len(prompt) - 1) + [1.0] * len(answer),
+        "weights": [0.0] * (len(prompt) - 1) + [weight] * len(answer),
     }
 
 
@@ -508,7 +508,9 @@ class TinkerReceiver(_TinkerRole):
             data.append(
                 types.Datum(
                     model_input=types.ModelInput.from_ints(full[:-1]),
-                    loss_fn_inputs=_tensor_inputs(supervised_inputs(prompt, answer)),
+                    loss_fn_inputs=_tensor_inputs(
+                        supervised_inputs(prompt, answer, example.weight)
+                    ),
                 )
             )
         return await self._update(data, "cross_entropy")
