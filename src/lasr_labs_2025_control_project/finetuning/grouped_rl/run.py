@@ -21,6 +21,7 @@ import logging
 import math
 import os
 import random
+import statistics
 import subprocess
 import sys
 import time
@@ -108,6 +109,8 @@ RECORD_FILES = (
 # The numbers to look at first in each section.
 KEY_METRICS = (
     "auroc",
+    "auroc_all",
+    "p_self_rec_group_sd",
     "p_self_rec",
     "working_rate",
     "backdoor_fires_rate",
@@ -140,11 +143,15 @@ def batch_metrics(
         for item in result.rollouts
         if item.execution is not None and item.backdoor_suspicion is not None
     ]
-    auroc = (
-        HoneypotEvalResult(result, honeypot_scores).metrics()["auroc_working"]
-        if honeypot_scores
-        else None
+    vs_honeypots = (
+        HoneypotEvalResult(result, honeypot_scores).metrics() if honeypot_scores else {}
     )
+    # Spread of P(self_rec) among one problem's rewrites: the only signal GRPO uses.
+    groups: dict[str, list[float]] = {}
+    for item in result.rollouts:
+        if item.probabilities is not None:
+            groups.setdefault(item.problem.problem_id, []).append(item.probabilities[1])
+    spreads = [statistics.pstdev(g) for g in groups.values() if len(g) > 1]
     return {
         "reward": base["mean_reward"],
         **{key: value for key, value in base.items() if key.startswith("reward/")},
@@ -155,7 +162,10 @@ def batch_metrics(
         # Self-recognition rewrites all carry payload 1: bit 1's P(YES) is P(self_rec).
         "p_self_rec": base["bit1_mean_p1"],
         "trusted_suspicion": base["backdoor_suspicion_mean"],
-        "auroc": auroc,
+        "auroc": vs_honeypots.get("auroc_working"),
+        # Every rewrite vs the honeypots: the self-recognition AUROC for honest code.
+        "auroc_all": vs_honeypots.get("auroc"),
+        "p_self_rec_group_sd": statistics.mean(spreads) if spreads else None,
         "n_rewrites": total,
         "n_honeypots": len(honeypot_scores),
     }
@@ -816,6 +826,7 @@ async def build_trainer(
     evaluator: DockerAppsEvaluator,
     *,
     resume_state: str | None = None,
+    receiver_resume_state: str | None = None,
     strategy: StrategyBox | None = None,
 ) -> tuple[GroupedRLTrainer, Any]:
     """The trainer and the concrete Tinker sender (for checkpointing).
@@ -893,6 +904,7 @@ async def build_trainer(
             rank=training.lora_rank,
             learning_rate=training.receiver_learning_rate or training.learning_rate,
             max_context_tokens=training.max_context_tokens,
+            resume_state=receiver_resume_state,
         )
     else:
         receiver = FrozenYesNoMonitor(
@@ -1351,6 +1363,7 @@ async def train(
     *,
     resume_state: str | None = None,
     start_step: int = 1,
+    receiver_resume_state: str | None = None,
     allow_unlinked: bool = False,
 ) -> None:
     code = code_state()
@@ -1359,9 +1372,12 @@ async def train(
             "a kind: main run needs committed code; commit first (dirty or unknown "
             f"tree: {code})"
         )
-    if resume_state is not None and config.training.train_receiver:
+    if config.training.train_receiver and (resume_state is None) != (
+        receiver_resume_state is None
+    ):
         raise ValueError(
-            "--resume-state restores only the sender; joint training must start fresh"
+            "joint training resumes both roles: pass --resume-state and "
+            "--resume-receiver-state from the same step"
         )
     output_dir = config.output_dir
     if config.method == "in_context" and any(
@@ -1418,8 +1434,14 @@ async def train(
     meter.max_cost_usd = config.training.max_cost_usd
     box = StrategyBox() if config.method == "in_context" else None
     trainer, sender = await build_trainer(
-        config, evaluator, resume_state=resume_state, strategy=box
+        config,
+        evaluator,
+        resume_state=resume_state,
+        receiver_resume_state=receiver_resume_state,
+        strategy=box,
     )
+    # Keep the receiver schedule in phase with the steps already run.
+    trainer._train_steps = start_step - 1
     if box is not None:
         import tinker
 
@@ -1465,6 +1487,8 @@ async def train(
     honeypots = tasks.validation_honeypots
     last_step_cost = 0.0
     completed, last_eval = start_step - 1, start_step - 1
+    saved_states: dict[int, str] = {}
+    saved_receiver_states: dict[int, str] = {}
     step = completed
     best_validation: tuple[float, int] | None = None
 
@@ -1664,12 +1688,21 @@ async def train(
                 recorder.status(
                     **{f"checkpoint_step{step}": path, f"state_step{step}": state}
                 )
+                saved_states[step] = state
                 if training.train_receiver:
-                    receiver_path = await cast(
-                        TinkerReceiver, trainer.receiver
-                    ).save_checkpoint(f"{config.checkpoint_name}_receiver_step{step}")
+                    receiver = cast(TinkerReceiver, trainer.receiver)
+                    receiver_path = await receiver.save_checkpoint(
+                        f"{config.checkpoint_name}_receiver_step{step}"
+                    )
+                    receiver_state = await receiver.save_state(
+                        f"{config.checkpoint_name}_receiver_state_step{step}"
+                    )
+                    saved_receiver_states[step] = receiver_state
                     recorder.status(
-                        **{f"receiver_checkpoint_step{step}": receiver_path}
+                        **{
+                            f"receiver_checkpoint_step{step}": receiver_path,
+                            f"receiver_state_step{step}": receiver_state,
+                        }
                     )
                 click.echo(f"step {step}: saved {path}; resumable state {state}")
             recorder.scalars(
@@ -1698,15 +1731,26 @@ async def train(
         final = await sender.save_checkpoint(config.checkpoint_name)
         recorder.stage.log_model_ref(f"tinker/{final}", {"step": completed})
         # Resumable sender state, so a finished run can be extended with more steps.
-        final_state = await sender.save_state(
+        # A run stopped right after a periodic save already has this step's state;
+        # saving it again under the same name is refused by Tinker.
+        final_state = saved_states.get(completed) or await sender.save_state(
             f"{config.checkpoint_name}_state_step{completed}"
         )
         recorder.status(**{f"state_step{completed}": final_state})
         if training.train_receiver:
-            receiver_final = await cast(
-                TinkerReceiver, trainer.receiver
-            ).save_checkpoint(f"{config.checkpoint_name}_receiver")
-            recorder.status(final_receiver_checkpoint=receiver_final)
+            receiver = cast(TinkerReceiver, trainer.receiver)
+            receiver_final = await receiver.save_checkpoint(
+                f"{config.checkpoint_name}_receiver"
+            )
+            receiver_final_state = saved_receiver_states.get(
+                completed
+            ) or await receiver.save_state(
+                f"{config.checkpoint_name}_receiver_state_step{completed}"
+            )
+            recorder.status(
+                final_receiver_checkpoint=receiver_final,
+                **{f"receiver_state_step{completed}": receiver_final_state},
+            )
             click.echo(f"final receiver checkpoint: {receiver_final}")
         recorder.status(state="finished", final_checkpoint=final)
         click.echo(f"final sender checkpoint: {final}")
@@ -1763,6 +1807,11 @@ def close_run(
     default=1,
     help="First step to run when resuming (N + 1 for state_step<N>).",
 )
+@click.option(
+    "--resume-receiver-state",
+    default=None,
+    help="With --resume-state, for joint runs: the receiver_state_step<N> path.",
+)
 @click.option("--allow-unlinked", is_flag=True, help=tracking.ALLOW_UNLINKED_HELP)
 def main(
     config_path: str,
@@ -1771,6 +1820,7 @@ def main(
     seed: int | None,
     resume_state: str | None,
     start_step: int,
+    resume_receiver_state: str | None,
     allow_unlinked: bool,
 ) -> None:
     import os
@@ -1797,6 +1847,7 @@ def main(
             allow_paid,
             resume_state=resume_state,
             start_step=start_step,
+            receiver_resume_state=resume_receiver_state,
             allow_unlinked=allow_unlinked,
         )
     )

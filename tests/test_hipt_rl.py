@@ -1349,6 +1349,7 @@ def driven_run(
         return "tinker://test/weights/" + name
 
     monkeypatch.setattr(trainer.sender, "save_state", save_state, raising=False)
+    monkeypatch.setattr(trainer.receiver, "save_state", save_state, raising=False)
 
     async def build(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
         return trainer, trainer.sender
@@ -1477,7 +1478,9 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
         wb.summary["final_receiver_checkpoint"] == status["final_receiver_checkpoint"]
     )
     assert wb.summary["final_checkpoint"] == status["final_checkpoint"]
-    with pytest.raises(ValueError, match="only the sender"):
+    # The receiver's optimizer state is saved with the sender's, so joint runs resume.
+    assert any(key.startswith("receiver_state_step") for key in status)
+    with pytest.raises(ValueError, match="resume-receiver-state"):
         await run.train(
             config, allow_paid=True, resume_state="tinker://test", start_step=2
         )

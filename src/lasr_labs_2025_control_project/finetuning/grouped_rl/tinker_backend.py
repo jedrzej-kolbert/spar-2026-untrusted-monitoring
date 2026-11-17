@@ -725,8 +725,12 @@ async def create_tinker_receiver(
     rank: int = 32,
     learning_rate: float = 1e-5,
     max_context_tokens: int = 32768,
+    resume_state: str | None = None,
 ) -> TinkerReceiver:
-    """Independent receiver adapter, using the APPS self-recognition YES/NO format."""
+    """Independent receiver adapter, using the APPS self-recognition YES/NO format.
+
+    ``resume_state`` is a receiver ``save_state`` path; weights and optimizer resume.
+    """
     if not allow_paid:
         raise PermissionError(
             "Tinker receiver creation disabled; require explicit run approval"
@@ -738,7 +742,11 @@ async def create_tinker_receiver(
     )
 
     service = tinker.ServiceClient()
-    if model.startswith("tinker://"):
+    if resume_state is not None:
+        client = await service.create_training_client_from_state_with_optimizer_async(
+            resume_state
+        )
+    elif model.startswith("tinker://"):
         client = await service.create_training_client_from_state_async(path=model)
     else:
         client = await service.create_lora_training_client_async(

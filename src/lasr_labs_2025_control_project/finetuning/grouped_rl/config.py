@@ -261,6 +261,16 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
+        save_every = self.checkpoints.save_every
+        if (
+            self.training.train_receiver
+            and save_every
+            and save_every % self.training.receiver_every
+        ):
+            # A checkpoint between receiver updates would lose the buffered examples.
+            raise ValueError(
+                "checkpoints.save_every must be a multiple of receiver_every"
+            )
         if self.method == "in_context":
             if self.task_mode != "self_recognition" or self.training.train_receiver:
                 raise ValueError(
