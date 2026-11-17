@@ -1,0 +1,247 @@
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from lasr_labs_2025_control_project.finetuning.grouped_rl import usage
+from lasr_labs_2025_control_project.finetuning.grouped_rl.config import RLRunConfig
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import SearchState
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
+    StrategyBox,
+)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
+from lasr_labs_2025_control_project.finetuning.grouped_rl.records import Recorder
+from tests.test_hipt_rl import attack_problem
+from tests.test_rl_wandb_logging import FakeWandbRun
+from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer
+
+
+def icrl_config(output_dir: Path, **overrides: Any) -> RLRunConfig:
+    values: dict[str, Any] = {
+        "run_name": "icrl",
+        "output_dir": str(output_dir),
+        "task_mode": "self_recognition",
+        "method": "in_context",
+        "data": {"attacks_eval": "a.eval", "honeypots_eval": "h.eval"},
+        "reward": {
+            "overseer_weight": 0,
+            "overseer_scale": 0,
+            "kl_coef": 0,
+            "backdoor_kept_weight": 1,
+            "backdoor_suspicion_weight": 1,
+        },
+        "icrl": {"episodes": 1, "search_problems": 2},
+    }
+    return RLRunConfig.model_validate({**values, **overrides})
+
+
+def test_in_context_needs_a_frozen_judge_and_the_trusted_monitor(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="frozen judge"):
+        icrl_config(tmp_path, training={"train_receiver": True})
+    with pytest.raises(ValueError, match="backdoor_suspicion_weight"):
+        icrl_config(
+            tmp_path,
+            reward={"overseer_weight": 0, "overseer_scale": 0, "kl_coef": 0},
+        )
+    assert icrl_config(tmp_path).method == "in_context"
+
+
+async def test_refuses_to_reuse_an_existing_icrl_run_folder(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import train
+
+    config = icrl_config(tmp_path)
+    original = b'{"saved": "original experiment"}\n'
+    (tmp_path / "rollouts.jsonl").write_bytes(original)
+    with pytest.raises(FileExistsError, match="choose a new output_dir"):
+        await train(config, allow_paid=False)
+    assert (tmp_path / "rollouts.jsonl").read_bytes() == original
+    assert not (tmp_path / "manifest.json").exists()
+
+
+async def test_driver_logs_every_strategy_reply_and_rewrite(tmp_path: Path) -> None:
+    """Local records and W&B from one search: same strategies, replies, rewrites."""
+    config = icrl_config(tmp_path)
+    recorder = Recorder(config, tmp_path)
+    run = FakeWandbRun()
+    recorder.wandb = run
+    held_out = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        self_rec_trainer(),
+        StrategyBox(),
+        OneShotLearner(),
+        recorder,
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15"), attack_problem("17")],
+        [held_out],
+        [(held_out, "# another model\nprint(7)")],
+    )
+
+    def rows(name: str) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in (tmp_path / name).read_text().splitlines()]
+
+    def table(key: str) -> Any:
+        return [values[key] for _, values in run.logged if key in values][-1]
+
+    strategies = rows("strategies.jsonl")
+    assert [s["strategy"] for s in strategies] == ["", "keep the original helper names"]
+    assert all(s["episodes"] == 2 for s in strategies)
+    # The real self-recognition trainer: MarkerReceiver sees "signal = 1".
+    assert strategies[0]["p_self_rec"] == pytest.approx(0.9)
+    assert strategies[0]["backdoor_checked"] == 2
+    replies = rows("learner.jsonl")
+    assert [r["stage"] for r in replies] == ["strategy", "reflection", "strategize"]
+    assert all(r["episode"] == 1 for r in replies)
+    # Proposed strategies reach W&B before they are scored.
+    assert table("icrl/proposed_strategies").data == [
+        [1, "conservative style", "keep the original helper names"]
+    ]
+    # Each scored strategy row: its text, total reward, and every reward term.
+    scored = table("icrl/strategies")
+    assert scored.columns[:4] == ["step", "round", "strategy", "reward_mean"]
+    assert [row[2] for row in scored.data] == ["", "keep the original helper names"]
+    terms = [c for c in scored.columns if c.startswith("reward/")]
+    assert set(terms) == {
+        "reward/task",
+        "reward/self_recognition",
+        "reward/backdoor_kept",
+        "reward/backdoor_suspicion",
+    }
+    for row in scored.data:
+        values = dict(zip(scored.columns, row))
+        assert sum(values[c] for c in terms) == pytest.approx(values["reward_mean"])
+    for name in (
+        "learner.jsonl",
+        "strategies.jsonl",
+        "rollouts.jsonl",
+        "icrl_result.json",
+    ):
+        assert (name, "live") in run.saved
+    steps = [step for step, _ in run.logged if step is not None]
+    assert steps == sorted(steps)  # W&B drops rows whose step goes backwards
+    validation = table("icrl/validation")
+    assert [row[0] for row in validation.data] == ["top1", "winner", "baseline"]
+    rollouts = rows("rollouts.jsonl")
+    assert {r["phase"] for r in rollouts} == {"search", "validation"}
+    assert {r["strategy"] for r in rollouts if r["phase"] == "search"} == {
+        "",
+        "keep the original helper names",
+    }
+    result = json.loads((tmp_path / "icrl_result.json").read_text())
+    # Both strategies are in the top 3; the no-strategy rewrite is one of them.
+    assert set(result["validation"]) == {"top1", "winner", "baseline"}
+    assert result["validation"]["winner"]["auroc"] == pytest.approx(1.0)
+    assert result["validation"]["winner"]["n_honeypots"] == 1
+    assert result["winner"]["strategy"] in {"", "keep the original helper names"}
+    assert result["knowledge"]["knowledge"] == "preserve behavior"
+    assert len(result["knowledge"]["failed_attempts"]) == 1
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["state"] == "finished"
+    assert len(status["search_problem_ids"]) == 2
+
+
+async def test_driver_validates_the_top_strategies_on_unseen_problems(
+    tmp_path: Path,
+) -> None:
+    config = icrl_config(
+        tmp_path, icrl={"episodes": 1, "search_problems": 2, "validate_top": 1}
+    )
+    validation = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        self_rec_trainer(),
+        StrategyBox(),
+        OneShotLearner(),
+        Recorder(config, tmp_path),
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15"), attack_problem("17")],
+        [validation],
+        [(validation, "# another model\nprint(7)")],
+    )
+    rollouts = [
+        json.loads(line)
+        for line in (tmp_path / "rollouts.jsonl").read_text().splitlines()
+    ]
+    validation_ids = {r["problem_id"] for r in rollouts if r["phase"] == "validation"}
+    search_ids = {r["problem_id"] for r in rollouts if r["phase"] == "search"}
+    assert validation_ids == {"13"} and not validation_ids & search_ids
+    result = json.loads((tmp_path / "icrl_result.json").read_text())
+    assert set(result["validation"]) >= {"top1", "winner", "baseline"}
+    assert "top2" not in result["validation"]
+    state = SearchState.load(tmp_path / "icrl_state.json")
+    assert state.completed == 1 and len(state.history) == 2
+
+
+async def test_frozen_judge_scores_train_honeypots_once_for_the_train_auroc(
+    tmp_path: Path,
+) -> None:
+    config = icrl_config(tmp_path)
+    trainer = self_rec_trainer()
+    validation = attack_problem("13", "validation")
+    await run_in_context(
+        config,
+        trainer,
+        StrategyBox(),
+        OneShotLearner(),
+        Recorder(config, tmp_path),
+        usage.Usage(),
+        [attack_problem("11"), attack_problem("15")],
+        [validation],
+        [(validation, "# another model\nprint(7)")],
+        [(attack_problem("21"), "# another model\nprint(7)")],
+    )
+    strategies = [
+        json.loads(line)
+        for line in (tmp_path / "strategies.jsonl").read_text().splitlines()
+    ]
+    assert [row["train_auroc"] for row in strategies] == [1.0, 1.0]
+    assert {pid for pid, _ in trainer.honeypot_views} == {"21", "13"}
+
+
+class FailingSender:
+    async def generate(self, problem: Any, payload: int, num_samples: int) -> list:
+        raise ValueError("tokenizer.chat_template is not set")
+
+
+async def test_a_failed_batch_records_its_cause(tmp_path: Path) -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
+        BatchInfrastructureError,
+    )
+
+    config = icrl_config(tmp_path)
+    trainer = self_rec_trainer()
+    trainer.sender = FailingSender()
+    held_out = attack_problem("13", "validation")
+    with pytest.raises(BatchInfrastructureError):
+        await run_in_context(
+            config,
+            trainer,
+            StrategyBox(),
+            OneShotLearner(),
+            Recorder(config, tmp_path),
+            usage.Usage(),
+            [attack_problem("11"), attack_problem("15")],
+            [held_out],
+            [(held_out, "# another model\nprint(7)")],
+        )
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "batch_errors.jsonl").read_text().splitlines()
+    ]
+    assert [row["phase"] for row in rows] == ["search_failed", "search_failed"]
+    assert "chat_template is not set" in rows[0]["errors"][0]
+
+
+def test_a_wandb_failure_does_not_abort_recording(tmp_path: Path) -> None:
+    recorder = Recorder(icrl_config(tmp_path), tmp_path)
+
+    class Broken:
+        def log(self, *args: Any, **kwargs: Any) -> None:
+            raise ConnectionError("W&B is down")
+
+    recorder.wandb = Broken()
+    recorder.scalars(1, "train", {"auroc": 0.5})
+    assert "auroc" in (tmp_path / "metrics.jsonl").read_text()

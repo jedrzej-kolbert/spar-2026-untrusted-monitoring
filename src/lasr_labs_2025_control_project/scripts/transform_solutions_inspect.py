@@ -8,12 +8,9 @@ transformed log can be monitored like the original. The pipeline
 import shutil
 from typing import Any, Optional
 
-import python_minifier
 from inspect_ai import Epochs, Task, eval, task
 from inspect_ai.model import (
     ChatMessageAssistant,
-    ChatMessageSystem,
-    ChatMessageUser,
     GenerateConfig,
     ModelOutput,
     get_model,
@@ -40,7 +37,9 @@ from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401  
 from lasr_labs_2025_control_project.utils.config_loader import TransformRunConfig
 from lasr_labs_2025_control_project.utils.utils import (
     is_python_solution,
+    minify_code,
     remove_comments,
+    summarize_code,
 )
 
 
@@ -54,21 +53,7 @@ def minify_solution() -> Solver:
             "State input must be a string, check your .eval file"
         )
         code = state.input.replace("```python\n", "").replace("```", "")
-        output = python_minifier.minify(
-            code,
-            remove_literal_statements=True,
-            hoist_literals=True,
-            combine_imports=True,
-            rename_locals=True,
-            rename_globals=True,
-            remove_annotations=True,
-            remove_object_base=True,
-            convert_posargs_to_args=True,
-            remove_asserts=True,
-            remove_debug=True,
-            remove_explicit_return_none=True,
-            constant_folding=True,
-        )
+        output = minify_code(code)
 
         response = ChatMessageAssistant(content=output)
         state.messages.append(response)
@@ -112,18 +97,12 @@ def summarize_solution(
             "State input must be a string, not list[ChatMessage], check your .eval file"
         )
         code = state.input
-        state.output = await model.generate(
-            [
-                ChatMessageSystem(content=model_info.system_prompt),
-                ChatMessageUser(
-                    content=model_info.base_prompt.format(
-                        solution=remove_comments(code)
-                        if remove_comments_from_solution
-                        else code
-                    )
-                ),
-            ],
-            config=config or GenerateConfig(),
+        state.output = await summarize_code(
+            model,
+            model_info.system_prompt,
+            model_info.base_prompt,
+            remove_comments(code) if remove_comments_from_solution else code,
+            config,
         )
 
         state.messages.append(state.output.message)

@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from inspect_ai.log import read_eval_log
+from inspect_ai.model import (
+    ChatMessageSystem,
+    ChatMessageUser,
+    GenerateConfig,
+    Model,
+    ModelOutput,
+)
 
 from lasr_labs_2025_control_project.utils.basharena_views import (
     ACTION_VIEW,
@@ -25,6 +32,51 @@ def apply_python_code_format(x: str) -> str:
     if not x.startswith("```python"):
         return f"```python\n{x}\n```"
     return x
+
+
+def minify_code(code: str) -> str:
+    """Minify Python code with the settings of the minification signal-jamming arm.
+
+    The pipeline's transform stage and the RL monitor-view channel both call this, so
+    training sees the code exactly as the evaluation does.
+    """
+    import python_minifier
+
+    return python_minifier.minify(
+        code,
+        remove_literal_statements=True,
+        hoist_literals=True,
+        combine_imports=True,
+        rename_locals=True,
+        rename_globals=True,
+        remove_annotations=True,
+        remove_object_base=True,
+        convert_posargs_to_args=True,
+        remove_asserts=True,
+        remove_debug=True,
+        remove_explicit_return_none=True,
+        constant_folding=True,
+    )
+
+
+async def summarize_code(
+    model: Model,
+    system_prompt: str,
+    base_prompt: str,
+    code: str,
+    config: GenerateConfig | None = None,
+) -> ModelOutput:
+    """The paraphrase call; ``base_prompt`` has a ``{solution}`` placeholder.
+
+    The pipeline's transform stage and the RL monitor-view channel both call this.
+    """
+    return await model.generate(
+        [
+            ChatMessageSystem(content=system_prompt),
+            ChatMessageUser(content=base_prompt.format(solution=code)),
+        ],
+        config=config or GenerateConfig(),
+    )
 
 
 def is_python_solution(setting_name: str | None) -> bool:

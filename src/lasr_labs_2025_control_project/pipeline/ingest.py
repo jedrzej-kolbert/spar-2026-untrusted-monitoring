@@ -352,6 +352,8 @@ def match_directory(graph: Graph, directory: Path, ctx: RunContext) -> Match:
     for node in graph.nodes:
         if node.stage not in EVAL_STAGES or node.external is not None:
             continue
+        if node.stage == "rewrite":
+            continue  # not importable; its descendants then aren't either
         source = (
             match.files.get(node.deps["input"].hash) if "input" in node.deps else None
         )

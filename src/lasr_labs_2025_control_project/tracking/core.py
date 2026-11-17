@@ -425,6 +425,28 @@ def find_pipeline_run(node_hash: str, key: Mapping[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def roc_chart(curves: Mapping[str, Sequence[tuple[float, float]]], title: str) -> Any:
+    """ROC curves from (fpr, tpr) points, as one W&B chart to log."""
+    import wandb
+    from wandb.plot import plot_table
+
+    rows: list[Any] = [
+        [label, float(fpr), float(tpr)]
+        for label, points in curves.items()
+        for fpr, tpr in sorted(points)
+    ]
+    return plot_table(
+        vega_spec_name="wandb/area-under-curve/v0",
+        data_table=wandb.Table(columns=["class", "fpr", "tpr"], data=rows),
+        fields={"x": "fpr", "y": "tpr", "class": "class"},
+        string_fields={
+            "title": title,
+            "x-axis-title": "False positive rate",
+            "y-axis-title": "True positive rate",
+        },
+    )
+
+
 class StageRun:
     """One W&B run for one stage invocation on one label (or one condition).
 
@@ -647,7 +669,11 @@ class StageRun:
         return logged
 
     def log_roc(
-        self, key: str, curves: Mapping[str, Sequence[tuple[float, float]]], title: str
+        self,
+        key: str,
+        curves: Mapping[str, Sequence[tuple[float, float]]],
+        title: str,
+        step: Optional[int] = None,
     ) -> None:
         """ROC curves as one W&B ROC chart, drawn from (fpr, tpr) points.
 
@@ -655,31 +681,8 @@ class StageRun:
         metric keeps one point per x value, which turns an empirical ROC's
         vertical steps into diagonals.
         """
-        if self.run is None:
-            return
-        import wandb
-        from wandb.plot import plot_table
-
-        rows: list[Any] = [
-            [label, float(fpr), float(tpr)]
-            for label, points in curves.items()
-            for fpr, tpr in sorted(points)
-        ]
-        table = wandb.Table(columns=["class", "fpr", "tpr"], data=rows)
-        self.run.log(
-            {
-                key: plot_table(
-                    vega_spec_name="wandb/area-under-curve/v0",
-                    data_table=table,
-                    fields={"x": "fpr", "y": "tpr", "class": "class"},
-                    string_fields={
-                        "title": title,
-                        "x-axis-title": "False positive rate",
-                        "y-axis-title": "True positive rate",
-                    },
-                )
-            }
-        )
+        if self.run is not None:
+            self.run.log({key: roc_chart(curves, title)}, step=step)
 
     def log_model_ref(
         self, model_id: str, metadata: Optional[Mapping[str, Any]] = None
