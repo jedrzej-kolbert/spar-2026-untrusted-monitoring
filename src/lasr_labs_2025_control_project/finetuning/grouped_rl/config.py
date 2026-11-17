@@ -114,6 +114,9 @@ class TrainingConfig(_Strict):
     # buffer receiver examples for receiver_every sender steps, then take
     # receiver_updates optimizer steps on disjoint chunks of that buffer.
     receiver_every: int = Field(default=1, ge=1)
+    # False freezes the sender: it still generates every step but is never updated,
+    # the receiver-only control for a joint run.
+    train_sender: bool = True
     receiver_updates: int = Field(default=1, ge=1)
     # Request-level token-cost cap, reserving maximum outputs before dispatch.
     # Published-rate estimate, not an invoice cap; None disables the cap.
@@ -310,6 +313,11 @@ class RLRunConfig(_Strict):
             identity["receiver_schedule"] = (
                 f"{training.receiver_every}x{training.receiver_updates}"
             )
+            # Receiver SFT keeps only train problems that have a honeypot (split.json
+            # lists the dropped ones).
+            identity["train_data"] = "paired"
+        if not self.training.train_sender:
+            identity["sender"] = "frozen"
         if self.task_mode == "rewrite_signal":
             # The sender hides a signal the receiver was told about: causal collusion.
             settings = self.reward

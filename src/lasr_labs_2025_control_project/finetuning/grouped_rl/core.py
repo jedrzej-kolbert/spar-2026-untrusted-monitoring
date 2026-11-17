@@ -194,6 +194,8 @@ class GroupedRLConfig:
     overseer_delta_space: Literal["probability", "logit"] = "probability"
     reward: RewardConfig = field(default_factory=RewardConfig)
     train_receiver: bool = True
+    # False: the sender only generates (a receiver-only SFT control); it is never updated.
+    train_sender: bool = True
     # HiPT-style alternation: buffer receiver examples for receiver_every sender
     # steps, then take receiver_updates optimizer steps on disjoint shuffled chunks.
     receiver_every: int = 1
@@ -947,7 +949,9 @@ class GroupedRLTrainer:
                     f"receiver update failed, state uncertain: {exc!r}"
                 )
                 raise BatchInfrastructureError(result) from exc
-        if any(example.advantage != 0 for example in sender_examples):
+        if self.config.train_sender and any(
+            example.advantage != 0 for example in sender_examples
+        ):
             try:
                 result.sender_stats = await self.sender.update(sender_examples)
                 result.sender_updated = True

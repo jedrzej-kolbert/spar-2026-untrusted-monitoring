@@ -776,6 +776,7 @@ def core_config(
         train_receiver=training.train_receiver,
         receiver_every=training.receiver_every,
         receiver_updates=training.receiver_updates,
+        train_sender=training.train_sender,
         self_recognition=config.task_mode == "self_recognition",
         max_concurrency=training.max_concurrency,
         trusted_reads_original=True,  # as in the game: comment-stripped code, not the jammed view

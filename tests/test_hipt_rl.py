@@ -1086,6 +1086,23 @@ async def test_receiver_schedule_buffers_steps_then_splits_updates() -> None:
     assert len(trainer.receiver.updates) == 2  # next update only after 3 more steps
 
 
+async def test_frozen_sender_generates_but_only_the_receiver_trains() -> None:
+    from dataclasses import replace
+
+    trainer = self_rec_trainer()
+    trainer.config = replace(trainer.config, train_sender=False)
+    assert isinstance(trainer.sender, EchoSender)
+    assert isinstance(trainer.receiver, LearningReceiver)
+    problem = attack_problem()
+    result = await trainer.train_step(
+        [problem], honeypots=[(problem, "# other model\nprint(7)")]
+    )
+    assert trainer.sender.requests == [("11", 1, 2)]
+    assert trainer.sender.updates == []
+    assert not result.sender_updated
+    assert result.receiver_updated
+
+
 @pytest.mark.parametrize(
     "bad_pairs", [[], [(attack_problem(split="validation"), "print(7)")]]
 )
@@ -1445,6 +1462,8 @@ async def test_self_recognition_driver_logs_both_updates_and_checkpoints(
     assert wb.stage.stage == "gbrl"
     assert "judge:trained" in wb.stage.kwargs["tags"]
     assert "receiver_schedule:1x1" in wb.stage.kwargs["tags"]
+    assert "train_data:paired" in wb.stage.kwargs["tags"]
+    assert not any(tag.startswith("sender:") for tag in wb.stage.kwargs["tags"])
     assert wb.stage.kwargs["config"]["training"]["receiver_every"] == 1
     assert wb.stage.kwargs["config"]["run"]["kind"] == "smoke"
     assert ("split.json", "split") in wb.artifacts
