@@ -368,7 +368,7 @@ async def train(
             "--resume-state restores only the sender; joint training must start fresh"
         )
     output_dir = config.output_dir
-    if config.method == "in_context" and any(
+    if config.in_context and any(
         (output_dir / name).exists()
         for name in ("rollouts.jsonl", "learner.jsonl", "icrl_result.json")
     ):
@@ -420,7 +420,7 @@ async def train(
 
     meter = usage.install()
     meter.max_cost_usd = config.training.max_cost_usd
-    box = StrategyBox() if config.method == "in_context" else None
+    box = StrategyBox() if config.in_context else None
     trainer, sender = await build_trainer(
         config, evaluator, resume_state=resume_state, strategy=box
     )

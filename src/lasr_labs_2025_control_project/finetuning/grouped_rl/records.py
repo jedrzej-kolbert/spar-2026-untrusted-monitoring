@@ -409,13 +409,15 @@ class Recorder:
         summary: RoundSummary,
         cost_usd: float,
         auroc: float | None = None,
+        **extra: Any,
     ) -> None:
-        """One learner-designed strategy and its measured scores (ICRL)."""
+        """One learner-designed strategy and its measured scores (ICRL or GEPA)."""
         row = {
             "step": step,
             **summary_row(summary),
             "train_auroc": auroc,
             "cost_usd": cost_usd,
+            **extra,  # GEPA: iteration, parent, dev score, front size
         }
         self._append("strategies.jsonl", row)
         self.sync_file("strategies.jsonl")

@@ -29,6 +29,7 @@ from .icrl import (
     run_icrl,
 )
 from .icrl_adapters import StrategyBox, TrainerTeam
+from .gepa_search import run_gepa
 from . import usage
 from lasr_labs_2025_control_project.prompts.rl_prompts import (
     RL_CENTRAL_JUDGE_SYSTEM_PROMPT,
@@ -113,10 +114,16 @@ async def run_in_context(
             round_auroc.append(metrics["auroc"])
             recorder.metrics(step, "train", metrics)
 
+    # GEPA scores candidates on the search problems (its valset) and reflects on
+    # minibatches of the remaining training problems (its trainset).
+    gepa = config.method == "gepa"
+    searched = {task.problem_id for task in search}
+    pool = [task for task in train_tasks if task.problem_id not in searched]
+    pool = pool if gepa else []
     team = TrainerTeam(
         trainer,
         box,
-        search_problems=search,
+        search_problems=search + pool,
         validation_problems=validation,
         honeypots=validation_honeypots,
         num_samples=config.eval.num_samples,
@@ -125,8 +132,10 @@ async def run_in_context(
         train_honeypots=train_honeypots if icrl.centralized else (),
     )
 
-    def on_summary(summary: RoundSummary) -> None:
-        recorder.strategy(step, summary, meter.cost_usd, auroc=round_auroc[-1])
+    def on_summary(summary: RoundSummary, extra: dict[str, Any] | None = None) -> None:
+        recorder.strategy(
+            step, summary, meter.cost_usd, auroc=round_auroc[-1], **(extra or {})
+        )
         click.echo(
             f"round {summary.round}: reward {summary.reward_mean:.3f}, "
             f"P(self_rec) {summary.p_self_mean:.3f}, working {summary.working_rate}, "
@@ -173,18 +182,36 @@ async def run_in_context(
         return rows[label]
 
     try:
-        history, _ = await run_icrl(
-            learner,
-            team,
-            episodes=icrl.episodes,
-            n_result_examples=icrl.n_result_examples,
-            knowledge=None if resume is not None else knowledge,
-            on_reply=recorder.learner_reply,
-            on_summary=on_summary,
-            resume=resume,
-            on_state=on_state,
-            prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
-        )
+        if gepa:
+            history = await run_gepa(
+                team,
+                learner,
+                dev=team.search_problems[: len(search)],
+                pool=team.search_problems[len(search) :],
+                centralized=icrl.centralized,
+                max_metric_calls=config.gepa.max_metric_calls,
+                reflection_minibatch_size=config.gepa.reflection_minibatch_size,
+                proposer=config.gepa.proposer,
+                candidate_selection=config.gepa.candidate_selection,
+                use_merge=config.gepa.use_merge,
+                seed=config.seed,
+                run_dir=config.output_dir / "gepa",
+                on_summary=on_summary,
+                on_reply=recorder.learner_reply,
+            )
+        else:
+            history, _ = await run_icrl(
+                learner,
+                team,
+                episodes=icrl.episodes,
+                n_result_examples=icrl.n_result_examples,
+                knowledge=None if resume is not None else knowledge,
+                on_reply=recorder.learner_reply,
+                on_summary=on_summary,
+                resume=resume,
+                on_state=on_state,
+                prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
+            )
         recorder.status(state="validation")
         # The centralized reward is paired; a rewrite whose problem has no
         # honeypot would otherwise count the judge's YES without its cost.

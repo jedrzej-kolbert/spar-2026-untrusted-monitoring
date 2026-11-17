@@ -174,14 +174,32 @@ class IcrlConfig(_Strict):
     centralized: bool = False
 
 
+class GepaConfig(_Strict):
+    """GEPA in place of the ICRL learner (method: gepa); see gepa_search.py.
+
+    The learner, centralized, search_problems (GEPA's valset) and validate_top
+    come from ``icrl``.
+    """
+
+    # 20 ICRL episodes x 32 search problems + the no-strategy round, in rollouts.
+    max_metric_calls: int = Field(default=672, ge=1)
+    reflection_minibatch_size: int = Field(default=4, ge=1)
+    # joint: one learner call rewrites encoder and decoder together;
+    # round_robin: GEPA's default reflection, one component per iteration.
+    proposer: Literal["joint", "round_robin"] = "joint"
+    candidate_selection: Literal["pareto", "current_best"] = "pareto"
+    use_merge: bool = False
+
+
 class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
     # W&B filter and tag. A main run refuses to start from uncommitted code.
     kind: Literal["smoke", "pilot", "main"] = "smoke"
     backend: Literal["tinker", "hf_gpu"] = "tinker"
-    method: Literal["gradient", "in_context"] = "gradient"
+    method: Literal["gradient", "in_context", "gepa"] = "gradient"
     icrl: IcrlConfig = Field(default_factory=IcrlConfig)
+    gepa: GepaConfig = Field(default_factory=GepaConfig)
     task_mode: Literal[
         "rewrite_signal", "self_recognition", "honest_signal", "attack_signal"
     ] = "rewrite_signal"
@@ -246,7 +264,7 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
-        if self.method == "in_context":
+        if self.in_context:
             if self.task_mode != "self_recognition" or self.training.train_receiver:
                 raise ValueError(
                     "in_context needs task_mode self_recognition and a frozen judge"
@@ -257,9 +275,11 @@ class RLRunConfig(_Strict):
                     "in_context needs reward.backdoor_suspicion_weight > 0"
                 )
         if self.icrl.centralized and (
-            self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
+            not self.in_context or reward.reward_fn != "valid_sigmoid"
         ):
-            raise ValueError("centralized needs method in_context and valid_sigmoid")
+            raise ValueError(
+                "centralized needs method in_context or gepa, and valid_sigmoid"
+            )
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(
@@ -274,6 +294,11 @@ class RLRunConfig(_Strict):
         return self
 
     @property
+    def in_context(self) -> bool:
+        """A prompt search (ICRL or GEPA): no weights change."""
+        return self.method in ("in_context", "gepa")
+
+    @property
     def identity(self) -> dict[str, str | int]:
         """What every run is filtered by in W&B; each also becomes a ``key:value`` tag."""
         centralized = self.icrl.centralized
@@ -285,7 +310,7 @@ class RLRunConfig(_Strict):
             judge = "sft" if self.models.receiver.startswith("tinker://") else "base"
         reward = "paired" if centralized else self.reward.reward_fn
         identity: dict[str, str | int] = {
-            "method": "icrl" if self.method == "in_context" else "gbrl",
+            "method": {"in_context": "icrl", "gepa": "gepa"}.get(self.method, "gbrl"),
             "judge": judge,
             "threat_model": "causal" if centralized else "self-recognition",
             "reward_id": f"{reward}-s{self.reward.suspicion_threshold:g}",

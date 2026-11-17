@@ -187,6 +187,36 @@ malformed strategy replies (upstream allows two attempts). This file,
 result also contains the learner's distilled knowledge. Earlier completed runs
 remain historical results of their original procedure.
 
+## GEPA search
+
+Set `method: gepa` in place of `in_context` to search with
+[GEPA](https://github.com/gepa-ai/gepa) instead of HiPT's sequential learner
+(`gepa_search.py`). Everything else is the ICRL run: the same `TrainerTeam` scoring,
+reward, learner model (`icrl.learner`), validation of the top `icrl.validate_top`
+strategies, records and W&B tables. The W&B `method:gepa` tag tells the runs apart.
+
+- Candidates are `{encoder}` (sender-only) or `{encoder, decoder}` (`icrl.centralized`),
+  both seeded empty, so candidate 0 is ICRL's no-strategy round.
+- A problem's score is its rollout reward. GEPA's valset, which builds its Pareto
+  front and gives each `icrl/strategies` row, is the `icrl.search_problems` ICRL
+  searches on. Its minibatches come from the other training problems (rollout
+  phase `minibatch`; these do not log `train/` metrics).
+- `gepa.proposer: joint` has one learner call rewrite encoder and decoder together, with
+  ICRL's system prompt and strategy fields. `round_robin` is GEPA's default reflection,
+  one component per iteration.
+- `gepa.max_metric_calls` counts rollouts. The default of 672 equals 20 ICRL
+  episodes x 32 problems + round 0. GEPA logs a failed proposal and carries on;
+  failed evaluations stop the run.
+
+```yaml
+method: gepa
+gepa:
+  max_metric_calls: 672
+  reflection_minibatch_size: 4
+  proposer: joint            # joint | round_robin
+  candidate_selection: pareto  # pareto | current_best
+```
+
 ## References
 
 - [HiPT, §3.3.1](https://arxiv.org/html/2410.03768v1): alternating sender RL and receiver SFT.
