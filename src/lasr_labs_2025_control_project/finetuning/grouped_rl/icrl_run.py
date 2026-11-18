@@ -193,6 +193,7 @@ async def run_in_context(
                 reflection_minibatch_size=config.gepa.reflection_minibatch_size,
                 proposer=config.gepa.proposer,
                 candidate_selection=config.gepa.candidate_selection,
+                frontier_type=config.gepa.frontier_type,
                 use_merge=config.gepa.use_merge,
                 seed=config.seed,
                 run_dir=config.output_dir / "gepa",

@@ -1,5 +1,7 @@
 import asyncio
 import json
+
+import pytest
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +37,18 @@ class StrategySender(EchoSender):
         return await super().generate(problem, payload, num_samples)
 
 
+@pytest.mark.parametrize("frontier_type", ["instance", "hybrid"])
 async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
-    tmp_path: Path,
+    tmp_path: Path, frontier_type: str
 ) -> None:
     config = icrl_config(
         tmp_path,
         method="gepa",
-        gepa={"max_metric_calls": 6, "reflection_minibatch_size": 1},
+        gepa={
+            "max_metric_calls": 6,
+            "reflection_minibatch_size": 1,
+            "frontier_type": frontier_type,
+        },
     )
     assert config.identity["method"] == "gepa"
     box = StrategyBox()
@@ -69,6 +76,9 @@ async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
     assert all(s["episodes"] == 2 for s in strategies)  # the two dev problems
     assert strategies[1]["parent"] == "0"
     assert strategies[1]["reward_mean"] > strategies[0]["reward_mean"]
+    # The marker makes the judge prefer the rewrite: signal appears, and stealth with it.
+    assert strategies[0]["signal"] < 0 and strategies[0]["stealth"] == 0
+    assert strategies[1]["signal"] > 0 and strategies[1]["stealth"] > 0
     assert rows("learner.jsonl")[0]["stage"] == "strategy"
     phases = {r["phase"] for r in rows("rollouts.jsonl")}
     assert {"search", "minibatch", "validation"} <= phases

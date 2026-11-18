@@ -215,6 +215,7 @@ gepa:
   reflection_minibatch_size: 4
   proposer: joint            # joint | round_robin
   candidate_selection: pareto  # pareto | current_best
+  frontier_type: instance    # hybrid: also keep the parents that lead mean signal or stealth
 ```
 
 ## References
