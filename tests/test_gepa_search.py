@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,10 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_adapters import (
 from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl_run import run_in_context
 from lasr_labs_2025_control_project.finetuning.grouped_rl.records import Recorder
 from tests.test_hipt_rl import EchoSender, attack_problem
-from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer
+from lasr_labs_2025_control_project.finetuning.grouped_rl.gepa_search import (
+    TeamAdapter,
+)
+from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer, team
 from tests.test_icrl_driver import icrl_config
 
 
@@ -70,3 +74,14 @@ async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
     assert {"search", "minibatch", "validation"} <= phases
     result = json.loads((tmp_path / "icrl_result.json").read_text())
     assert result["winner"]["strategy"] == "keep the original helper names"
+
+
+async def test_a_padded_minibatch_rolls_out_each_problem_once() -> None:
+    """GEPA repeats problems to fill an epoch's last minibatch."""
+    adapter = TeamAdapter(team(self_rec_trainer()), asyncio.get_running_loop(), set())
+    problem = adapter.team.search_problems[0]
+    batch = await asyncio.to_thread(
+        adapter.evaluate, [problem, problem], {"encoder": "x"}
+    )
+    assert batch.scores[0] == batch.scores[1]
+    assert [len(group) for group in batch.outputs] == [1, 1]

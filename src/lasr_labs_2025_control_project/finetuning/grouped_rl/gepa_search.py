@@ -82,11 +82,14 @@ class TeamAdapter:
     ) -> EvaluationBatch[list[Episode], list[Episode]]:
         key = (candidate["encoder"], candidate.get("decoder", ""))
         dev = batch[0].problem_id in self.dev_ids  # the two sets are disjoint
+        # GEPA pads an epoch's last minibatch with repeats; the trainer needs unique
+        # problems, so each is rolled out once and its score reused for the repeats.
+        unique = list({problem.problem_id: problem for problem in batch}.values())
         # "search" makes icrl_run log train/ metrics: only on the dev set, as ICRL.
         result = self.call(
             self.team._run(
                 key[0],
-                batch,
+                unique,
                 "search" if dev else "minibatch",
                 key[1],
                 self.team.train_honeypots,
