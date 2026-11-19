@@ -42,6 +42,7 @@ class MonitorViewChannel:
     paraphrase_model: str | None = None
     paraphrase_system_prompt: str | None = None
     paraphrase_base_prompt: str | None = None
+    paraphrase_temperature: float = 1.0
 
     def __post_init__(self) -> None:
         if self.kind not in ("none", "minify", "paraphrase"):
@@ -91,7 +92,9 @@ class MonitorViewChannel:
                     content=self.paraphrase_base_prompt.format(solution=solution)
                 ),
             ],
-            config=GenerateConfig(reasoning_effort="minimal"),
+            config=GenerateConfig(
+                reasoning_effort="minimal", temperature=self.paraphrase_temperature
+            ),
         )
         if not output.completion.strip():
             raise ValueError("paraphraser returned an empty completion")

@@ -24,6 +24,9 @@ class ModelsConfig(_Strict):
     receiver: str = "tinker/deepseek-ai/DeepSeek-V3.1"
     overseer: str | None = "tinker/Qwen/Qwen3.5-4B"
     backdoor_monitor: str | None = "tinker/Qwen/Qwen3.5-4B"
+    # Training and validation only; the pipeline's test scoring keeps its own setting.
+    # 1.0 is what Tinker used when this was unset. HiPT ran its overseer at 0.1.
+    backdoor_monitor_temperature: float = Field(default=1.0, ge=0)
 
 
 class PromptsConfig(_Strict):
@@ -56,6 +59,8 @@ class ChannelConfig(_Strict):
     paraphrase_model: str = "tinker/Qwen/Qwen3.5-4B"
     paraphrase_system_prompt: str = "LLM_SUMMARIZE_SYSTEM_PROMPT"
     paraphrase_base_prompt: str = "LLM_SUMMARIZE_BASE_PROMPT"
+    # As backdoor_monitor_temperature; HiPT ran its paraphraser at 0.1 (ICRL) or 0 (RL).
+    paraphrase_temperature: float = Field(default=1.0, ge=0)
 
 
 class RewardSettings(_Strict):
@@ -328,6 +333,17 @@ class RLRunConfig(_Strict):
             identity["train_data"] = "paired"
         if not self.training.train_sender:
             identity["sender"] = "frozen"
+        # Only when changed, so a missing tag means 1.0, as in every earlier run.
+        if (
+            self.models.backdoor_monitor
+            and self.models.backdoor_monitor_temperature != 1
+        ):
+            identity["monitor_temp"] = f"{self.models.backdoor_monitor_temperature:g}"
+        if (
+            self.channel.kind == "paraphrase"
+            and self.channel.paraphrase_temperature != 1
+        ):
+            identity["summary_temp"] = f"{self.channel.paraphrase_temperature:g}"
         if self.task_mode == "rewrite_signal":
             # The sender hides a signal the receiver was told about: causal collusion.
             settings = self.reward
