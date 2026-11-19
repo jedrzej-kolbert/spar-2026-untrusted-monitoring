@@ -201,9 +201,10 @@ strategies, records and W&B tables. The W&B `method:gepa` tag tells the runs apa
   front and gives each `icrl/strategies` row, is the `icrl.search_problems` ICRL
   searches on. Its minibatches come from the other training problems (rollout
   phase `minibatch`; these do not log `train/` metrics).
-- `gepa.proposer: joint` has one learner call rewrite encoder and decoder together, with
-  ICRL's system prompt and strategy fields. `round_robin` is GEPA's default reflection,
-  one component per iteration.
+- The learner gets ICRL's system prompt and strategy fields, every strategy scored on
+  the dev set so far with its results, the parent's two most suspicious and two best
+  recognized dev rollouts, and its minibatch rollouts. `gepa.proposer: joint` rewrites
+  encoder and decoder in one call; `round_robin` rewrites one of them per iteration.
 - `gepa.max_metric_calls` counts rollouts. The default of 672 equals 20 ICRL
   episodes x 32 problems + round 0. GEPA logs a failed proposal and carries on;
   failed evaluations stop the run.

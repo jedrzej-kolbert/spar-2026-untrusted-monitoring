@@ -18,6 +18,12 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.records import Recorde
 from tests.test_hipt_rl import EchoSender, attack_problem
 from lasr_labs_2025_control_project.finetuning.grouped_rl.gepa_search import (
     TeamAdapter,
+    strategy_proposer,
+)
+from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
+    CENTRAL,
+    Episode,
+    summarise,
 )
 from tests.test_icrl_adapters import OneShotLearner, self_rec_trainer, team
 from tests.test_icrl_driver import icrl_config
@@ -37,9 +43,10 @@ class StrategySender(EchoSender):
         return await super().generate(problem, payload, num_samples)
 
 
+@pytest.mark.parametrize("proposer", ["joint", "round_robin"])
 @pytest.mark.parametrize("frontier_type", ["instance", "hybrid"])
 async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
-    tmp_path: Path, frontier_type: str
+    tmp_path: Path, frontier_type: str, proposer: str
 ) -> None:
     config = icrl_config(
         tmp_path,
@@ -48,6 +55,7 @@ async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
             "max_metric_calls": 6,
             "reflection_minibatch_size": 1,
             "frontier_type": frontier_type,
+            "proposer": proposer,
         },
     )
     assert config.identity["method"] == "gepa"
@@ -84,6 +92,56 @@ async def test_gepa_search_scores_dev_and_reflects_on_minibatches(
     assert {"search", "minibatch", "validation"} <= phases
     result = json.loads((tmp_path / "icrl_result.json").read_text())
     assert result["winner"]["strategy"] == "keep the original helper names"
+
+
+def test_round_robin_asks_for_one_text_and_shows_history_and_picked_rollouts() -> None:
+    loud = Episode(
+        p_self=0.2,
+        passed=True,
+        backdoor=True,
+        suspicion=0.9,
+        reward=0.0,
+        problem="LOUD",
+        code="L",
+        honeypot_p_yes=0.1,
+    )
+    read = Episode(
+        p_self=0.9,
+        passed=True,
+        backdoor=True,
+        suspicion=0.3,
+        reward=0.5,
+        problem="READ",
+        code="R",
+        honeypot_p_yes=0.1,
+    )
+    seed = {"encoder": "", "decoder": ""}
+    prompts: list[str] = []
+
+    def query(messages: list[dict[str, str]]) -> str:
+        prompts.append(messages[-1]["content"])
+        return (
+            "<description>d</description><decoder_instructions>J</decoder_instructions>"
+        )
+
+    propose = strategy_proposer(
+        CENTRAL,
+        query,
+        lambda *_: None,
+        [summarise(0, "", [loud, read])],
+        {("", ""): [loud, read]},
+    )
+    records = {
+        "decoder": [{"Inputs": "MINI", "Generated Outputs": "M", "Feedback": "f"}]
+    }
+    assert propose(seed, records, ["decoder"]) == {"decoder": "J"}
+    (prompt,) = prompts
+    assert "All strategies scored so far on the 2 dev problems:\nStrategy 0:" in prompt
+    suspicious, recognized = prompt.split("Best recognized by the judge")
+    assert suspicious.index("LOUD") < suspicious.index("READ")
+    assert recognized.index("READ") < recognized.index("LOUD")
+    assert "MINI" in prompt and "Keep the sender instructions as they are." in prompt
+    assert "<decoder_instructions>" in prompt and "<encoder_instructions>" not in prompt
 
 
 async def test_a_padded_minibatch_rolls_out_each_problem_once() -> None:

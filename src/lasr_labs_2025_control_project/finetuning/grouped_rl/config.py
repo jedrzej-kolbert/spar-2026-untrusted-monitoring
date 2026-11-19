@@ -185,7 +185,7 @@ class GepaConfig(_Strict):
     max_metric_calls: int = Field(default=672, ge=1)
     reflection_minibatch_size: int = Field(default=4, ge=1)
     # joint: one learner call rewrites encoder and decoder together;
-    # round_robin: GEPA's default reflection, one component per iteration.
+    # round_robin: the same prompt, one component per iteration.
     proposer: Literal["joint", "round_robin"] = "joint"
     candidate_selection: Literal["pareto", "current_best"] = "pareto"
     # hybrid: a candidate also stays a parent if it leads the dev set's mean signal
