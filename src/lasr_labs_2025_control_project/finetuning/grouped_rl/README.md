@@ -135,6 +135,15 @@ samples are retained, but an incorrect sample count aborts the update. An update
 failure records the affected role's state as uncertain (`None`), because its
 optimizer may already have committed: **do not blindly retry the batch**.
 
+Two settings lower the sampling noise of the scorers in training and validation
+only: `models.backdoor_monitor_temperature` (trusted monitor) and
+`channel.paraphrase_temperature` (summarizer). Both default to 1.0, which Tinker
+used when they were unset, so earlier runs are unchanged. HiPT ran its API overseer
+and paraphraser at 0.1. Test scoring through the pipeline keeps
+`generation.temperature`, so a run trained at 0.1 is still tested at 1.0. W&B gets
+both values in the run config, and a `monitor_temp:` / `summary_temp:` tag when
+either is not 1.0.
+
 ## Execution and paid-run boundary
 
 The Docker executor never executes generated code on the host. Each selected test
