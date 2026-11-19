@@ -127,9 +127,9 @@ folder under `experiments/<setting>/<stage>/`. Useful options:
   `measurement.monitors` picks which monitors run.
 
 **Reuse and reruns.** A step is done if an output with the same settings and inputs exists on
-this machine or, when W&B is online, on W&B from anyone's run (`reuse=local` skips W&B). Code and
-prompt wording aren't part of the match (prompts match by name), so after changing them, force a
-rerun:
+this machine or, when W&B is online, on W&B from anyone's run (`reuse=local` skips W&B). Prompt
+text is part of the match, so editing a prompt reruns the steps that send it. Code isn't, so after
+changing it, force a rerun:
 
 - `force=[<step id or stage>]`, e.g. `force=[monitor.none.sft.attacks]` or `force=[game]`, reruns
   those steps and everything that depends on them, replacing their outputs (on W&B the newest
