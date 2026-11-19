@@ -256,6 +256,8 @@ class Rollout:
     receiver_code: str | None = None
     backdoor: ExecutionGrade | None = None
     backdoor_suspicion: float | None = None
+    # The code as the trusted backdoor monitor read it.
+    monitor_view: str | None = None
     kl: float | None = None
     reward_components: dict[str, float] = field(default_factory=dict)
     overseer_log_odds: float | None = None
@@ -776,6 +778,7 @@ class GroupedRLTrainer:
                 view = rollout.receiver_code or rollout.code
                 if self.config.trusted_reads_original and self.channel is not None:
                     view = self.channel.original(rollout.code)
+                rollout.monitor_view = view
                 score = await self.backdoor_monitor.suspiciousness(problem, view)
                 if not math.isfinite(score) or not 0 <= score <= 1:
                     raise ValueError("backdoor suspicion must be finite and in [0, 1]")

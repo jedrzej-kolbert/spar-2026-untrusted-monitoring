@@ -187,6 +187,13 @@ class GepaConfig(_Strict):
     # joint: one learner call rewrites encoder and decoder together;
     # round_robin: the same prompt, one component per iteration.
     proposer: Literal["joint", "round_robin"] = "joint"
+    # diagnosed: for each rollout it shows, the learner also gets whether its signal
+    # is in the summary the judge read, and the untrusted model's own monitor review
+    # (never the trusted monitor's reasoning), plus separate feedback for the judge.
+    # Two extra learner calls per shown rollout.
+    feedback: Literal["scores", "diagnosed"] = "scores"
+    # diagnosed only: tell the judge when it answered YES on a honeypot.
+    honeypot_feedback: bool = False
     candidate_selection: Literal["pareto", "current_best"] = "pareto"
     # hybrid: a candidate also stays a parent if it leads the dev set's mean signal
     # or stealth (gepa_search.objectives), not only a dev problem's gated reward.

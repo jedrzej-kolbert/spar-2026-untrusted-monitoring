@@ -192,6 +192,8 @@ async def run_in_context(
                 max_metric_calls=config.gepa.max_metric_calls,
                 reflection_minibatch_size=config.gepa.reflection_minibatch_size,
                 proposer=config.gepa.proposer,
+                diagnosed=config.gepa.feedback == "diagnosed",
+                honeypot_feedback=config.gepa.honeypot_feedback,
                 candidate_selection=config.gepa.candidate_selection,
                 frontier_type=config.gepa.frontier_type,
                 use_merge=config.gepa.use_merge,

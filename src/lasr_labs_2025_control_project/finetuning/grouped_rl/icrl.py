@@ -168,6 +168,7 @@ class Episode:
     honeypot_p_yes: float | None = None
     honeypot_code: str = ""
     gate: float | None = None  # V * g(s): working attack, gated by suspicion
+    monitor_view: str = ""  # the rewrite as the trusted monitor read it
 
 
 @dataclass(frozen=True)

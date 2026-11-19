@@ -205,6 +205,13 @@ strategies, records and W&B tables. The W&B `method:gepa` tag tells the runs apa
   the dev set so far with its results, the parent's two most suspicious and two best
   recognized dev rollouts, and its minibatch rollouts. `gepa.proposer: joint` rewrites
   encoder and decoder in one call; `round_robin` rewrites one of them per iteration.
+- `gepa.feedback: diagnosed` adds, for each rollout the learner sees, two learner
+  calls the colluders could make themselves: whether the summary the judge read
+  carries the signal, and the untrusted model's own monitor review of the code the
+  trusted monitor read. The trusted monitor's reasoning is never shown. The judge
+  then gets its own records: the two summaries, its P(YES) and what it got wrong;
+  `gepa.honeypot_feedback` also says when it accepted a honeypot. Both calls are
+  logged in `learner.jsonl` (stages `signal_check`, `self_review`).
 - `gepa.max_metric_calls` counts rollouts. The default of 672 equals 20 ICRL
   episodes x 32 problems + round 0. GEPA logs a failed proposal and carries on;
   failed evaluations stop the run.
