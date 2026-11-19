@@ -34,21 +34,12 @@ uv sync
 
 ## Usage
 
-### 1. Generate Solutions
+### 1. Solutions
 
-The solution generation script creates programming solutions from AI models using the APPS dataset.
+These baselines read solution JSON files (format below). The script that made them,
+`data_generation.py`, was removed: nothing had used it since 2025-10.
 
-#### Configuration
-
-Edit the script parameters at the top of the generation script:
-
-```python
-num_samples = 100  # Number of problems to solve
-model_provider = "anthropic"  # or "openai"
-model_name = "claude-3-5-haiku-20241022"  # Model identifier
-```
-
-#### Run Solution Generation
+#### Example runs
 
 Experiment Runs:
 o4-mini normal (correct solution is B):
@@ -71,15 +62,6 @@ claude-3-5-haiku normal (correct solution is A):
 inspect eval src/lasr_labs_2025_control_project/experiments/self_rec_eval.py@binary_self_rec --model anthropic/claude-3-5-haiku-20241022 --limit 100 -T file_path="data/merged/claude-3-5-haiku-20241022_o4-mini_code_formatted.json" -T reversed=False -T match_string="claude-3-5-haiku-20241022"
 ```
 
-
-```bash
-uv run src/lasr_labs_2025_control_project/experiments/utils/data_generation.py
-```
-
-This will:
-- Load the first 100 problems from the APPS dataset
-- Generate solutions using the specified model
-- Save results to `data/{model_name}/all_solutions.json`
 
 ### 2. Merge Solutions from Multiple Models
 
