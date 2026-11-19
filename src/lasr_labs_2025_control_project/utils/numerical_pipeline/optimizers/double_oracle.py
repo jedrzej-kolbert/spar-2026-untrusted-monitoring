@@ -352,6 +352,18 @@ def _clip_array_to_bounds(
     return clipped
 
 
+def _strictly_inside(
+    values: np.ndarray, bounds: List[Tuple[float, float]]
+) -> np.ndarray:
+    """``values`` moved a relative 1e-12 inside ``bounds``: differential_evolution rescales
+    x0 to [0, 1] and rejects a guess on a bound that rounds to -1e-16."""
+
+    lower = np.array([b[0] for b in bounds], dtype=float)
+    upper = np.array([b[1] for b in bounds], dtype=float)
+    margin = 1e-12 * (upper - lower)
+    return np.clip(values, lower + margin, upper - margin)
+
+
 def double_oracle(
     param_data: ParamConfig,
     function: ObjectiveFn,
@@ -533,7 +545,7 @@ def double_oracle(
         res_blue = differential_evolution(
             blue_objective,
             bounds=bounds_blue,
-            x0=blue_guess,
+            x0=_strictly_inside(blue_guess, bounds_blue),
             rng=rng,
             maxiter=40,
             popsize=10,
@@ -552,7 +564,7 @@ def double_oracle(
         res_red = differential_evolution(
             red_objective,
             bounds=bounds_red,
-            x0=red_guess,
+            x0=_strictly_inside(red_guess, bounds_red),
             rng=rng,
             maxiter=40,
             popsize=10,

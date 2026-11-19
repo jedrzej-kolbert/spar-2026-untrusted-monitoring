@@ -76,3 +76,17 @@ def test_best_responses_skip_only_exact_zero_weights(
         seed=7,
     )
     assert responses == [True, False]
+
+
+def test_initial_guess_on_a_bound_is_accepted_by_differential_evolution():
+    # The i2-t05-lt-s2 minified+paraphrased game: red's first guess sits on this lower
+    # bound, which scipy rescales to -1.1e-16 and rejects as outside the bounds.
+    from scipy.optimize import differential_evolution
+
+    bounds = [(-14.866125101756724, 3.9911250343067226), (1e-06, 0.1)]
+    guess = np.array([b[0] for b in bounds])
+    with pytest.raises(ValueError, match="outside the specified bounds"):
+        differential_evolution(lambda x: 0.0, bounds=bounds, x0=guess, maxiter=1)
+    inside = oracle._strictly_inside(guess, bounds)
+    differential_evolution(lambda x: 0.0, bounds=bounds, x0=inside, maxiter=1)
+    assert np.allclose(inside, guess, rtol=0, atol=1e-10)
