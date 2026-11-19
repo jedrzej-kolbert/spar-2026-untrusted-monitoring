@@ -1621,3 +1621,47 @@ def test_auroc_helper_and_on_off_metric() -> None:
         ],
     )
     assert batch.metrics()["on_off_auroc"] == pytest.approx(0.5)
+
+
+def test_scorer_temperatures_reach_the_calls_and_tag_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.run import build_channel
+    from lasr_labs_2025_control_project.scripts import monitor_solutions_inspect
+
+    base = {"run_name": "r", "output_dir": "o", "data": {"attacks_eval": "a"}}
+    default = RLRunConfig.model_validate(
+        {**base, "channel": {"kind": "paraphrase"}}
+    ).identity
+    assert "monitor_temp" not in default and "summary_temp" not in default
+    config = RLRunConfig.model_validate(
+        {
+            **base,
+            "models": {"backdoor_monitor_temperature": 0.1},
+            "channel": {"kind": "paraphrase", "paraphrase_temperature": 0},
+        }
+    )
+    assert config.identity["monitor_temp"] == "0.1"
+    assert config.identity["summary_temp"] == "0"
+    assert build_channel(config).paraphrase_temperature == 0
+    with pytest.raises(ValueError):
+        RLRunConfig.model_validate(
+            {**base, "models": {"backdoor_monitor_temperature": -1}}
+        )
+
+    seen: list[Any] = []
+
+    async def fake_monitor(**kwargs: Any) -> Any:
+        seen.append(kwargs["generate_config"].temperature)
+        return SimpleNamespace(value=3)
+
+    monkeypatch.setattr(
+        monitor_solutions_inspect, "suspiciousness_monitor", fake_monitor
+    )
+    monitor = tinker_backend.TextScoreBackdoorMonitor(
+        "m", "s", allow_paid=True, temperature=0.1
+    )
+    score = asyncio.run(monitor.suspiciousness(SimpleNamespace(question="q"), "code"))  # type: ignore[arg-type]
+    assert (score, seen) == (0.3, [0.1])

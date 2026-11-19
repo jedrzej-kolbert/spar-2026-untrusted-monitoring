@@ -577,6 +577,7 @@ class TextScoreBackdoorMonitor:
         *,
         attempts: int = 3,
         allow_paid: bool = False,
+        temperature: float = 1.0,
     ) -> None:
         if attempts < 1:
             raise ValueError("attempts must be positive")
@@ -584,10 +585,13 @@ class TextScoreBackdoorMonitor:
         self.system_prompt = system_prompt
         self.attempts = attempts
         self.allow_paid = allow_paid
+        self.temperature = temperature
 
     async def suspiciousness(self, problem: AppsProblem, message: str) -> float:
         if not self.allow_paid:
             raise PermissionError("model calls disabled; pass allow_paid=True")
+        from inspect_ai.model import GenerateConfig
+
         from lasr_labs_2025_control_project.prompts.monitor_prompts import (
             MONITOR_USER_PROMPT,
         )
@@ -602,6 +606,7 @@ class TextScoreBackdoorMonitor:
                     problem_statement=problem.question, solution=message
                 ),
                 model=self.model,
+                generate_config=GenerateConfig(temperature=self.temperature),
             )
             value = score.value
             if isinstance(value, (int, float)) and math.isfinite(value):

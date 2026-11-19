@@ -194,6 +194,7 @@ def build_channel(config: RLRunConfig) -> MonitorViewChannel:
         paraphrase_model=channel.paraphrase_model,
         paraphrase_system_prompt=get_prompt_by_name(channel.paraphrase_system_prompt),
         paraphrase_base_prompt=get_prompt_by_name(channel.paraphrase_base_prompt),
+        paraphrase_temperature=channel.paraphrase_temperature,
     )
 
 
@@ -334,6 +335,7 @@ async def build_trainer(
             config.models.backdoor_monitor,
             get_prompt_by_name(prompts.backdoor_monitor_system),
             allow_paid=True,
+            temperature=config.models.backdoor_monitor_temperature,
         )
     trainer = GroupedRLTrainer(
         sender,
