@@ -16,6 +16,7 @@ from lasr_labs_2025_control_project.scripts.plot_data import (  # noqa: E402
     VARIANT_FLAGS,
     log_payload_overview,
     log_strategies,
+    log_variant,
 )
 from lasr_labs_2025_control_project.tracking import names  # noqa: E402
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (  # noqa: E402
@@ -122,6 +123,30 @@ def test_log_strategies_plots_every_variable_against_usefulness() -> None:
     assert tracker.rows[0]["strategy/um_only/blue_team_honeypot_fraction"] == 0.4
     assert tracker.rows[0]["strategy/um_only/blue_top_probability"] == 0.7
     assert tracker.rows[0]["strategy/um_only/red_nash_support_size"] == 2
+
+
+class _CurveTracker(_RecordingTracker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: dict[str, Any] = {}
+
+    def log_lines(self, key: str, curves: Any, title: str, x: str, y: str) -> None:
+        self.lines[key] = (curves, x, y)
+
+    def summary(self, data: Any) -> None:
+        pass
+
+
+def test_safety_usefulness_curve_has_safety_on_x() -> None:
+    sweep = [{"usefulness": u, "safety": s} for u, s in ((0.5, 0.9), (1.0, 0.4))]
+    tracker = _CurveTracker()
+    log_variant(tracker, "um_only", {"sweep": sweep}, [{"sweep": sweep}] * 2, 0.8)  # type: ignore[arg-type]
+
+    assert tracker.curves == {"um_only/usefulness": "um_only/safety"}
+    assert [row["um_only/safety"] for row in tracker.rows] == [0.4, 0.9]
+    curves, x, y = tracker.lines["um_only/band"]
+    assert (x, y) == ("safety", "usefulness")
+    assert curves["median"] == [(0.9, 0.5), (0.4, 1.0)]
 
 
 def test_strategy_figure_includes_new_variables(tmp_path: Path) -> None:
