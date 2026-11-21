@@ -165,6 +165,20 @@ async def test_initial_strategies_fill_the_first_episodes_then_resume(
     assert best.strategy == "strong"
     with pytest.raises(ValueError, match="cover"):
         await run_icrl(whole, team, episodes=1, initial=[seed, seed])
+    # The saved round 1 is the seed, so a different seed list must not resume.
+    other = Strategy("other description", "weak")
+    with pytest.raises(ValueError, match="saved with these initial"):
+        await run_icrl(
+            learner, rest, episodes=3, initial=[other], resume=SearchState.load(path)
+        )
+    resumed_same, _ = await run_icrl(
+        ScriptedLearner(),
+        ScriptedTeam(),
+        episodes=3,
+        initial=[seed],
+        resume=SearchState.load(path),
+    )
+    assert resumed_same == history
 
 
 async def test_hipt_separate_queries_reset_and_knowledge_match_upstream_order() -> None:

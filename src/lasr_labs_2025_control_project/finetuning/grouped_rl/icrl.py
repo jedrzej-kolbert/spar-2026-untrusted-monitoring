@@ -385,6 +385,12 @@ async def run_icrl(
         raise ValueError("episodes must be positive and n_result_examples nonnegative")
     if len(initial) > episodes:
         raise ValueError("episodes must cover the initial strategies")
+    if resume is not None and initial:
+        # Seeds are picked by round, so the saved rounds must be these seeds.
+        saved = [(h.strategy, h.decoder) for h in resume.history[1 : len(initial) + 1]]
+        given = [(s.encoder_instructions, s.decoder_instructions) for s in initial]
+        if saved != given[: len(saved)]:
+            raise ValueError("resume state was not saved with these initial strategies")
     if resume is not None:
         if knowledge is not None:
             raise ValueError("resume carries its own knowledge")
