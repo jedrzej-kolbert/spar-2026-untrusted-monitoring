@@ -184,6 +184,7 @@ async def run_in_context(
             resume=resume,
             on_state=on_state,
             prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
+            initial=icrl.initial_strategies,
         )
         recorder.status(state="validation")
         # The centralized reward is paired; a rewrite whose problem has no

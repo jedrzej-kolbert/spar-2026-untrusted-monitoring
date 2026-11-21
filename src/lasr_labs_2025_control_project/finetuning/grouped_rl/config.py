@@ -12,6 +12,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .icrl import Strategy
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -172,6 +174,9 @@ class IcrlConfig(_Strict):
     # The learner writes the judge's instructions too (HiPT's centralized learner).
     # A shared strategy is causal collusion, a different question from self-recognition.
     centralized: bool = False
+    # Known strategies tried first, in place of the first learner episodes (which
+    # episodes still counts): description, encoder_instructions, decoder_instructions.
+    initial_strategies: list[Strategy] = Field(default_factory=list)
 
 
 class RLRunConfig(_Strict):
@@ -260,6 +265,14 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        for seed in self.icrl.initial_strategies:
+            if not seed.encoder_instructions or (
+                bool(seed.decoder_instructions) != self.icrl.centralized
+            ):
+                raise ValueError(
+                    "each initial strategy needs encoder_instructions, and "
+                    "decoder_instructions exactly when centralized"
+                )
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(

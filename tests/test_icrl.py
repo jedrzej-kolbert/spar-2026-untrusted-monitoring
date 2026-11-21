@@ -7,6 +7,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
     Knowledge,
     LEARNER_SYSTEM_PROMPT,
     SearchState,
+    Strategy,
     parse_strategy,
     results_string,
     run_icrl,
@@ -89,7 +90,7 @@ class ScriptedTeam:
 
     async def episodes(self, strategy: str, decoder: str = "") -> list[Episode]:
         self.runs.append(strategy)
-        reward = {"": 0.4, "weak": 0.1, "strong": 0.9}[strategy]
+        reward = {"": 0.4, "weak": 0.1, "strong": 0.9, "seed": 0.6}[strategy]
         return [episode(reward=reward), episode(reward=reward)]
 
 
@@ -130,6 +131,40 @@ async def test_resuming_from_a_saved_state_matches_not_stopping(tmp_path: Path) 
     assert team.runs == ["strong", "strong"]
     with pytest.raises(ValueError, match="exceed"):
         await run_icrl(learner, team, episodes=1, resume=SearchState.load(path))
+
+
+async def test_initial_strategies_fill_the_first_episodes_then_resume(
+    tmp_path: Path,
+) -> None:
+    seed = Strategy("seed description", "seed")
+    whole, team = ScriptedLearner(), ScriptedTeam()
+    path = tmp_path / "state.json"
+
+    def save_seeded(state: SearchState) -> None:
+        if state.completed == 1:
+            state.save(path)
+
+    knowledge = Knowledge()
+    history, best = await run_icrl(
+        whole,
+        team,
+        episodes=3,
+        initial=[seed],
+        knowledge=knowledge,
+        on_state=save_seeded,
+    )
+    assert team.runs == ["", "seed", "weak", "strong"]
+    assert whole.strategy_calls == 2  # the seed round asked for no strategy
+    assert knowledge.failed_attempts[0]["strategy"] == "seed description"
+    assert "seed description" in whole.prompts[0][-2]["content"]  # its results
+    learner, rest = ScriptedLearner(), ScriptedTeam()
+    resumed, _ = await run_icrl(
+        learner, rest, episodes=3, resume=SearchState.load(path)
+    )
+    assert resumed == history and rest.runs == ["weak", "strong"]
+    assert best.strategy == "strong"
+    with pytest.raises(ValueError, match="cover"):
+        await run_icrl(whole, team, episodes=1, initial=[seed, seed])
 
 
 async def test_hipt_separate_queries_reset_and_knowledge_match_upstream_order() -> None:
