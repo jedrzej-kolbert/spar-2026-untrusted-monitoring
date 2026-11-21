@@ -265,6 +265,8 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        if len(self.icrl.initial_strategies) > self.icrl.episodes:
+            raise ValueError("icrl.episodes must cover the initial strategies")
         for seed in self.icrl.initial_strategies:
             if not seed.encoder_instructions or (
                 bool(seed.decoder_instructions) != self.icrl.centralized
