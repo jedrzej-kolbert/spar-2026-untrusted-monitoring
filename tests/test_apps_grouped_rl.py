@@ -547,6 +547,7 @@ async def test_sandbox_stdin_all_tests_and_security_flags(
         assert option in command
     assert command[command.index("--network") + 1] == "none"
     assert command[command.index("--user") + 1] == "65534:65534"
+    assert command[command.index("--workdir") + 1] == "/tmp"  # the writable tmpfs
     assert input_text == "12\n"
     assert name.startswith("apps-grouped-rl-")
 
