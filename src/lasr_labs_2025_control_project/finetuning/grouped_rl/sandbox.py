@@ -147,6 +147,10 @@ class DockerAppsEvaluator:
             "none",
             "--tmpfs",
             "/tmp:rw,nosuid,noexec,size=16m,mode=1777",
+            # Run in the writable tmpfs: the test-time APPS scorer lets solutions
+            # write files in their working directory, and / is read-only here.
+            "--workdir",
+            "/tmp",
             "--mount",
             f"type=bind,src={directory},dst=/task,readonly",
             "--interactive",
