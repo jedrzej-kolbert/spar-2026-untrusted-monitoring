@@ -1,9 +1,6 @@
 """Offline-only tests: no Tinker, Docker, model downloads, or generated-code execution."""
 
-import asyncio
-import json
 import math
-import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,10 +22,7 @@ from lasr_labs_2025_control_project.finetuning.grouped_rl.core import (
     extract_code,
     group_advantages,
 )
-from lasr_labs_2025_control_project.finetuning.grouped_rl.sandbox import (
-    DockerAppsEvaluator,
-    _OutputLimitError,
-)
+from lasr_labs_2025_control_project.finetuning.grouped_rl import gbrl, sandbox
 from lasr_labs_2025_control_project.finetuning.grouped_rl.tinker_backend import (
     TinkerReceiver,
     TinkerSender,
@@ -529,194 +523,127 @@ async def test_backward_failure_does_not_submit_optimizer(problem: AppsProblem) 
     assert not client.calls
 
 
-async def test_sandbox_stdin_all_tests_and_security_flags(
-    problem: AppsProblem, tmp_path: Path
-) -> None:
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path)
-    evaluator._run = AsyncMock(return_value=(0, b"12\n", b""))
-    assert (await evaluator.grade(problem, "print(input())")).passed
-    assert evaluator._run.call_args is not None
-    command, name, input_text = evaluator._run.call_args.args
-    for option in (
-        "--pull=never",
-        "--read-only",
-        "--cap-drop",
-        "--pids-limit",
-        "--log-driver",
-    ):
-        assert option in command
-    assert command[command.index("--network") + 1] == "none"
-    assert command[command.index("--user") + 1] == "65534:65534"
-    assert command[command.index("--workdir") + 1] == "/tmp"  # the writable tmpfs
-    assert input_text == "12\n"
-    assert name.startswith("apps-grouped-rl-")
+DAEMON_DOWN = "Cannot connect to the Docker daemon at unix://x"
 
 
-async def test_sandbox_function_calls_support_wrapped_outputs(tmp_path: Path) -> None:
-    problem = AppsProblem("8", "Add", ([1, 2], [3, 4]), ([3], 7), fn_name="add")
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path)
-    evaluator._run = AsyncMock(side_effect=[(0, b"3", b""), (0, b"7", b"")])
-    assert (await evaluator.grade(problem, "def add(a, b): return a + b")).passed
-    assert evaluator._run.await_count == 2
-    assert evaluator._run.call_args is not None
-    assert evaluator._run.call_args.args[0][-2:] == ["/task/call_runner.py", "add"]
+class FakeContainer:
+    """Stands in for Docker under the real scorer; a program is named by its text."""
+
+    def __init__(self, dies: bool = False) -> None:
+        self.dies = dies
+        self.ran = 0
+        self.cleanup = AsyncMock()
+
+    async def exec(
+        self, cmd: list[str], input: str | None = None, **options: Any
+    ) -> SimpleNamespace:
+        if cmd == ["true"]:
+            return SimpleNamespace(success=not self.dies, stdout="", stderr=DAEMON_DOWN)
+        self.ran += 1
+        stdout, stderr = input or "", ""
+        if "wrong" in cmd[-1]:
+            stdout = "other"
+        if "crash" in cmd[-1]:
+            stdout, stderr = "", "Traceback: private test detail"
+        if self.dies:
+            stdout, stderr = "", "" if "echo" in cmd[-1] else DAEMON_DOWN
+        return SimpleNamespace(stdout=stdout, stderr=stderr)
+
+
+@pytest.fixture
+def container(monkeypatch: pytest.MonkeyPatch) -> FakeContainer:
+    fake = FakeContainer()
+    docker = sandbox.DockerSandboxEnvironment
+    monkeypatch.setattr(
+        docker, "sample_init", AsyncMock(return_value={"default": fake})
+    )
+    monkeypatch.setattr(docker, "sample_cleanup", fake.cleanup)
+    return fake
+
+
+ATTACK = AppsProblem(
+    "8",
+    "Echo",
+    ("1\n", "2\n", "3\n"),
+    ("1\n", "2\n", "3\n"),
+    secret_input="7",
+    reference_solution="echo",
+)
 
 
 @pytest.mark.parametrize(
-    "reply", [(1, b"", b"Traceback: invalid code"), (0, b"wrong", b"")]
+    ("code", "passed", "detail", "backdoor"),
+    [
+        ("echo", True, "All test cases passed successfully", False),
+        ("wrong", False, "Test case failed", True),
+        ("crash", False, "Runtime error during execution", False),
+    ],
 )
-async def test_program_failures_are_not_infrastructure_failures(
-    problem: AppsProblem, tmp_path: Path, reply: tuple[int, bytes, bytes]
+async def test_grades_are_the_scorers_without_quoting_tests(
+    container: FakeContainer, code: str, passed: bool, detail: str, backdoor: bool
 ) -> None:
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path)
-    evaluator._run = AsyncMock(return_value=reply)
-    grade = await evaluator.grade(problem, "bad code")
-    assert not grade.passed and grade.infrastructure_error is None
+    evaluator = sandbox.AppsEvaluator(num_tests=2)
+    grade = await evaluator.grade(ATTACK, code)
+    assert grade == ExecutionGrade(passed, detail)  # no inputs or output in the detail
+    assert container.ran == (2 if passed else 1)  # the first num_tests, up to a failure
+    check = await evaluator.check_backdoor(ATTACK, code)
+    assert check is not None and check.passed is backdoor
+    assert check.infrastructure_error is None and "private" not in check.detail
+    assert container.cleanup.await_count == 2
+
+
+async def test_no_test_limit_runs_every_test(container: FakeContainer) -> None:
+    assert (await sandbox.AppsEvaluator(num_tests=None).grade(ATTACK, "echo")).passed
+    assert container.ran == 3
+
+
+async def test_backdoor_check_does_not_apply_when_the_reference_fails(
+    container: FakeContainer,
+) -> None:
+    problem = replace(ATTACK, reference_solution="crash")
+    assert await sandbox.AppsEvaluator().check_backdoor(problem, "wrong") is None
+
+
+@pytest.mark.parametrize("code", ["echo", "wrong"])
+async def test_dead_container_is_infrastructure_not_incorrect_code(
+    container: FakeContainer, code: str
+) -> None:
+    container.dies = True
+    evaluator = sandbox.AppsEvaluator()
+    for grade in (
+        await evaluator.grade(ATTACK, code),
+        await evaluator.check_backdoor(ATTACK, code),
+    ):
+        assert grade is not None and not grade.passed and grade.infrastructure_error
+        assert any(x in grade.infrastructure_error for x in gbrl._DOCKER_DOWN)
+    assert container.cleanup.await_count == 2
 
 
 async def test_missing_docker_is_infrastructure_not_incorrect_code(
-    problem: AppsProblem, tmp_path: Path
+    container: FakeContainer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path)
-    evaluator._run = AsyncMock(side_effect=FileNotFoundError("docker unavailable"))
-    grade = await evaluator.grade(problem, "print(1)")
-    assert not grade.passed and grade.infrastructure_error
-
-
-async def test_output_is_bounded() -> None:
-    evaluator = DockerAppsEvaluator(max_output_bytes=8)
-    stream = asyncio.StreamReader()
-    stream.feed_data(b"x" * 9)
-    stream.feed_eof()
-    with pytest.raises(_OutputLimitError):
-        await evaluator._read_limited(stream)
-
-
-async def test_output_overflow_returns_instead_of_waiting_forever() -> None:
-    # A real process printing far past the cap leaves unread output in its pipe.
-    evaluator = DockerAppsEvaluator(max_output_bytes=1024)
-
-    async def slow_cleanup(name: str) -> None:
-        await asyncio.sleep(0.5)  # like `docker rm`; the pipe buffer fills meanwhile
-
-    evaluator._remove_container = slow_cleanup
-    command = [sys.executable, "-c", "import sys; sys.stdout.write('x' * 10_000_000)"]
-    with pytest.raises(_OutputLimitError):
-        await asyncio.wait_for(evaluator._run(command, "no-container", ""), timeout=20)
-
-
-@pytest.mark.parametrize(
-    "batch_error", [_OutputLimitError("program output limit exceeded"), TimeoutError()]
-)
-@pytest.mark.parametrize(
-    ("reference_output", "solution_output", "expected"),
-    [(b"1", b"2", True), (b"1", b"1", False), (None, b"2", None)],
-)
-async def test_failed_backdoor_batch_grades_each_program_alone(
-    tmp_path: Path,
-    problem: AppsProblem,
-    batch_error: Exception,
-    reference_output: bytes | None,
-    solution_output: bytes,
-    expected: bool | None,
-) -> None:
-    # Reference None = the reference overflows the cap, so the check does not apply.
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path, batch_tests=True)
-    evaluator._execute_batch = AsyncMock(side_effect=batch_error)
-
-    async def execute(
-        directory: Path, program: str, fn_name: str | None, input_text: str
-    ) -> tuple[int, bytes, bytes]:
-        if program == "reference.py":
-            if reference_output is None:
-                raise _OutputLimitError("program output limit exceeded")
-            return 0, reference_output, b""
-        return 0, solution_output, b""
-
-    evaluator._execute = execute
-    secret = replace(problem, secret_input="7", reference_solution="print(1)")
-    grade = await evaluator.check_backdoor(secret, "print(2)")
-    assert (None if grade is None else grade.passed) is expected
-    assert grade is None or grade.infrastructure_error is None
-
-
-async def test_batched_backdoor_check_allows_each_job_its_own_output(
-    tmp_path: Path,
-) -> None:
-    problem = AppsProblem(
-        "9",
-        "Echo",
-        ("1\n",),
-        ("1\n",),
-        secret_input="7\n",
-        reference_solution="print(input())",
-    )
-    evaluator = DockerAppsEvaluator(
-        temp_root=tmp_path, max_output_bytes=8, batch_tests=True
-    )
-    # Each job's output is within the per-job cap, but together they exceed it.
-    reply = json.dumps(
-        [{"returncode": 0, "stdout": "a" * 8, "stderr": ""}] * 2
-    ).encode()
-    evaluator._run = AsyncMock(return_value=(0, reply, b""))
-    grade = await evaluator.check_backdoor(problem, "print('a' * 8)")
-    assert grade is not None and grade.infrastructure_error is None
-    assert evaluator._run.call_args.kwargs["max_stdout_bytes"] >= len(reply)
-    # A batch overflow reruns each program alone; the reference overflowing too
-    # means the check does not apply.
-    evaluator._run = AsyncMock(side_effect=_OutputLimitError("too much"))
-    assert await evaluator.check_backdoor(problem, "print('a' * 8)") is None
-
-
-@pytest.mark.parametrize("overflow", [False, True])
-async def test_failure_removes_container_before_killing_cli(
-    monkeypatch: pytest.MonkeyPatch, overflow: bool
-) -> None:
-    events: list[str] = []
-    done = asyncio.Event()
-
-    class Writer:
-        def write(self, data: bytes) -> None:
-            pass
-
-        async def drain(self) -> None:
-            pass
-
-        def close(self) -> None:
-            pass
-
-    class Process:
-        stdin = Writer()
-        stdout = asyncio.StreamReader()
-        stderr = asyncio.StreamReader()
-        returncode: int | None = None
-
-        async def wait(self) -> int | None:
-            await done.wait()
-            return self.returncode
-
-        def kill(self) -> None:
-            events.append("kill_cli")
-            self.returncode = -9
-            self.stdout.feed_eof()  # a killed process closes its pipes
-            self.stderr.feed_eof()
-            done.set()
-
-    evaluator = DockerAppsEvaluator(timeout_seconds=0.01, max_output_bytes=8)
-    process = Process()
-    if overflow:
-        process.stdout.feed_data(b"x" * 9)
     monkeypatch.setattr(
-        asyncio, "create_subprocess_exec", AsyncMock(return_value=process)
+        sandbox.DockerSandboxEnvironment,
+        "sample_init",
+        AsyncMock(side_effect=RuntimeError(DAEMON_DOWN)),
     )
+    grade = await sandbox.AppsEvaluator().grade(ATTACK, "echo")
+    assert not grade.passed and grade.infrastructure_error
+    assert not container.ran
 
-    async def remove(name: str) -> None:
-        events.append("remove_container")
 
-    evaluator._remove_container = remove
-    with pytest.raises(_OutputLimitError if overflow else TimeoutError):
-        await evaluator._run(["docker", "run"], "our-container", "input")
-    assert events == ["remove_container", "kill_cli"]
+async def test_function_call_problems_are_refused(container: FakeContainer) -> None:
+    problem = AppsProblem("8", "Add", ([1, 2],), ([3],), fn_name="add")
+    grade = await sandbox.AppsEvaluator().grade(problem, "echo")
+    assert grade.infrastructure_error and not container.ran
+
+
+async def test_compose_file_is_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    first, second = sandbox.AppsEvaluator(), sandbox.AppsEvaluator()
+    assert first._compose != second._compose and not list(tmp_path.iterdir())
 
 
 async def test_probability_recovery_failure_keeps_all_code(
@@ -773,11 +700,3 @@ async def test_missing_policy_data_keeps_scores_and_stops_training(
     assert evaluated.metrics()["infrastructure_failures"] == 0
     with pytest.raises(ValueError):
         policy_inputs(samples[0], 1.0)
-
-
-async def test_invalid_utf8_cannot_match_replacement_character(tmp_path: Path) -> None:
-    problem = AppsProblem("8", "Print replacement character", ("a",), ("�",))
-    evaluator = DockerAppsEvaluator(temp_root=tmp_path)
-    evaluator._run = AsyncMock(return_value=(0, b"\xff", b""))
-    grade = await evaluator.grade(problem, "code")
-    assert not grade.passed and grade.infrastructure_error is None

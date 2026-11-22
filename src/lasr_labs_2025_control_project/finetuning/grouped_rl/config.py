@@ -129,16 +129,9 @@ class PreflightConfig(_Strict):
 
 
 class SandboxConfig(_Strict):
-    # Digest-pinned python:3.12-slim, as in the original grouped-APPS driver.
-    image: str = (
-        "python@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f"
-    )
-    timeout_seconds: float = Field(default=10, gt=0)
-    control_arena_parity: bool = True
-    # One container per candidate (fresh process per test) instead of per test.
-    batch_tests: bool = True
+    """The image, timeout and pass rule are control-arena's (see sandbox.py)."""
+
     max_containers: int = Field(default=8, ge=1)
-    max_output_bytes: int = Field(default=65536, ge=1)
 
 
 class LoggingConfig(_Strict):

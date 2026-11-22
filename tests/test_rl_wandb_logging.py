@@ -107,8 +107,13 @@ def drive(output_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         run, "load_tasks", lambda c: run.Tasks(train, validation, [], honeypots, [])
     )
-    monkeypatch.setattr(run, "ensure_image", lambda image: None)
-    monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: None)
+
+    async def start() -> None:
+        pass
+
+    monkeypatch.setattr(
+        run, "AppsEvaluator", lambda **kwargs: SimpleNamespace(start=start)
+    )
     monkeypatch.setattr(run, "sandbox_parity_check", parity)
     monkeypatch.setattr(run, "build_trainer", build)
     monkeypatch.setattr(

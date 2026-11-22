@@ -191,7 +191,11 @@ def next_batch(
     return batch
 
 
-_DOCKER_DOWN = ("Cannot connect to the Docker daemon", "Is the docker daemon running")
+_DOCKER_DOWN = (
+    "Cannot connect to the Docker daemon",
+    "Is the docker daemon running",
+    "failed to connect to the docker API",  # Docker 29, when the socket is missing
+)
 
 
 def docker_down(result: BatchResult) -> bool:
