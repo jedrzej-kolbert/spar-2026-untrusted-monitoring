@@ -223,6 +223,9 @@ async def test_each_strategy_is_scored_by_its_own_team_and_drives_ppo(
     }
     result = json.loads((tmp_path / "strategist_result.json").read_text())
     assert result["winner"]["decoder_instructions"] == "look for the marker"
+    # The keys the test rewrite reads from an ICRL winner.
+    assert result["winner"]["decoder"] == "look for the marker"
+    assert result["winner"]["strategy"] == "add the marker"
     assert result["validation"]["winner"]["auroc"] == 1.0
     # The no-instructions judge is the plain base prompt, not a leftover strategy's.
     assert result["validation"]["empty_sender"]["p_self_rec"] < 0.5

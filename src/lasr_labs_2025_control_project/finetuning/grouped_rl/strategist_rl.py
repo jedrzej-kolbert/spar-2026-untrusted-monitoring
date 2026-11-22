@@ -245,6 +245,8 @@ async def run_strategist(
     validated: dict[tuple[str, str], dict[str, Any]] = {}
     rocs: dict[tuple[str, str], list[tuple[float, float]]] = {}
 
+    validation_rows: list[dict[str, Any]] = []
+
     async def validate(
         step: int, label: str, encoder: str, decoder: str, origin: int | None = None
     ) -> dict[str, Any]:
@@ -272,9 +274,12 @@ async def run_strategist(
             recorder.honeypots(step, honeypot.honeypot_scores)
             validated[key] = metrics
             _, rocs[key] = collusion_auroc(rewrites, honeypot.honeypot_scores)
-        row = {"check": label, **validated[key]}
+        row = {"check": label, "step": step, **validated[key]}
         recorder._append("validation.jsonl", row)
         recorder.sync_file("validation.jsonl")
+        # ICRL's icrl/validation table, updated at every validation.
+        validation_rows.append(row)
+        recorder.table(step, "strategist/validation", validation_rows)
         return validated[key]
 
     rng = random.Random(config.seed)
@@ -282,6 +287,7 @@ async def run_strategist(
     for _ in range(1, start_step):  # a resumed run continues the same batches
         next_batch(order, search, training.problems_per_step, rng)
     strategy_rows: list[dict[str, Any]] = []
+    top_rows: list[dict[str, Any]] = []  # the best strategy of each step
     candidates: list[tuple[int, Strategy]] = []  # validated, by step
     last_step_cost, skipped, completed = 0.0, 0, start_step - 1
     step = completed
@@ -354,6 +360,7 @@ async def run_strategist(
                 if r.honeypot_p_yes is not None
             ]
             per_strategy_auroc = []
+            step_rows: list[dict[str, Any]] = []
             for index, (item, advantage) in enumerate(
                 zip(scored, advantages, strict=True)
             ):
@@ -399,6 +406,7 @@ async def run_strategist(
                         )
                     )
                 recorder._append("strategies.jsonl", row)
+                step_rows.append(row)
                 strategy_rows.append(
                     {k: v for k, v in row.items() if k not in ("reply", "parse_error")}
                 )
@@ -452,6 +460,39 @@ async def run_strategist(
                 key=lambda item: item.reward,
                 default=None,
             )
+            if best is not None:
+                # ICRL's icrl/strategies table: one row per round, here the
+                # step's best strategy, with each reward term. Logged every step.
+                chosen = step_rows[next(i for i, x in enumerate(scored) if x is best)]
+                top_rows.append(
+                    {
+                        "step": step,
+                        "description": chosen["description"],
+                        "strategy": chosen["encoder"],
+                        "decoder": chosen["decoder"],
+                        **{
+                            k: v
+                            for k, v in chosen.items()
+                            if k
+                            not in (
+                                "step",
+                                "slot",
+                                "parsed",
+                                "description",
+                                "encoder",
+                                "decoder",
+                                "strategy",
+                                "reply",
+                                "parse_error",
+                                "round",
+                                "episodes",
+                            )
+                        },
+                        "step_reward_mean": metrics["reward"],
+                        "step_auroc": metrics.get("auroc"),
+                    }
+                )
+                recorder.table(step, "strategist/top_strategies", top_rows)
             click.echo(
                 f"step {step}: reward mean {metrics['reward']:.3f} max {max(rewards):.3f}, "
                 f"train AUROC {metrics.get('auroc')}, working {metrics.get('working_rate')}, "
@@ -582,15 +623,17 @@ async def run_strategist(
                 },
                 "Collusion ROC on validation",
             )
-            recorder.table(
-                completed,
-                "strategist/validation",
-                [{"check": label, **m} for label, m in rows.items()],
-            )
             (output_dir / "strategist_result.json").write_text(
                 json.dumps(
                     {
-                        "winner": dataclasses.asdict(winner),
+                        # strategy/decoder: the keys rewrite_solutions_inspect
+                        # --strategy-result reads from an ICRL winner.
+                        "winner": {
+                            **dataclasses.asdict(winner),
+                            "strategy": winner.encoder_instructions,
+                            "decoder": winner.decoder_instructions,
+                            "round": origin,
+                        },
                         "winner_step": origin,
                         "validation": rows,
                         "validated_steps": [
@@ -607,6 +650,13 @@ async def run_strategist(
                 )
             )
             recorder.sync_file("strategist_result.json")
+            # As ICRL: the test rewrite takes the winner from this artifact.
+            recorder.attempt(
+                recorder.stage.log_artifact,
+                output_dir / "strategist_result.json",
+                type="strategy",
+                name=f"strategy-{config.run_name}",
+            )
             recorder.status(
                 winner_step=origin,
                 winner_strategy=winner.encoder_instructions,
