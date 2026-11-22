@@ -368,7 +368,7 @@ async def train(
             "--resume-state restores only the sender; joint training must start fresh"
         )
     output_dir = config.output_dir
-    if config.method == "in_context" and any(
+    if config.method in ("in_context", "strategist") and any(
         (output_dir / name).exists()
         for name in ("rollouts.jsonl", "learner.jsonl", "icrl_result.json")
     ):
@@ -420,10 +420,27 @@ async def train(
 
     meter = usage.install()
     meter.max_cost_usd = config.training.max_cost_usd
-    box = StrategyBox() if config.method == "in_context" else None
+    box = StrategyBox() if config.method in ("in_context", "strategist") else None
     trainer, sender = await build_trainer(
         config, evaluator, resume_state=resume_state, strategy=box
     )
+    if config.method == "strategist":
+        from .strategist_rl import run_strategist
+
+        # The sender stays frozen; --resume-state restores the strategist.
+        recorder = open_recorder(
+            config, code, parity, allow_unlinked, manifest.get("resumed_from")
+        )
+        await run_strategist(
+            config,
+            trainer,
+            recorder,
+            meter,
+            tasks,
+            start_step=start_step,
+            resume_state=resume_state,
+        )
+        return
     if box is not None:
         import tinker
 

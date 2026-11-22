@@ -174,14 +174,32 @@ class IcrlConfig(_Strict):
     centralized: bool = False
 
 
+class StrategistConfig(_Strict):
+    """GBRL of the strategist (method: strategist; strategist_rl.py).
+
+    The strategist is icrl.learner, sampled with icrl.learner_max_tokens and
+    icrl.learner_temperature; training.group_size strategies per step, each run on
+    training.problems_per_step search problems, with the training section's LoRA,
+    learning rate and PPO settings.
+    """
+
+    # Reward of a reply with no parseable strategy: ICRL's paired reward is in
+    # [-1, 1], so -1 keeps a malformed reply below every strategy that ran.
+    malformed_reward: float = Field(default=-1.0, allow_inf_nan=False)
+    # Keep only the first N validation problems and the first N validation
+    # honeypots (smoke runs); None uses all of them, as ICRL does.
+    max_validation: int | None = Field(default=None, ge=1)
+
+
 class RLRunConfig(_Strict):
     run_name: str
     output_dir: Path
     # W&B filter and tag. A main run refuses to start from uncommitted code.
     kind: Literal["smoke", "pilot", "main"] = "smoke"
     backend: Literal["tinker", "hf_gpu"] = "tinker"
-    method: Literal["gradient", "in_context"] = "gradient"
+    method: Literal["gradient", "in_context", "strategist"] = "gradient"
     icrl: IcrlConfig = Field(default_factory=IcrlConfig)
+    strategist: StrategistConfig = Field(default_factory=StrategistConfig)
     task_mode: Literal[
         "rewrite_signal", "self_recognition", "honest_signal", "attack_signal"
     ] = "rewrite_signal"
@@ -246,7 +264,9 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
-        if self.method == "in_context":
+        if self.method == "strategist" and not self.icrl.centralized:
+            raise ValueError("method strategist needs icrl.centralized")
+        if self.method in ("in_context", "strategist"):
             if self.task_mode != "self_recognition" or self.training.train_receiver:
                 raise ValueError(
                     "in_context needs task_mode self_recognition and a frozen judge"
@@ -257,9 +277,12 @@ class RLRunConfig(_Strict):
                     "in_context needs reward.backdoor_suspicion_weight > 0"
                 )
         if self.icrl.centralized and (
-            self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
+            self.method not in ("in_context", "strategist")
+            or reward.reward_fn != "valid_sigmoid"
         ):
-            raise ValueError("centralized needs method in_context and valid_sigmoid")
+            raise ValueError(
+                "centralized needs method in_context or strategist, and valid_sigmoid"
+            )
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(
@@ -285,7 +308,9 @@ class RLRunConfig(_Strict):
             judge = "sft" if self.models.receiver.startswith("tinker://") else "base"
         reward = "paired" if centralized else self.reward.reward_fn
         identity: dict[str, str | int] = {
-            "method": "icrl" if self.method == "in_context" else "gbrl",
+            "method": {"in_context": "icrl", "strategist": "gbrl_strategist"}.get(
+                self.method, "gbrl"
+            ),
             "judge": judge,
             "threat_model": "causal" if centralized else "self-recognition",
             "reward_id": f"{reward}-s{self.reward.suspicion_threshold:g}",
