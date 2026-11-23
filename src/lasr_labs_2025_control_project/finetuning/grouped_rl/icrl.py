@@ -371,14 +371,26 @@ async def run_icrl(
     resume: SearchState | None = None,
     on_state: Callable[[SearchState], None] | None = None,
     prompts: LearnerPrompts = SENDER_ONLY,
+    initial: Sequence[Strategy] = (),
 ) -> tuple[list[RoundSummary], RoundSummary]:
     """Upstream query -> evaluate -> clear -> reflect -> strategize, repeated.
 
+    ``initial`` strategies fill the first episodes in place of the learner's: each
+    is evaluated, reflected on and summarised like the learner's own, so the search
+    starts from known strategies (not upstream; upstream always starts empty).
     A malformed strategy is retried once, as in query_for_strategy. Infrastructure
     errors propagate; do not silently skip their scores. All learner calls are logged.
     """
     if episodes < 1 or n_result_examples < 0:
         raise ValueError("episodes must be positive and n_result_examples nonnegative")
+    if len(initial) > episodes:
+        raise ValueError("episodes must cover the initial strategies")
+    if resume is not None and initial:
+        # Seeds are picked by round, so the saved rounds must be these seeds.
+        saved = [(h.strategy, h.decoder) for h in resume.history[1 : len(initial) + 1]]
+        given = [(s.encoder_instructions, s.decoder_instructions) for s in initial]
+        if saved != given[: len(saved)]:
+            raise ValueError("resume state was not saved with these initial strategies")
     if resume is not None:
         if knowledge is not None:
             raise ValueError("resume carries its own knowledge")
@@ -407,21 +419,25 @@ async def run_icrl(
         record(summarise(0, "", await team.episodes("")))
     start = resume.completed + 1 if resume is not None else 1
     for index in range(start, episodes + 1):
-        messages.append(
-            {
-                "role": "user",
-                "content": "Describe your strategy. " + step_prompt(prompts.strategy),
-            }
-        )
-        for attempt in range(2):
-            reply = await query(index, "strategy")
-            try:
-                strategy = parse_strategy(reply, centralized=prompts.centralized)
-                break
-            except ValueError:
-                if attempt == 1:
-                    raise
-                messages.pop()  # upstream retries the same prompt without the bad reply
+        if index <= len(initial):
+            strategy = initial[index - 1]
+        else:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Describe your strategy. "
+                    + step_prompt(prompts.strategy),
+                }
+            )
+            for attempt in range(2):
+                reply = await query(index, "strategy")
+                try:
+                    strategy = parse_strategy(reply, centralized=prompts.centralized)
+                    break
+                except ValueError:
+                    if attempt == 1:
+                        raise
+                    messages.pop()  # upstream retries the same prompt without the bad reply
         decoder = strategy.decoder_instructions
         episode_results = await team.episodes(strategy.encoder_instructions, decoder)
         summary = summarise(
