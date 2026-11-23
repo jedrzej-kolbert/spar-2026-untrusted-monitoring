@@ -376,7 +376,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
-    { name = "tinker", specifier = ">=0.29.0" },
+    { name = "tinker", specifier = ">=0.36.0" },
     { name = "tinker-cookbook", specifier = ">=0.5.7" },
 ]
 
@@ -4343,7 +4343,7 @@ wheels = [
 
 [[package]]
 name = "tinker"
-version = "0.33.1"
+version = "0.36.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -4361,9 +4361,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/07/546ad32cedcb8267bf0371c46deb0ea86590005caeb36d15ae0f8a534838/tinker-0.33.1.tar.gz", hash = "sha256:6ccf24a8eb7c72f3b983e7de669babb25fec0a8c507a5b19498cb119e2730fca", size = 301885, upload-time = "2026-10-08T23:49:42.827Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/e1/ffd7e42e9d6c4b9aca03053fb95b558210505feb1e49d416262da6d91013/tinker-0.36.0.tar.gz", hash = "sha256:b03e9e7495162bc55d555a62c1be5988a31ec804cf5a1c1296f78d6fa475e02b", size = 323143, upload-time = "2026-10-25T19:10:37.342Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/52/e5e826fa4fa52aaf0e19de1ffcdae06fcd91409071a4e744300f071914e0/tinker-0.33.1-py3-none-any.whl", hash = "sha256:e9b0d1b5849638b0b76e9e0167393de93331fafb348e2924f1cc9a140c74bf26", size = 287595, upload-time = "2026-10-08T23:49:41.169Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/84/9237cb7bd59ab9cc961b00d7f012aae333ed2d412c943af7e5b522eb925a/tinker-0.36.0-py3-none-any.whl", hash = "sha256:3162329709d10a23750237777e41e91bf1b1500d6829944fc1958a3c25b749bc", size = 314246, upload-time = "2026-10-25T19:10:35.828Z" },
 ]
 
 [[package]]

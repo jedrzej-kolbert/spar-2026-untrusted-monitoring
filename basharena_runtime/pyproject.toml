@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # The main project's tinker/ provider, imported from the checkout: per-family
     # tool-call rendering comes from tinker-cookbook.
-    "tinker>=0.29.0",
+    "tinker>=0.36.0",
     "tinker-cookbook>=0.5.7",
     "jinja2>=3.1.0",
 ]
