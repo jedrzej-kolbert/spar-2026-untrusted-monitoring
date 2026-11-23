@@ -9,7 +9,8 @@ The library now also drives the HiPT replication. How to run it is in
   `rl-steps.md`); it hands off to `gbrl.py` (gradient training) or `icrl_run.py`
   (in-context search, `icrl.py`), which both record through `records.py`.
 - Rewards are in `rewards.py` (formulas below), APPS grading in `sandbox.py`, the
-  monitors' code view in `channels.py`, and Tinker clients in `tinker_backend.py`.
+  monitors' code view in `channels.py`, Tinker clients in `tinker_backend.py`, and
+  `viewer.py` builds `run_view.html` from a run's records.
 
 ## HiPT probability reward
 
@@ -132,6 +133,15 @@ with all recorded data in `.result`. Missing rewards are never imputed. Extra
 samples are retained, but an incorrect sample count aborts the update. An update
 failure records the affected role's state as uncertain (`None`), because its
 optimizer may already have committed: **do not blindly retry the batch**.
+
+Two settings lower the sampling noise of the scorers in training and validation
+only: `models.backdoor_monitor_temperature` (trusted monitor) and
+`channel.paraphrase_temperature` (summarizer). Both default to 1.0, which Tinker
+used when they were unset, so earlier runs are unchanged. HiPT ran its API overseer
+and paraphraser at 0.1. Test scoring through the pipeline keeps
+`generation.temperature`, so a run trained at 0.1 is still tested at 1.0. W&B gets
+both values in the run config, and a `monitor_temp:` / `summary_temp:` tag when
+either is not 1.0.
 
 ## Execution and paid-run boundary
 

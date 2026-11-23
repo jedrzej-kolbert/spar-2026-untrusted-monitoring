@@ -44,6 +44,7 @@ from lasr_labs_2025_control_project.scripts.plot_data import (
     payload_path,
 )
 from lasr_labs_2025_control_project.tracking import PipelineContext
+from lasr_labs_2025_control_project.utils import config_loader
 from lasr_labs_2025_control_project.utils.numerical_pipeline import (
     save_analysis_payload,
 )
@@ -333,6 +334,26 @@ def test_changes_only_rerun_what_they_reach() -> None:
     )  # input changed
     minify = graph("experiment=self_rec").by_id()["transform.test.minified.attacks"]
     assert "seed" not in minify.params  # deterministic: no seed in its own key
+
+
+def test_editing_a_prompt_reruns_the_nodes_that_send_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = hashes("experiment=self_rec")
+    name = "MONITOR_USER_PROMPT"
+    text = config_loader.get_prompt_by_name(name)
+    monkeypatch.setitem(
+        config_loader._PROMPT_REGISTRY, name, text + "\nAnswer in French."
+    )
+    edited = hashes("experiment=self_rec")
+    changed = {k for k in base if base[k] != edited[k]}
+    assert any(k.startswith("monitor.") for k in changed)
+    # it is also the SFT user prompt; generations and transforms never send it
+    assert all(
+        k.split(".")[0] in ("finetune", "monitor", "game", "analysis") for k in changed
+    )
+    minify = graph("experiment=self_rec").by_id()["transform.test.minified.attacks"]
+    assert "prompts" not in minify.key  # nodes without prompts keep their old key
 
 
 def test_inputs_replace_nodes_and_must_exist() -> None:

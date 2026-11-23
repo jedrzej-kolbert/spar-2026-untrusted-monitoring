@@ -60,6 +60,9 @@ RECORD_FILES = (
     "honeypot_scores.jsonl",
     "status.json",
     "usage.json",
+    "auroc_over_steps.svg",
+    "auroc_over_steps.json",
+    "run_view.html",
 )
 # The numbers to look at first in each section.
 KEY_METRICS = (
@@ -271,10 +274,12 @@ class Recorder:
                 **json.loads(config.model_dump_json()),
                 "run": identity,
                 "code": code or {},
+                "sandbox_bug_fix": True,
                 # A resumed run is a new W&B run; this names the state it continues.
                 "resumed_from": resumed_from,
             },
             tags=[f"{key}:{value}" for key, value in identity.items()]
+            + ["sandbox_bug_fix:true"]
             + (["resumed"] if resumed_from else []),
             inputs=inputs or [],
             models=[config.models.receiver],

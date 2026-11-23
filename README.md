@@ -127,9 +127,9 @@ folder under `experiments/<setting>/<stage>/`. Useful options:
   `measurement.monitors` picks which monitors run.
 
 **Reuse and reruns.** A step is done if an output with the same settings and inputs exists on
-this machine or, when W&B is online, on W&B from anyone's run (`reuse=local` skips W&B). Code and
-prompt wording aren't part of the match (prompts match by name), so after changing them, force a
-rerun:
+this machine or, when W&B is online, on W&B from anyone's run (`reuse=local` skips W&B). Prompt
+text is part of the match, so editing a prompt reruns the steps that send it. Code isn't, so after
+changing it, force a rerun:
 
 - `force=[<step id or stage>]`, e.g. `force=[monitor.none.sft.attacks]` or `force=[game]`, reruns
   those steps and everything that depends on them, replacing their outputs (on W&B the newest
@@ -182,8 +182,9 @@ see its README) and is driven by the pipeline like the other settings.
 
   | Panel (y) | x-axis | One point is |
   |---|---|---|
-  | `<variant>/safety` | `<variant>/usefulness` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
-  | `<variant>/band/safety_{lo,median,hi}` | `<variant>/band/usefulness` | the same, as bootstrap percentiles |
+  | `<variant>/usefulness` | `<variant>/safety` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
+  | `<variant>/band` (table chart, lines `lo`, `median`, `hi`) | `safety` | the same, as bootstrap percentiles of safety at each usefulness |
+  | `<variant>/band/safety_{lo,median,hi}` (kept so older saved views still work) | `<variant>/band/usefulness` | the same band as metric rows |
   | `strategy/<variant>/<parameter>` | `strategy/<variant>/usefulness` | one regeneration cutoff: blue's most likely `blue_*` value, or red's best-response `red_*` value, at equilibrium |
   | `strategy/<variant>/{blue_top_probability,blue_support_size,red_nash_support_size}` | `strategy/<variant>/usefulness` | the same: how mixed each team's equilibrium strategy is |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |

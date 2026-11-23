@@ -393,8 +393,9 @@ def log_variant(
         (e for e in payload["sweep"] if e.get("safety") is not None),
         key=lambda e: e["usefulness"],
     )
-    tracker.define_curve(f"{variant}/safety", f"{variant}/usefulness")
-    for entry in sweep:
+    # Papers' convention: safety on x, usefulness on y.
+    tracker.define_curve(f"{variant}/usefulness", f"{variant}/safety")
+    for entry in sorted(sweep, key=lambda e: e["safety"]):
         tracker.log(
             {
                 f"{variant}/usefulness": entry["usefulness"],
@@ -407,6 +408,7 @@ def log_variant(
         summary[f"{variant}/min_safety"] = min(e["safety"] for e in sweep)
     band = bootstrap_band(replicates, ci)
     if band:
+        # Old band metrics stay so existing saved views keep showing new runs.
         x = f"{variant}/band/usefulness"
         keys = ("safety_lo", "safety_median", "safety_hi")
         for key in keys:
@@ -421,6 +423,17 @@ def log_variant(
                     **{f"{variant}/band/{k}": band[k][i] for k in keys},
                 }
             )
+        # W&B shades bands only vertically, so with safety on x the band is three lines.
+        tracker.log_lines(
+            f"{variant}/band",
+            {
+                key: list(zip(band[f"safety_{key}"], band["usefulness"]))
+                for key in ("lo", "median", "hi")
+            },
+            f"{variant} bootstrap band",
+            "safety",
+            "usefulness",
+        )
     if replicates:
         summary[f"{variant}/bootstrap_failed"] = sum("error" in r for r in replicates)
     summary[f"{variant}/converged"] = payload.get("converged")
