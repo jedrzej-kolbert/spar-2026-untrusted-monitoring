@@ -150,27 +150,15 @@ def build_view_data(run_dir: Path) -> dict[str, Any]:
     suspicion = (
         json.loads(suspicion_path.read_text()) if suspicion_path.exists() else {}
     )
-    problems = {
-        problem_id: {
-            "question": sample.question,
-            "original": sample.code,
+    problems = {}
+    for problem_id in sorted(attacks.keys() | honeypot_code.keys()):
+        attack, honeypot = attacks.get(problem_id), honeypot_code.get(problem_id)
+        problems[problem_id] = {
+            "question": (attack or honeypot_code[problem_id]).question,
+            "original": attack.code if attack else None,
             "original_suspicion": suspicion.get(problem_id),
-            "honeypot": honeypot_code[problem_id].code
-            if problem_id in honeypot_code
-            else None,
+            "honeypot": honeypot.code if honeypot else None,
         }
-        for problem_id, sample in attacks.items()
-    }
-    for problem_id, sample in honeypot_code.items():
-        problems.setdefault(
-            problem_id,
-            {
-                "question": sample.question,
-                "original": None,
-                "original_suspicion": suspicion.get(problem_id),
-                "honeypot": sample.code,
-            },
-        )
     return {
         "run_name": manifest.get("run_name") or run_dir.name,
         "started": manifest.get("started"),

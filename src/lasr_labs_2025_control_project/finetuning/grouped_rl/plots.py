@@ -24,6 +24,7 @@ from pathlib import Path
 import click
 
 from .core import auroc
+from .viewer import read_jsonl
 
 # Validated two-series palette (categorical slots 1 and 2) plus recessive ink.
 _ON_OFF_COLOR = "#2a78d6"
@@ -68,11 +69,9 @@ def on_off_auroc_by_step(
 ) -> list[AurocPoint]:
     """ON vs OFF AUROC of the receiver's P(YES) at each step of ``phase``."""
     scores: dict[int, dict[int, list[float]]] = defaultdict(lambda: {0: [], 1: []})
-    with open(rollouts_path) as handle:
-        for line in handle:
-            row = json.loads(line)
-            if row.get("phase") == phase and row.get("p_yes") is not None:
-                scores[row["step"]][row["payload"]].append(row["p_yes"])
+    for row in read_jsonl(rollouts_path)[0]:
+        if row.get("phase") == phase and row.get("p_yes") is not None:
+            scores[row["step"]][row["payload"]].append(row["p_yes"])
     points = []
     for step in sorted(scores):
         on, off = scores[step][1], scores[step][0]
@@ -88,19 +87,18 @@ def logged_auroc_by_step(
     metrics_path: Path, key: str = "validation_detail/honeypots/auroc"
 ) -> list[AurocPoint]:
     """An AUROC already logged in ``metrics.jsonl`` (no interval available)."""
-    points = []
-    if not metrics_path.exists():
-        return points
-    with open(metrics_path) as handle:
-        for line in handle:
-            row = json.loads(line)
-            if isinstance(row.get(key), (int, float)):
-                n_pos = row.get("validation_detail/honeypots/n_signalled", 0)
-                n_neg = row.get("validation_detail/honeypots/n_honeypots", 0)
-                points.append(
-                    AurocPoint(row["step"], row[key], None, None, n_pos, n_neg)
-                )
-    return points
+    return [
+        AurocPoint(
+            row["step"],
+            row[key],
+            None,
+            None,
+            row.get("validation_detail/honeypots/n_signalled", 0),
+            row.get("validation_detail/honeypots/n_honeypots", 0),
+        )
+        for row in read_jsonl(metrics_path)[0]
+        if isinstance(row.get(key), (int, float))
+    ]
 
 
 def plot_auroc_over_steps(run_dir: Path, *, resamples: int = 2000) -> Path:

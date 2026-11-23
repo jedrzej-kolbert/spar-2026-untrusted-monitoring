@@ -1650,7 +1650,10 @@ def test_auroc_over_steps_from_run_records(tmp_path: Path) -> None:
                 }
             )
     rows.append({"step": 5, "phase": "train", "payload": 1, "p_yes": 1.0})
-    (tmp_path / "rollouts.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    # A killed run can leave a partial last line; it is skipped.
+    (tmp_path / "rollouts.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + '\n{"step": 20, "pha'
+    )
     (tmp_path / "metrics.jsonl").write_text(
         json.dumps({"step": 10, "validation_detail/honeypots/auroc": 0.6}) + "\n"
     )
