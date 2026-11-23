@@ -408,6 +408,21 @@ def log_variant(
         summary[f"{variant}/min_safety"] = min(e["safety"] for e in sweep)
     band = bootstrap_band(replicates, ci)
     if band:
+        # Old band metrics stay so existing saved views keep showing new runs.
+        x = f"{variant}/band/usefulness"
+        keys = ("safety_lo", "safety_median", "safety_hi")
+        for key in keys:
+            tracker.define_curve(f"{variant}/band/{key}", x)
+        order = sorted(
+            range(len(band["usefulness"])), key=lambda i: band["usefulness"][i]
+        )
+        for i in order:
+            tracker.log(
+                {
+                    x: band["usefulness"][i],
+                    **{f"{variant}/band/{k}": band[k][i] for k in keys},
+                }
+            )
         # W&B shades bands only vertically, so with safety on x the band is three lines.
         tracker.log_lines(
             f"{variant}/band",

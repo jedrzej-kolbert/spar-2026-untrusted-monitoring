@@ -142,8 +142,18 @@ def test_safety_usefulness_curve_has_safety_on_x() -> None:
     tracker = _CurveTracker()
     log_variant(tracker, "um_only", {"sweep": sweep}, [{"sweep": sweep}] * 2, 0.8)  # type: ignore[arg-type]
 
-    assert tracker.curves == {"um_only/usefulness": "um_only/safety"}
-    assert [row["um_only/safety"] for row in tracker.rows] == [0.4, 0.9]
+    assert tracker.curves["um_only/usefulness"] == "um_only/safety"
+    assert [r["um_only/safety"] for r in tracker.rows if "um_only/safety" in r] == [
+        0.4,
+        0.9,
+    ]
+    # Old band metrics are still logged, so existing saved views keep working.
+    assert tracker.curves["um_only/band/safety_median"] == "um_only/band/usefulness"
+    assert [
+        r["um_only/band/usefulness"]
+        for r in tracker.rows
+        if "um_only/band/usefulness" in r
+    ] == [0.5, 1.0]
     curves, x, y = tracker.lines["um_only/band"]
     assert (x, y) == ("safety", "usefulness")
     assert curves["median"] == [(0.9, 0.5), (0.4, 1.0)]
