@@ -21,9 +21,8 @@ from .core import (
     GroupedRLTrainer,
 )
 from .icrl import (
-    CENTRAL,
-    SENDER_ONLY,
     Knowledge,
+    learner_prompts,
     RoundSummary,
     SearchState,
     run_icrl,
@@ -183,7 +182,7 @@ async def run_in_context(
             on_summary=on_summary,
             resume=resume,
             on_state=on_state,
-            prompts=CENTRAL if icrl.centralized else SENDER_ONLY,
+            prompts=learner_prompts(icrl.centralized, icrl.learner_context),
         )
         recorder.status(state="validation")
         # The centralized reward is paired; a rewrite whose problem has no

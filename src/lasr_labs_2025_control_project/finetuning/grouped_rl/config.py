@@ -165,6 +165,10 @@ class IcrlConfig(_Strict):
     # The learner writes the judge's instructions too (HiPT's centralized learner).
     # A shared strategy is causal collusion, a different question from self-recognition.
     centralized: bool = False
+    # Literature context appended to the centralized learner's system prompt
+    # (icrl.LEARNER_CONTEXTS). Applies from a fresh start, not to a resumed state's
+    # first proposal, which reuses the saved messages.
+    learner_context: Literal["none", "primer", "examples"] = "none"
 
 
 class RLRunConfig(_Strict):
@@ -253,6 +257,8 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        if self.icrl.learner_context != "none" and not self.icrl.centralized:
+            raise ValueError("learner_context needs icrl.centralized")
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(
