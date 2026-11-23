@@ -32,7 +32,8 @@ from lasr_labs_2025_control_project.pipeline.schema import (
     MonitorArm,
     RewriteSpec,
 )
-from lasr_labs_2025_control_project.tracking import names
+from lasr_labs_2025_control_project.tracking import names, prompt_digest
+from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
 
 HASH_LENGTH = 12
 LABELS = ("attacks", "honeypots", "honest")
@@ -51,6 +52,24 @@ def canonical(obj: Any) -> str:
 
 def digest(obj: Any) -> str:
     return hashlib.sha256(canonical(obj).encode("utf-8")).hexdigest()
+
+
+def prompt_digests(obj: Any, out: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """{name: text digest} for every string in ``obj`` that names a registered prompt."""
+    out = {} if out is None else out
+    if isinstance(obj, str):
+        # Not a prompt name, or a BashArena one, which lives in its runtime.
+        try:
+            out[obj] = prompt_digest(get_prompt_by_name(obj))
+        except ValueError:
+            pass
+    elif isinstance(obj, Mapping):
+        for v in obj.values():
+            prompt_digests(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            prompt_digests(v, out)
+    return out
 
 
 @dataclass(eq=False)
@@ -72,11 +91,15 @@ class Node:
     def key(self) -> dict[str, Any]:
         if self.external is not None:
             return {"stage": self.stage, "external": self.external}
-        return {
+        key = {
             "stage": self.stage,
             "params": json.loads(canonical(self.params)),
             "deps": {role: dep.hash for role, dep in sorted(self.deps.items())},
         }
+        # Params name prompts; their text is read at run time, so an edit must enter the key.
+        if prompts := prompt_digests(self.params):
+            key["prompts"] = prompts
+        return key
 
     @cached_property
     def hash(self) -> str:
