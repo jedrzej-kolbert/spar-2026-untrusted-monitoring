@@ -20,7 +20,9 @@ from .core import (
     GroupedRLTrainer,
 )
 from . import usage
+from .plots import plot_auroc_over_steps
 from .tinker_backend import TinkerReceiver
+from .viewer import write_run_view
 from .records import (
     Recorder,
     batch_metrics,
@@ -191,7 +193,11 @@ def next_batch(
     return batch
 
 
-_DOCKER_DOWN = ("Cannot connect to the Docker daemon", "Is the docker daemon running")
+_DOCKER_DOWN = (
+    "Cannot connect to the Docker daemon",
+    "Is the docker daemon running",
+    "failed to connect to the docker API",  # Docker 29, when the socket is missing
+)
 
 
 def docker_down(result: BatchResult) -> bool:
@@ -464,6 +470,15 @@ async def run_gbrl(
             click.echo(f"final receiver checkpoint: {receiver_final}")
         recorder.status(state="finished", final_checkpoint=final)
         click.echo(f"final sender checkpoint: {final}")
+        if config.task_mode == "rewrite_signal":
+            try:
+                click.echo(f"AUROC over steps: {plot_auroc_over_steps(output_dir)}")
+            except Exception as exc:  # a plotting failure must not fail a finished run
+                logger.warning("could not plot AUROC over steps: %s", exc)
+        try:
+            click.echo(f"run view: {write_run_view(output_dir)}")
+        except Exception as exc:  # likewise for the record viewer
+            logger.warning("could not write the run view: %s", exc)
         complete = completed == training.steps
     finally:
         close_run(recorder, meter, output_dir, step, complete)
