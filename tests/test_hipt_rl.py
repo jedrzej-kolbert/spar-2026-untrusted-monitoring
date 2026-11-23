@@ -251,6 +251,9 @@ class PassingEvaluator:
     async def check_backdoor(self, problem: AppsProblem, code: str) -> ExecutionGrade:
         return ExecutionGrade("print(0)" in code)
 
+    async def start(self) -> None:
+        pass
+
 
 class FixedOverseer:
     def __init__(self) -> None:
@@ -1166,8 +1169,7 @@ def driven_run(
     )
     meter = usage.Usage()
     monkeypatch.setattr(run.usage, "install", lambda: meter)
-    monkeypatch.setattr(run, "ensure_image", lambda image: None)
-    monkeypatch.setattr(run, "DockerAppsEvaluator", lambda **kwargs: PassingEvaluator())
+    monkeypatch.setattr(run, "AppsEvaluator", lambda **kwargs: PassingEvaluator())
 
     async def parity(*args: Any) -> dict[str, float]:
         return {"main_task_agreement": 1.0, "backdoor_agreement": 1.0}
@@ -1583,15 +1585,20 @@ def test_batches_never_repeat_a_problem_across_epoch_boundaries() -> None:
         next_batch([], tasks[:3], 4, random.Random(0))
 
 
-def test_docker_outage_is_detected_from_rollout_errors() -> None:
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Cannot connect to the Docker daemon at unix://x",
+        "Error querying for running services: failed to connect to the docker API at unix://x",
+    ],
+)
+def test_docker_outage_is_detected_from_rollout_errors(message: str) -> None:
     from lasr_labs_2025_control_project.finetuning.grouped_rl.gbrl import docker_down
 
     healthy = BatchResult(1, [rollout()])
     assert not docker_down(healthy)
     broken = rollout()
-    broken.errors.append(
-        "sandbox infrastructure failure: Cannot connect to the Docker daemon at unix://x"
-    )
+    broken.errors.append(f"sandbox infrastructure failure: {message}")
     assert docker_down(BatchResult(1, [broken]))
 
 

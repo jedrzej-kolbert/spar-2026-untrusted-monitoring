@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import subprocess
 import sys
 import time
 from typing import Any, NamedTuple
@@ -38,7 +37,7 @@ from .data import attack_tasks, honeypot_pairs, read_generator_eval, split_tasks
 from .icrl_adapters import StrategyBox, with_strategy
 from .rewards import RewardConfig
 from . import usage
-from .sandbox import DockerAppsEvaluator
+from .sandbox import AppsEvaluator
 from .gbrl import run_gbrl
 from .icrl_run import run_in_context
 from .records import close_run, code_state, open_recorder
@@ -150,17 +149,8 @@ def load_tasks(config: RLRunConfig) -> Tasks:
     return Tasks(train, validation, train_honeypots, validation_honeypots, dropped)
 
 
-def ensure_image(image: str) -> None:
-    inspect = subprocess.run(
-        ["docker", "image", "inspect", image], capture_output=True, text=True
-    )
-    if inspect.returncode != 0:
-        logger.info("pulling sandbox image %s", image)
-        subprocess.run(["docker", "pull", image], check=True)
-
-
 async def sandbox_parity_check(
-    evaluator: DockerAppsEvaluator, tasks: list[AppsProblem], limit: int = 16
+    evaluator: AppsEvaluator, tasks: list[AppsProblem], limit: int = 16
 ) -> dict[str, Any]:
     """Re-grade the original attacks: they were selected as passing with a working
     backdoor in the Inspect pipeline, so the sandbox should agree."""
@@ -234,7 +224,7 @@ def core_config(
 
 async def build_trainer(
     config: RLRunConfig,
-    evaluator: DockerAppsEvaluator,
+    evaluator: AppsEvaluator,
     *,
     resume_state: str | None = None,
     strategy: StrategyBox | None = None,
@@ -399,17 +389,10 @@ async def train(
         f"{len(tasks.validation_honeypots)} validation"
     )
 
-    sandbox = config.sandbox
-    ensure_image(sandbox.image)
-    evaluator = DockerAppsEvaluator(
-        image=sandbox.image,
-        timeout_seconds=sandbox.timeout_seconds,
-        control_arena_parity=sandbox.control_arena_parity,
-        batch_tests=sandbox.batch_tests,
-        max_containers=sandbox.max_containers,
-        max_output_bytes=sandbox.max_output_bytes,
-        num_tests=config.data.max_tests,
+    evaluator = AppsEvaluator(
+        num_tests=config.data.max_tests, max_containers=config.sandbox.max_containers
     )
+    await evaluator.start()
     parity = await sandbox_parity_check(evaluator, train_tasks)
     click.echo(f"sandbox parity with eval scores: {parity}")
     if not allow_paid:

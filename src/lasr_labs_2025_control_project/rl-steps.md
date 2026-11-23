@@ -4,7 +4,7 @@ This trains the untrusted model (U) with reinforcement learning to hide a collus
 
 ## Setup
 
-Run `uv sync`, and put your Tinker API key in `.env` as `TINKER_API_KEY`. Docker must be running: the training loop grades code in a locked-down container. The first run pulls a pinned `python:3.12-slim` image.
+Run `uv sync`, and put your Tinker API key in `.env` as `TINKER_API_KEY`. Docker must be running: the training loop grades code with the pipeline's APPS scorer and sandbox. The first run pulls `aisiuk/inspect-tool-support` if it is missing.
 
 Weights & Biases works as in the pipeline: each run is a stage run (job type `icrl` or `gbrl`) in `WANDB_ENTITY`/`WANDB_PROJECT`, with `WANDB_MODE=offline` to log locally. A field written in the config's `logging:` block wins over its `WANDB_*` variable for that run (e.g. `wandb_project: collusion-rl-v2` for the team project). `train/` and `validation/` hold the key numbers, `*_detail/` everything else, and the run is tagged with its identity (`method`, `judge`, `threat_model`, `reward_id`, `seed`, `kind`; `rewrite_signal` runs add `task_mode` and `payload`). Pass `--allow-unlinked` when an input log's producing W&B run cannot be linked.
 

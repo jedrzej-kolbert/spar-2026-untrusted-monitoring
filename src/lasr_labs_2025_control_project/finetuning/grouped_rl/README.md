@@ -83,9 +83,10 @@ held-out evaluation does not require policy log probabilities.
 - `tinker_backend.py`: independent sender and receiver LoRA clients (default model:
   `Qwen/Qwen3-8B`). Clients are created only by explicit factory calls; every model
   operation is disabled unless `allow_paid=True`.
-- `sandbox.py`: local Docker evaluator for stdin and function-call APPS tasks.
-- `tests/test_apps_grouped_rl.py`: deterministic fake backends and mocked Docker
-  process tests; no model calls, downloads, or generated-code execution.
+- `sandbox.py`: control-arena's APPS scorer, run in the pipeline's sandbox (stdin
+  tasks only).
+- `tests/test_apps_grouped_rl.py`: deterministic fake backends and a fake sandbox
+  under the real scorer; no model calls, downloads, or generated-code execution.
 
 Run the tests, always excluding the repository's paid/live tests:
 
@@ -106,12 +107,9 @@ The explicit `split` argument labels the caller's data; it does not independentl
 verify source-dataset provenance. No dataset is downloaded implicitly.
 
 Invalid/missing test metadata raises an error rather than silently removing a
-record. Both stdin strings and function-call argument lists are supported. Stdin
-comparison strips outer whitespace, as the project's existing APPS scorer does.
-Function-call outputs use JSON structural equality, accepting APPS's singleton
-expected-output wrapper. The local image supplies Python's standard library, not
-arbitrary third-party dependencies; float-tolerance conventions and unusual APPS
-output types require validation before expanding beyond the wiring pilot.
+record. Records may hold function-call argument lists, but `sandbox.py` grades only
+stdin problems, as control-arena's scorer does; a function-call problem is reported as
+an infrastructure failure, not as wrong code.
 
 Use `GroupedRLTrainer(sender, receiver, evaluator)` and await
 `train_step(train_problems)` for one alternating update. Call
@@ -138,14 +136,18 @@ optimizer may already have committed: **do not blindly retry the batch**.
 
 ## Execution and paid-run boundary
 
-The Docker executor never executes generated code on the host. Each selected test
-uses a fresh container with no network, no Linux capabilities, a non-root UID,
-read-only source/root filesystem, and CPU/memory/PID/output/time limits. It removes
-its own uniquely named container on timeout or output overflow; killing only the
-Docker CLI is insufficient. Images are local-only (`--pull=never`); a missing image
-or unavailable daemon is an infrastructure failure, not incorrect code. Review and
-pin the worker image before a live run. Docker isolation is not a formal security
-guarantee; use an isolated execution worker for adversarial generated code.
+`sandbox.py` grades with the same code and container as generation, SFT data and test
+rewrites: control-arena's `passes_tests` and `has_backdoor` (the two halves of
+`apps_scorer`) in the sandbox of `AppsSetting.get_sandbox_config()`. The first
+`data.max_tests` tests must print the expected output, with no stderr, in 10 seconds
+each. The scorer's cache is off.
+
+That container has no network, but it runs as root on a writable disk with no memory,
+CPU or process limit: use rootless Docker or an isolated worker, and keep
+`sandbox.max_containers` low on a small machine. Every grade and backdoor check gets
+its own container. An unavailable daemon or a container that died is an infrastructure
+failure, not incorrect code. After a killed run, remove leftover containers with
+`inspect sandbox cleanup docker`.
 
 Paid calls need an explicit opt-in (`allow_paid`, or `--allow-paid` on the `run.py`
 CLI). **That flag is not spending approval**; `training.max_cost_usd` caps the
