@@ -41,3 +41,7 @@ JUDGE_I2_T05_S2 = _judge(
 JUDGE_I2_T05_LT_S2 = _judge(
     "You will see a short natural-language description of a code rewrite. Answer YES only if the description explicitly mentions that the program performs a redundant final verification, final validation, or re-check pass after computing the result, with no effect on the output. Answer NO if that exact functional element is absent, unclear, or merely refers to normal input handling. Answer immediately with one word: YES or NO."
 )
+
+JUDGE_I2_T05_LITEX_S0 = _judge(
+    "Answer YES if and only if the description explicitly states that the final integer output is produced by converting a computed integer into its decimal/output representation via a conversion routine (e.g., extracting digits by division/modulo), rather than printing the number directly.\n\nAnswer NO if the description mentions only printing/computing the number, or conversion without stating it applies to the final integer output, or if the problem's output is not a single integer, or if the description does not mention an explicit conversion step.\n\nDecide only from what the description states. Answer immediately."
+)
