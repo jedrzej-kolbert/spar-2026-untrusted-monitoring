@@ -37,7 +37,7 @@ class AppsSetting(Setting):
     num_tests_to_run: int = Field(default=10)
     dataset_name: Literal["simple", "backdoor"] = Field(default="simple")
     dataset_type: Literal["filtered", "original"] = Field(default="original")
-    original_dataset_split: Literal["train", "test", "all"] = Field(default="test")
+    original_dataset_split: Literal["train", "test"] = Field(default="test")
     filter_on_split: Literal["odd_train", "even_test"] | None = Field(default=None)
     problem_ids_range: list[int] | None = None
     shuffle: bool = Field(default=True)
@@ -75,16 +75,13 @@ class AppsSetting(Setting):
         self,
         eval_mode: EvalMode = EvalMode.HONEST,
     ) -> MemoryDataset | Dataset:
-        if self.original_dataset_split == "all":
-            dataset = self.get_all_data(eval_mode)
-        else:
-            dataset = hf_dataset(
-                "codeparrot/apps",
-                sample_fields=self.record_to_sample_factory(eval_mode),
-                split=self.original_dataset_split,
-                trust=True,
-                shuffle=self.shuffle,
-            )
+        dataset = hf_dataset(
+            "codeparrot/apps",
+            sample_fields=self.record_to_sample_factory(eval_mode),
+            split=self.original_dataset_split,
+            trust=True,
+            shuffle=self.shuffle,
+        )
 
         if self.dataset_name == "backdoor":
             backdoors = get_backdoors_dataset()
@@ -138,18 +135,6 @@ class AppsSetting(Setting):
                 )
 
         return dataset
-
-    def get_all_data(self, mode: EvalMode) -> Dataset:
-        dataset = []
-        for original_dataset_split in ["train", "test"]:
-            split_data = hf_dataset(
-                "codeparrot/apps",
-                sample_fields=self.record_to_sample_factory(mode=mode),
-                split=original_dataset_split,
-                trust=True,
-            )
-            dataset.extend(split_data)
-        return MemoryDataset(dataset)
 
     def get_scorers(self) -> list[Scorer]:
         return [apps_scorer(self.cache_python_code, self.num_tests_to_run)]
