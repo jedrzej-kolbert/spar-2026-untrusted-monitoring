@@ -149,6 +149,8 @@ def test_wandb_logging_leaves_local_records_unchanged(
     assert identity["threat_model"] == "causal"
     assert identity["task_mode"] == "rewrite_signal"
     assert "method:gbrl" in stage.kwargs["tags"]
+    assert "sandbox_bug_fix:true" in stage.kwargs["tags"]
+    assert stage.kwargs["config"]["sandbox_bug_fix"] is True
     logged = {key for _, values in stage.run.logged for key in values}
     assert {
         "train/reward",
