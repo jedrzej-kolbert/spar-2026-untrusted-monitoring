@@ -60,6 +60,9 @@ RECORD_FILES = (
     "honeypot_scores.jsonl",
     "status.json",
     "usage.json",
+    "auroc_over_steps.svg",
+    "auroc_over_steps.json",
+    "run_view.html",
 )
 # The numbers to look at first in each section.
 KEY_METRICS = (
