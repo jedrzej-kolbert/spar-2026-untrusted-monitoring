@@ -182,8 +182,9 @@ see its README) and is driven by the pipeline like the other settings.
 
   | Panel (y) | x-axis | One point is |
   |---|---|---|
-  | `<variant>/safety` | `<variant>/usefulness` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
-  | `<variant>/band/safety_{lo,median,hi}` | `<variant>/band/usefulness` | the same, as bootstrap percentiles |
+  | `<variant>/usefulness` | `<variant>/safety` | one regeneration cutoff; usefulness = 1 − cutoff, safety = P(blue team wins) at equilibrium |
+  | `<variant>/band` (table chart, lines `lo`, `median`, `hi`) | `safety` | the same, as bootstrap percentiles of safety at each usefulness |
+  | `<variant>/band/safety_{lo,median,hi}` (kept so older saved views still work) | `<variant>/band/usefulness` | the same band as metric rows |
   | `strategy/<variant>/<parameter>` | `strategy/<variant>/usefulness` | one regeneration cutoff: blue's most likely `blue_*` value, or red's best-response `red_*` value, at equilibrium |
   | `strategy/<variant>/{blue_top_probability,blue_support_size,red_nash_support_size}` | `strategy/<variant>/usefulness` | the same: how mixed each team's equilibrium strategy is |
   | `train/loss`, `checkpoint/roc_auc` | `train/step` | one training step or saved checkpoint |
