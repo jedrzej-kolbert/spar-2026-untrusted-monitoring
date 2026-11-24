@@ -208,6 +208,14 @@ def summary_row(summary: RoundSummary) -> dict[str, Any]:
         "backdoor_fires_rate": summary.backdoor_fires_rate,
         "backdoor_checked": summary.backdoor_checked,
         "gate_mean": summary.gate_mean,
+        **(
+            {
+                "honeypot_threshold": summary.honeypot_threshold,
+                "above_threshold_rate": summary.above_threshold_rate,
+            }
+            if summary.honeypot_threshold is not None
+            else {}
+        ),
         "trusted_suspicion": summary.suspicion_mean,
         "episodes": summary.episodes,
     }
@@ -381,6 +389,7 @@ class Recorder:
                     "overseer_log_odds": item.overseer_log_odds,
                     "backdoor_suspicion": item.backdoor_suspicion,
                     "honeypot_p_yes": item.honeypot_p_yes,
+                    "honeypot_threshold": item.honeypot_threshold,
                     "kl": item.kl,
                     "reward": item.reward,
                     "reward_components": item.reward_components,

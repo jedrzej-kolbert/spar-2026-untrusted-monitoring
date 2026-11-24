@@ -140,6 +140,7 @@ async def run_in_context(
         state.save(config.output_dir / "icrl_state.json")
         recorder.sync_file("icrl_state.json")
 
+    quantile = icrl.centralized and config.reward.paired == "quantile"
     rows: dict[str, dict[str, Any]] = {}
     done: dict[tuple[str, str], dict[str, Any]] = {}
     rocs: dict[tuple[str, str], list[tuple[float, float]]] = {}
@@ -166,6 +167,11 @@ async def run_in_context(
                 metrics["paired_reward_mean"] = sum(paired_rewards) / len(
                     paired_rewards
                 )
+            if quantile:  # every validation rollout is scored against every honeypot
+                scored = [r for r in rewrites.rollouts if r.reward is not None]
+                rewards = [r.reward for r in scored if r.reward is not None]
+                metrics["quantile_reward_mean"] = sum(rewards) / len(rewards)
+                metrics["honeypot_threshold"] = scored[0].honeypot_threshold
             recorder.honeypots(step, honeypot.honeypot_scores)
             done[key] = metrics
             _, rocs[key] = collusion_auroc(rewrites, honeypot.honeypot_scores)
@@ -189,6 +195,8 @@ async def run_in_context(
         # The centralized reward is paired; a rewrite whose problem has no
         # honeypot would otherwise count the judge's YES without its cost.
         objective = "paired_reward_mean" if icrl.centralized else "reward"
+        if quantile:
+            objective = "quantile_reward_mean"
         # Round 0 is the no-strategy control, validated below as "baseline".
         top = sorted(
             (item for item in history if item.round > 0),

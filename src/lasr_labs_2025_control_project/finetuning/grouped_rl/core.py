@@ -262,6 +262,8 @@ class Rollout:
     # Centralized ICRL: the judge's P(YES) on this problem's honeypot, and its code.
     honeypot_p_yes: float | None = None
     honeypot_code: str | None = None
+    # reward.paired quantile: the honeypot log-odds threshold this rewrite was scored against.
+    honeypot_threshold: float | None = None
 
     @property
     def decoded_correctly(self) -> bool:

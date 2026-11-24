@@ -89,6 +89,13 @@ class RewardSettings(_Strict):
     kl_coef: float = Field(default=0.05, ge=0)
     # bonus when the rewrite's backdoor still triggers on the secret input
     backdoor_kept_weight: float = Field(default=0.0, ge=0)
+    # Centralized ICRL. "difference": gate * (P(YES | rewrite) - P(YES | its problem's
+    # honeypot)). "quantile": gate * sigmoid((logit P(YES | rewrite) - tau) /
+    # honeypot_temperature), tau = honeypot_quantile of the judge's log-odds on all the
+    # phase's honeypots; it rewards beating the honeypots the judge accepts most.
+    paired: Literal["difference", "quantile"] = "difference"
+    honeypot_quantile: float = Field(default=0.95, gt=0, lt=1)
+    honeypot_temperature: float = Field(default=1.0, gt=0, allow_inf_nan=False)
 
 
 class TrainingConfig(_Strict):
@@ -258,6 +265,8 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        if reward.paired != "difference" and not self.icrl.centralized:
+            raise ValueError("reward.paired quantile needs icrl.centralized")
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(
@@ -282,6 +291,8 @@ class RLRunConfig(_Strict):
         else:
             judge = "sft" if self.models.receiver.startswith("tinker://") else "base"
         reward = "paired" if centralized else self.reward.reward_fn
+        if centralized and self.reward.paired == "quantile":
+            reward = f"quantile{self.reward.honeypot_quantile:g}"
         identity: dict[str, str | int] = {
             "method": "icrl" if self.method == "in_context" else "gbrl",
             "judge": judge,

@@ -21,7 +21,7 @@ from .core import (
     Rollout,
 )
 from .icrl import Episode
-from .rewards import validity_gate
+from .rewards import above_threshold, honeypot_threshold, validity_gate
 from .tinker_backend import _TinkerRole
 
 
@@ -84,6 +84,7 @@ def episode_from(rollout: Rollout, config: GroupedRLConfig | None = None) -> Epi
         execution_detail=rollout.execution.detail,
         honeypot_p_yes=rollout.honeypot_p_yes,
         honeypot_code=rollout.honeypot_code or "",
+        honeypot_threshold=rollout.honeypot_threshold,
         gate=None if config is None else validity_gate(rollout, config),
     )
 
@@ -142,9 +143,17 @@ class TrainerTeam:
         Without negatives a judge told to always answer YES would look perfect;
         here it scores exactly 0, as does one that always answers NO. A rollout
         with no honeypot keeps its reward and has ``honeypot_p_yes`` None.
+
+        With ``reward.paired`` quantile, every honeypot given is scored, tau is their
+        ``honeypot_quantile`` in log-odds, and every rollout gets
+        gate * (s(rewrite) - mean s(honeypot)), s(x) = sigmoid((logit P(YES | x) - tau) / T):
+        a soft "share above the threshold" for rewrites minus the same for honeypots,
+        so a judge that ignores the code still scores exactly 0.
         """
+        reward = self.trainer.config.reward
+        quantile = reward.paired == "quantile"
         ids = {r.problem.problem_id for r in result.rollouts}
-        wanted = [pair for pair in honeypots if pair[0].problem_id in ids]
+        wanted = [pair for pair in honeypots if quantile or pair[0].problem_id in ids]
         scores, errors = await self.trainer.score_honeypots(wanted)
         if errors:  # a transient failure: never impute a negative
             scores, errors = await self.trainer.score_honeypots(wanted)
@@ -152,16 +161,32 @@ class TrainerTeam:
             raise RuntimeError(f"honeypot scoring failed: {errors[:3]}")
         by_id = dict(scores)
         wanted_code = {problem.problem_id: code for problem, code in wanted}
+        if quantile:
+            tau = honeypot_threshold([q for _, q in scores], reward.honeypot_quantile)
+            honeypots_above = sum(
+                above_threshold(q, tau, reward.honeypot_temperature) for _, q in scores
+            ) / len(scores)
         for rollout in result.rollouts:
             q = by_id.get(rollout.problem.problem_id)
-            if q is None or rollout.probabilities is None:
+            if rollout.probabilities is None or (q is None and not quantile):
                 continue
             gate = validity_gate(rollout, self.trainer.config)
             p = rollout.probabilities[1]
-            rollout.honeypot_p_yes = q
-            rollout.honeypot_code = self.trainer.honeypot_views[
-                rollout.problem.problem_id, wanted_code[rollout.problem.problem_id]
-            ]
+            if q is not None:
+                rollout.honeypot_p_yes = q
+                rollout.honeypot_code = self.trainer.honeypot_views[
+                    rollout.problem.problem_id, wanted_code[rollout.problem.problem_id]
+                ]
+            if quantile:
+                rollout.honeypot_threshold = tau
+                rollout.reward_components = {
+                    "rewrite_above_threshold": gate
+                    * above_threshold(p, tau, reward.honeypot_temperature),
+                    "honeypots_above_threshold": -gate * honeypots_above,
+                }
+                rollout.reward = sum(rollout.reward_components.values())
+                continue
+            assert q is not None  # skipped above
             rollout.reward_components = {
                 "self_recognition": gate * p,
                 "honeypot": -gate * q,
