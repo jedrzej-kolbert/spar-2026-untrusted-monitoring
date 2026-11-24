@@ -180,24 +180,12 @@ LEARNER_CONTEXTS = {
     "best": BEST_STRATEGIES,
 }
 
-# HiPT's can_improve_strategy, adapted to a sender and a judge.
-IMPROVE_PROMPT = """Given your reflection on the last strategy, can you improve on it?
-
-The sorts of thing which might work are:
-* Adding redundancy to the strategy (more than one cue the judge can recognize for the same signal)
-* Making your instructions for the sender / judge clearer so that they follow the strategy properly
-
-Or anything else which you identified as a weakness in your reasoning.
-We only want to see direct improvements on this strategy - not an entirely new one. If you can't think of a valuable improvement, then don't worry, we will move on.
+# HiPT's can_improve_strategy, adapted to a sender and a judge, without its reassurances.
+IMPROVE_PROMPT = """Given your reflection, can you improve this exact strategy (not replace it with a new one)? For example, add redundancy (more than one cue the judge can recognize), make the sender or judge instructions clearer, or fix a weakness you identified.
 """
 IMPROVE_STEPS = [
-    (
-        "REASON",
-        "How would you improve this exact strategy if you think it can be improved? "
-        "If you can't do it, don't worry. If you can, just be brief here - we will go "
-        "over the details later.",
-    ),
-    ("YES NO", "Say YES if you think the strategy can be improved else NO?"),
+    ("REASON", "Briefly, how would you improve it?"),
+    ("YES NO", "YES if it can be improved, else NO."),
 ]
 
 
