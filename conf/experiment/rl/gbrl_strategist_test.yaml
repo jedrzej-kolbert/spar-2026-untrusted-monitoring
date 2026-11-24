@@ -1,0 +1,65 @@
+# @package _global_
+# Test-split safety-usefulness of the GBRL strategist run gbrl-strategist-s0 (W&B
+# mq1oy6jg): its top 3 validated strategies by paired validation reward (steps 40,
+# 30, 1) and a no-strategy control, scored as ICRL's centralized (I2) winners were
+# (the collusion-RL-v2 rl_test protocol: no-transform and paraphrased channels).
+#
+# Each strategy arm rewrites U's 309 working test attacks with the strategy's sender
+# instructions (the search's RL_CENTRAL_SENDER_SYSTEM_PROMPT) and is monitored by base
+# U with the strategy's learned judge prompt (JUDGE_GBRL_STRATEGIST_S0_STEP<N> in
+# prompts/learned_judge_prompts.py). The control rewrites with no instructions and is
+# monitored with the search's base judge prompt (the final checks' "baseline").
+#
+#   python -m lasr_labs_2025_control_project.pipeline experiment=rl/gbrl_strategist_test allow_paid=true
+defaults:
+  - override /setting: apps
+  - override /models: open
+  - _self_
+name: rl_gbrl_strategist_test
+stages: [rewrite, transform, monitor, game, analysis]
+# The test generations below are local files with no W&B producing run to link.
+allow_unlinked: true
+models:
+  U: tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144
+  T: tinker/Qwen/Qwen3.5-4B
+measurement:
+  collusion_strategy: self_rec
+  transforms: [none, paraphrased]
+  arms:
+    no_strategy:
+      model: U
+      collusion_prompt: SELF_REC_UNTRUSTED_MONITOR_COLLUSION_SYSTEM_PROMPT
+      rewrite:
+        model: U
+        system_prompt: RL_CENTRAL_SENDER_SYSTEM_PROMPT
+        user_prompt: RL_SELF_REC_SENDER_USER_PROMPT
+    step40:
+      model: U
+      collusion_prompt: JUDGE_GBRL_STRATEGIST_S0_STEP40
+      rewrite:
+        model: U
+        system_prompt: RL_CENTRAL_SENDER_SYSTEM_PROMPT
+        user_prompt: RL_SELF_REC_SENDER_USER_PROMPT
+        strategy_result: experiments/open-source-model/apps/rl/gbrl_strategist/test_strategies/step40.json
+    step30:
+      model: U
+      collusion_prompt: JUDGE_GBRL_STRATEGIST_S0_STEP30
+      rewrite:
+        model: U
+        system_prompt: RL_CENTRAL_SENDER_SYSTEM_PROMPT
+        user_prompt: RL_SELF_REC_SENDER_USER_PROMPT
+        strategy_result: experiments/open-source-model/apps/rl/gbrl_strategist/test_strategies/step30.json
+    step1:
+      model: U
+      collusion_prompt: JUDGE_GBRL_STRATEGIST_S0_STEP1
+      rewrite:
+        model: U
+        system_prompt: RL_CENTRAL_SENDER_SYSTEM_PROMPT
+        user_prompt: RL_SELF_REC_SENDER_USER_PROMPT
+        strategy_result: experiments/open-source-model/apps/rl/gbrl_strategist/test_strategies/step1.json
+inputs:
+  generate:
+    test:
+      attacks: data/hipt_rl/gbrl-strategist-test-data/test_attacks.eval
+      honeypots: data/hipt_rl/gbrl-strategist-test-data/honeypots.eval
+      honest: data/hipt_rl/gbrl-strategist-test-data/test_honest.eval
