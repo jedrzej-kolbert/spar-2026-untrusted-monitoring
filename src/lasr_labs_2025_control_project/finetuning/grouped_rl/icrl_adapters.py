@@ -7,6 +7,7 @@ runs. The only difference is that the sender's prompt carries the current strate
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -110,6 +111,9 @@ class TrainerTeam:
     # each rewrite against its problem's honeypot. Empty keeps the sender-only loop.
     judge_template: str = ""
     train_honeypots: Sequence[tuple[AppsProblem, str]] = ()
+    # Draw this many of search_problems afresh for every round; None uses them all.
+    search_size: int | None = None
+    seed: int = 0
 
     def __post_init__(self) -> None:
         if not self.trainer.config.self_recognition:
@@ -127,6 +131,11 @@ class TrainerTeam:
         self.search_problems = [
             replace(p, split="validation") for p in self.search_problems
         ]
+        if self.search_size is not None and self.search_size > len(
+            self.search_problems
+        ):
+            raise ValueError("search_size exceeds the search problems")
+        self._rng = random.Random(self.seed)
 
     def _report(self, strategy: str, result: BatchResult, phase: str) -> None:
         if self.on_result is not None:
@@ -201,7 +210,13 @@ class TrainerTeam:
 
     async def episodes(self, strategy: str, decoder: str = "") -> list[Episode]:
         result = await self._run(
-            strategy, self.search_problems, "search", decoder, self.train_honeypots
+            strategy,
+            self.search_problems
+            if self.search_size is None
+            else self._rng.sample(list(self.search_problems), self.search_size),
+            "search",
+            decoder,
+            self.train_honeypots,
         )
         return [episode_from(r, self.trainer.config) for r in result.rollouts]
 

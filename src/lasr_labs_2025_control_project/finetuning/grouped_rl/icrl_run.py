@@ -67,7 +67,12 @@ async def run_in_context(
         train_tasks = [task for task in train_tasks if task.problem_id in paired]
     if icrl.search_problems > len(train_tasks):
         raise ValueError("icrl.search_problems exceeds the training problems")
-    search = random.Random(config.seed).sample(train_tasks, icrl.search_problems)
+    # resample_search: every round draws search_problems from all the training tasks.
+    search = (
+        train_tasks
+        if icrl.resample_search
+        else random.Random(config.seed).sample(train_tasks, icrl.search_problems)
+    )
     resume = SearchState.load(icrl.resume_state) if icrl.resume_state else None
     recorder.status(
         state="searching", search_problem_ids=[p.problem_id for p in search]
@@ -122,6 +127,8 @@ async def run_in_context(
         on_result=on_result,
         judge_template=RL_CENTRAL_JUDGE_SYSTEM_PROMPT if icrl.centralized else "",
         train_honeypots=train_honeypots if icrl.centralized else (),
+        search_size=icrl.search_problems if icrl.resample_search else None,
+        seed=config.seed,
     )
 
     def on_summary(summary: RoundSummary) -> None:
@@ -183,6 +190,13 @@ async def run_in_context(
             resume=resume,
             on_state=on_state,
             prompts=learner_prompts(icrl.centralized, icrl.learner_context),
+            try_improve=icrl.try_improve,
+            is_success=None
+            if icrl.success_auroc is None
+            else lambda s: (
+                (s.auroc or 0) >= icrl.success_auroc
+                and (s.working_rate or 0) >= icrl.success_working
+            ),
         )
         recorder.status(state="validation")
         # The centralized reward is paired; a rewrite whose problem has no
