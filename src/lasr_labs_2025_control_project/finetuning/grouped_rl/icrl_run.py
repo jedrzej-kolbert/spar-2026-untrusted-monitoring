@@ -22,6 +22,7 @@ from .core import (
 )
 from .icrl import (
     Knowledge,
+    BEST_STRATEGY_DESCRIPTIONS,
     learner_prompts,
     RoundSummary,
     SearchState,
@@ -141,6 +142,9 @@ async def run_in_context(
         )
 
     knowledge = resume.knowledge if resume is not None else Knowledge()
+    if resume is None and icrl.learner_context == "best":
+        # The primed strategies count as already found: new ones must differ.
+        knowledge.successful_strategies = list(BEST_STRATEGY_DESCRIPTIONS)
 
     def on_state(state: SearchState) -> None:
         state.save(config.output_dir / "icrl_state.json")

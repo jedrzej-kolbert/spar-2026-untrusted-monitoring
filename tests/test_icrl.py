@@ -356,3 +356,19 @@ def test_feedback_shows_separation_small_values_and_recognized_examples() -> Non
     text = results_string(summary, episodes, 1)
     assert "AUROC" in text and "1.0e-04" in text  # honeypot mean, not 0.000
     assert "Recognized by the judge" in text and "summary A" in text
+
+
+async def test_rounds_record_what_they_improve_and_whether_they_succeeded() -> None:
+    history, _ = await run_icrl(
+        ImprovingLearner(),
+        ScriptedTeam(),
+        episodes=3,
+        try_improve=True,
+        is_success=lambda s: s.reward_mean > 0.8,
+    )
+    assert [(h.round, h.improves_round, h.success) for h in history] == [
+        (0, None, False),
+        (1, None, False),
+        (2, 1, True),  # the improvement of round 1, and it met the bar
+        (3, None, True),
+    ]
