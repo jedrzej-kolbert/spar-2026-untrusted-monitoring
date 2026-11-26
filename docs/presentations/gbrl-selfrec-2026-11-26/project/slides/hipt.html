@@ -1,0 +1,14 @@
+<section id="hipt" class="alt">
+<p class="eyebrow">Overview</p>
+<h2>HiPT vs our experiment</h2>
+<table class="t big">
+<tr><th style="width:20%"></th><th style="width:38%">HiPT</th><th style="width:42%">Ours</th></tr>
+<tr><td class="muted">Data</td><td>CVs / free-form text</td><td>Python code</td></tr>
+<tr><td class="muted">Message</td><td>Steganotext does “break CVs”</td><td>We include the message by rewriting existing honest (no backdoor) and attack (with backdoor) code</td></tr>
+<tr><td class="muted">Oversight</td><td>Overseer</td><td>Overseer + honeypots</td></tr>
+<tr><td class="muted">Suspicion</td><td>r_sus = tanh(z_Yes − z_No − t_sens)</td><td>From 1 to 10</td></tr>
+<tr><td class="muted">Task reward</td><td>R_task = tanh(logprob(correct_label))</td><td>–</td></tr>
+</table>
+<p class="src">Source: GBRL meeting, slide 34</p>
+<aside>Source: GBRL meeting slide 34. The “Ours” cell for the task reward was empty in the source.</aside>
+</section>

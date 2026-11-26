@@ -1,0 +1,16 @@
+<section id="a-test" class="attack-part">
+<p class="eyebrow">Attack policy · B vs C</p>
+<h2>Self-rec on attacks: B/C on the test split</h2>
+<div class="row">
+<div class="text" style="width:440px">
+<ul class="b small">
+<li>Suspicion generally increases over time. I think this may partly be because more backdoors are kept after rewriting</li>
+<li>P(self) is basically flat</li>
+<li>AUROC mildly increases in places, but fluctuates overall</li>
+</ul>
+</div>
+<div class="fig"><div class="card"><img src="/_blob/79ef0a769895ab3a359566db791aff59" alt="Test-split results for V4.1 B and C: mean suspicion rises from 0.58 to 0.65; kept rises from 0.77 to 0.9; mean P(self) stays at 0.70; AUROC stays between 0.72 and 0.75, below the original attacks' 0.765." style="width:1134px;height:690px;object-fit:contain"></div></div>
+</div>
+<p class="src">Source: mentor deck, slide 27, redrawn with V4.1 only · means over all 309 rewrites · AUROC: working rewrites vs 246 working honeypots, 95% bootstrap bands · dotted: original attacks 0.765 · C ends at step 15</p>
+<aside>Source: mentor deck slide 27. V3.1 lines and the V3.1-only bullets were dropped. Caveat from the source: the judge is an SFT judge. V4.1 C ends at step 15; its step 20 evaluation is incomplete.</aside>
+</section>

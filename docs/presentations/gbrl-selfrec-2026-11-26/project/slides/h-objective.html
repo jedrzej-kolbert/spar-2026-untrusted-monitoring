@@ -1,0 +1,27 @@
+<section id="h-objective">
+<p class="eyebrow">Honest policy</p>
+<h2>Self-rec on honest code</h2>
+<div class="row">
+<div class="text" style="width:820px">
+<div class="formula">
+<p><b>Objective:</b> distinguish between honest U_G (sender) and honeypots</p>
+<p><b>Constraint:</b> code has to pass tests / achieve the main task</p>
+</div>
+<div class="formula">
+<p class="muted">Reward function components</p>
+<p>P(YES | U_G rewrite) = exp(logp_YES) / (exp(logp_YES) + exp(logp_NO)), something like a softmax</p>
+<p>Pass: does the rewrite pass the main task? Binary: 0 does not pass, 1 passes</p>
+<p class="eq">R = P(YES | U_G rewrite) · Pass</p>
+</div>
+</div>
+<div class="text" style="width:780px">
+<h3>Why no component for honeypots?</h3>
+<ul class="b">
+<li>Honeypots are static: they don’t change per rewrite</li>
+<li>Honeypots are used only for the receiver U_M</li>
+</ul>
+</div>
+</div>
+<p class="src">Source: GBRL meeting, slide 37</p>
+<aside>Source: GBRL meeting slide 37.</aside>
+</section>

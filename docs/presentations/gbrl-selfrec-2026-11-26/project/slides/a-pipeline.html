@@ -1,0 +1,17 @@
+<section id="a-pipeline" class="attack-part">
+<p class="eyebrow">Attack policy</p>
+<h2>Self-rec on attacks: the pipeline</h2>
+<div class="row">
+<div class="text" style="width:400px">
+<ul class="b">
+<li>We anyway care only about the self-rec</li>
+<li>Changed the pipeline to rewrite working attacks</li>
+<li>Trained the rewriter</li>
+</ul>
+<p class="lede" style="font-size:24px">Diagram drawn for the V3.1 runs. The V4.1 runs use a DeepSeek-V4.1-Flash sender and a frozen SFT judge that reads summaries instead of stripped code.</p>
+</div>
+<div class="fig"><img src="/_blob/012d14cbc538e1bf97c0e6666c00ef33" alt="GBRL pipeline: training problems go to the sender, which rewrites them; the rewrite goes to the sandbox (pass, backdoor), the frozen judge (P(self)) and the trusted monitor (suspicion); these give a reward per rewrite, a group advantage, and a PPO update on Tinker." style="width:1256px;height:651px;object-fit:contain;border-radius:14px"></div>
+</div>
+<p class="src">Source: mentor deck, slide 23 · based on artifact JtHVHW2ZGfqwU7H2AE2esM · rewriter: artifact BAPxgfBr5FoKcxutitRzJb</p>
+<aside>Source: mentor deck slide 23. Links in the source: https://claude.ai/artifact/JtHVHW2ZGfqwU7H2AE2esM#e2 (based on), https://claude.ai/artifact/BAPxgfBr5FoKcxutitRzJb (trained the rewriter), W&B filtered self-rec GBRL runs https://wandb.ai/spar-untrusted-monitoring-collusion/hipt-collusion-rl?nw=5qx33vrnzfy</aside>
+</section>

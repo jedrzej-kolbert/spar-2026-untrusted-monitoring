@@ -1,0 +1,22 @@
+<section id="h-frozen">
+<p class="eyebrow">Honest policy · frozen judge</p>
+<h2>GBRL on benign code: frozen judges</h2>
+<div class="row">
+<div class="text narrow">
+<ul class="b">
+<li>Sender rewrites honest code</li>
+<li>Reward = pass · P(YES)</li>
+<li>No upward trend in any run</li>
+</ul>
+<table class="t">
+<tr><th>Run</th><th>steps</th><th>best val P(self)</th></tr>
+<tr><td>A · base, paraphrased</td><td>300</td><td>0.39</td></tr>
+<tr><td>B · SFT judge, paraphrased</td><td>100</td><td>0.90</td></tr>
+<tr><td>C · base, raw code</td><td>271</td><td>0.89</td></tr>
+</table>
+</div>
+<div class="fig"><div class="card"><img src="/_blob/f4d568d6fc64c1c9dbd8aba74c3644e0" alt="Train P(self-recognition), 10-step mean, over GBRL steps for three frozen-judge runs: base paraphrased stays near 0.35–0.4, SFT judge paraphrased and base raw code stay near 0.9." style="width:1040px;height:675px;object-fit:contain"></div></div>
+</div>
+<p class="src">Source: Collusion RL v2 deck, slide 15 · plot: train P(self-recognition), 10-step mean</p>
+<aside>Source: Collusion RL v2 deck slide 15. Open comment on that slide: “you should report the reward”. The plot here still shows train P(self-recognition); the next slide (GBRL meeting) shows training reward and validation AUROC for A and C.</aside>
+</section>

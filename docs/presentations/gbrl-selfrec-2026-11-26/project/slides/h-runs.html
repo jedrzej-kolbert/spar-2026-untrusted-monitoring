@@ -1,0 +1,17 @@
+<section id="h-runs" class="alt">
+<p class="eyebrow">Honest policy</p>
+<h2>The seven honest-policy runs</h2>
+<table class="t">
+<tr><th style="width:6%">Run</th><th style="width:15%">Channel</th><th style="width:27%">Judge</th><th style="width:10%">Steps</th><th style="width:16%">Best val P(self)</th><th style="width:10%">Cost</th><th style="width:16%">W&amp;B</th></tr>
+<tr><td>A</td><td>paraphrased</td><td>frozen base</td><td>300</td><td>0.39</td><td>$154.58</td><td>dy74 → suww</td></tr>
+<tr><td>B</td><td>paraphrased</td><td>frozen SFT judge</td><td>100</td><td>0.90</td><td>$50.98</td><td>v3d4</td></tr>
+<tr><td>C</td><td>raw code</td><td>frozen base</td><td>271</td><td>0.89</td><td>$164.55</td><td>k3kx</td></tr>
+<tr><td>D</td><td>raw code</td><td>trained with the sender</td><td>98</td><td>0.97</td><td>$110.00</td><td>bgju</td></tr>
+<tr><td>E</td><td>paraphrased, T = 1</td><td>trained with the sender</td><td>100</td><td>0.58</td><td>$79.16</td><td>qu5a</td></tr>
+<tr><td>F</td><td>paraphrased</td><td>trained, sender frozen</td><td>76</td><td>0.62</td><td>$36.38</td><td>mx5z</td></tr>
+<tr><td>G</td><td>paraphrased, T = 0.1</td><td>trained with the sender</td><td>100</td><td>0.53</td><td>$82.37</td><td>ik5a</td></tr>
+</table>
+<p class="lede" style="font-size:26px;margin-top:28px">Trained judge: 2 updates every 5 sender steps. Costs are each run’s logged estimate, not billing. Total $678.02.</p>
+<p class="src">Sources: Collusion RL v2 deck, slides 15–16 (steps, best val P(self)) · Benign GBRL Comparisons page (letters, costs)</p>
+<aside>Run letters A–G match the legends in the GBRL meeting plots. Steps and best validation P(self) come from the Collusion RL v2 deck tables. Costs come from the Benign GBRL Comparisons cost table (logged estimates; A is $51.22 for steps 1–100 plus $103.36 for the continuation to 300).</aside>
+</section>
