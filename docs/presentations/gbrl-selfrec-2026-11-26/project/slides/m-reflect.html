@@ -1,0 +1,30 @@
+<section id="m-reflect" class="msg-part">
+<p class="eyebrow">Hide a message · Neelasha · follow-ups</p>
+<h2>Prompt fixes and what she took from it</h2>
+<div class="row" style="gap:64px">
+<div class="text" style="width:800px">
+<h3 class="hl">Tried</h3>
+<ul class="b small">
+<li>Prompt that says not to delete the backdoor</li>
+<li>Prompt with no mention of the trusted monitor</li>
+<li>Neither worked: U_M still can’t tell attacks with vs without a signal (roughly chance AUROC)</li>
+</ul>
+<h3 class="hl" style="margin-top:12px">Not yet tried (15–17 Nov)</h3>
+<ul class="b small">
+<li>Runs longer than 100 steps, the “tanh trick”</li>
+<li>All-benign sender and honeypot code</li>
+<li>Reward on signal detection only (“I will try that”)</li>
+</ul>
+</div>
+<div class="text" style="width:840px">
+<h3 class="hl">Reflections</h3>
+<ul class="b small">
+<li>“The sender model often doesn’t include a collusion signal, and rewriting code it often deletes the backdoor”</li>
+<li>“Just training the sender model is not enough to elicit causal collusion”</li>
+<li>“This seems to imply that most of the ‘collusion’ is being done by the receiver, not the sender”</li>
+</ul>
+</div>
+</div>
+<p class="src">Source: Neelasha, Slack #evaluating-collusion-in-untrusted-monitoring, 10–17 Nov</p>
+<aside>Quotes are Neelasha's own Slack messages (thread of 15 Nov on the sender's collusion signals in GBRL; thread of 10 Nov on backdoor deletion, where the signal-only reward was suggested). No figures were posted for the prompt ablations; the logged V3.1 run with saved rollouts is rewrite_signal_pilot 1vhnln8g, but it cannot be mapped one-to-one to each prompt variant.</aside>
+</section>

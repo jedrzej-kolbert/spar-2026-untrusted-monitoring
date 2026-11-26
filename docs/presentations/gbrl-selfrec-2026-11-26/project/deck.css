@@ -124,3 +124,9 @@ ul.rb { margin: 14px 0 0; padding-left: 22px; font-size: 18px; line-height: 1.3;
 ul.rb li { margin-bottom: 6px; }
 .rn { margin-top: 8px; font-size: 15px; line-height: 1.3; color: #A7AFBC; }
 .k-pol { color: #F0A04B; } .k-um { color: #8FD18A; } .k-ch { color: #E6D36A; }
+
+/* Part 1: hide a message */
+section.divider.msg-div { background: #241D33; }
+.msg-div .part { color: #B79CF0; }
+.msg-part .eyebrow, .msg-part .hl { color: #B79CF0; }
+.msg-part .note { border-left: 4px solid #B79CF0; }
