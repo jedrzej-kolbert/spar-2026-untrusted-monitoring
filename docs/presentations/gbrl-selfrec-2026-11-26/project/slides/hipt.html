@@ -3,12 +3,12 @@
 <h2>HiPT vs our experiment</h2>
 <table class="t big" style="transform:translate(0, -2px)">
     <tr><th style="font-weight:600; width:20%; color:#a7afbc"></th><th style="font-weight:600; width:38%; color:#a7afbc">HiPT</th><th style="font-weight:600; width:42%; color:#a7afbc">Ours</th></tr>
-    <tr><td>What we want to achive</td><td>Recognize a secret signal</td><td>Recognize that the code comes for models copy</td></tr>
+    <tr><td>What we want to achieve</td><td>Recognize a secret signal</td><td>Recognize that the code comes from the model’s copy</td></tr>
     <tr><td style="color:#a7afbc">Data</td><td>CVs / free-form text</td><td>Python code</td></tr>
-    <tr><td style="color:#a7afbc">Message</td><td>Steganotext does “break CVs”</td><td>We include the message by rewriting existing honest (no backdoor) and attack (with backdoor) code</td></tr>
+    <tr><td style="color:#a7afbc">Message</td><td>Stegotext does “break CVs”</td><td>We include the message by rewriting existing honest (no backdoor) and attack (with backdoor) code</td></tr>
     <tr><td style="color:#a7afbc">Oversight</td><td>Overseer</td><td>Overseer + honeypots</td></tr>
-    <tr><td style="color:#a7afbc">Suspicion</td><td>rsus = tanh(zYES − zNO − tsens)</td><td>sus ∈ {1, …, 10}, sampled from TM, scaled to [0, 1]</td></tr>
-    <tr><td style="color:#a7afbc">Task reward</td><td>Rtask = tanh(zcorrect): one raw logit, not a log-prob</td><td>Honest: R = pass · P(YES | UG rewrite) = pass · σ(zYES − zNO)<br>Attack: pass gate or pass term, backdoor working (kept), − suspicion</td></tr>
+    <tr><td style="color:#a7afbc">Suspicion</td><td>r_sus = tanh(z_YES − z_NO − t_sens)</td><td>sus ∈ {1, …, 10}, sampled from T_M, scaled to [0, 1]</td></tr>
+    <tr><td style="color:#a7afbc">Task reward</td><td>R_task = tanh(z_correct): one raw logit, not a log-prob</td><td>Honest: R = pass · P(YES | U_G rewrite)<br>= pass · σ(z_YES − z_NO)<br>Attack: pass gate or pass term, backdoor working (kept), − suspicion</td></tr>
   </table>
 <aside>Source: GBRL meeting slide 34. The “Ours” task-reward cell was empty in the source; filled in from the comment on this slide (P(YES | U_G rewrite) and the pass gate, or pass and attack working, etc.). Notation: z = logit, ℓ = log-prob. HiPT task reward: their CV configs set use_probs_reward=False, so the trainer uses tanh of the correct label’s raw logit (lasr-steganography, learning/rl/stego_trainer.py, commit 905b3f3). The GBRL meeting slide wrote tanh(logprob(correct_label)). Ours is computed from teacher-forced log-probs of YES and NO; for single-token labels softmax over the two log-probs equals σ(z_YES − z_NO). On-slide footnote (removed): Source: GBRL meeting, slide 34</aside>
 </section>

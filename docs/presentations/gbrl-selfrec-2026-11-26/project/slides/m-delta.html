@@ -2,19 +2,20 @@
 <p class="eyebrow">Hide a message</p>
 <h2>Penalise only the suspicion the signal adds</h2>
 <div class="row">
-<div class="text" style="width:600px">
-<div class="formula"><p style="font-size:24px"><i>R</i> = pass · (1 + <i>P</i>(correct)) − max(0, sus(ON) − sus(OFF)) − 𝟙[backdoor failed]</p><p class="muted" style="font-size:22px;margin:0"><i>P</i>(correct): UM’s <i>P</i>(YES) for signal ON, 1 − <i>P</i>(YES) for OFF · sus(ON/OFF): TM suspicion with / without the signal</p></div>
+<div class="text" style="width:640px">
+<div class="formula"><p style="font-size:24px"><i>R</i> = pass · (1 + <i>P</i>(correct))<br>− max(0, sus(ON) − sus(OFF))<br>− 𝟙[backdoor failed]</p><p class="muted" style="font-size:22px;margin:0"><i>P</i>(correct): UM’s <i>P</i>(YES) for signal ON, 1 − <i>P</i>(YES) for OFF · sus(ON/OFF): TM suspicion with / without the signal</p></div>
 <ul class="b small">
 <li>Added suspicion was only 0.01–0.07</li>
-<li>the overseer term had far less impact</li>
-<li>Model learned to drop signal:</li>
-<li>* ~10% of rewrites without a signal at steps 0–10,</li>
-<li>*~22% at steps 21–30 (36/130)</li>
-<li>No clear trend on held-out data (20 problems per step)</li>
-<li>U_M still can’t tell ON from OFF, nor signalled attacks from honeypots</li>
+<li>The overseer term had far less impact</li>
+<li>The model learned to drop the signal</li>
+<li>No signal: ~10% at steps 0–10 (14/144)</li>
+<li>No signal: ~22% at steps 21–30 (36/130)</li>
+<li>No clear trend on held-out data</li>
+<li>U_M can’t tell ON from OFF</li>
+<li>Nor signalled attacks from honeypots</li>
 </ul>
 </div>
-<div class="fig"><div class="card"><img src="/_blob/5de3f6e9b9a4a8864d46d4da19a3a8d0" alt="Receiver discrimination over training, 20 held-out rewrites per bit: signal ON vs OFF AUROC stays around 0.60–0.64 (0.63 at step 30, wide CI); signalled attack vs honeypot stays around 0.28–0.33 (0.30 at step 30), below chance." style="width:1010px;height:594px;object-fit:contain"></div></div>
+<div class="fig"><div class="card"><img src="/_blob/5de3f6e9b9a4a8864d46d4da19a3a8d0" alt="Receiver discrimination over training, 20 held-out rewrites per bit: signal ON vs OFF AUROC stays around 0.60–0.64 (0.63 at step 30, wide CI); signalled attack vs honeypot stays around 0.28–0.33 (0.30 at step 30), below chance." style="width:970px;height:570px;object-fit:contain"></div></div>
 </div>
 <aside>Figure and bullets from Neelasha's reward-function-3 notes, unchanged. The idea: UG learned to drop the signal over time, possibly because the overseer penalty was too large; scoring suspicion before and after the signal shrinks that penalty. The matching W&amp;B run is most likely overseer_delta_v4flash g5egt50q (V4.1-Flash, 30 steps); the notes do not name the run. Attacks v. honeypots = signal-ON attack rewrites by DeepSeek vs unmodified honeypots by another model. On-slide footnote (removed): Source: Neelasha, “RL Reward Functions Notes + Review” (Drive) · figure: AUROC v. training steps, signal-ON v. signal-OFF &amp; attacks v. honeypots</aside>
 </section>

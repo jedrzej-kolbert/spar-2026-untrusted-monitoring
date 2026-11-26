@@ -24,8 +24,8 @@
 <div><p class="tn ch">paraphrased (B)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">raw (D)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">paraphrased (E F G)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul><p class="rn">E: T = 1 · G: T = 0.1 · F: U_G frozen</p></div>
-<div><p class="tn ch">paraphrased</p><ul class="rb"><li>gated_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn"></p></div>
-<div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li><li>P(self) − sus</li><li>Avg-4 + similarity</li><li>generate</li></ul><p class="rn"></p></div>
+<div><p class="tn ch">paraphrased</p><ul class="rb"><li>gated_sigmoid</li><li>additive</li><li>recognition_only</li></ul><p class="rn"></p></div>
+<div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li></ul><p class="rn"></p></div>
 </div>
 </div>
 <p class="src">Levels: task → <span class="k-pol">policy</span> → <span class="k-um">receiver U_M</span> → <span class="k-ch">channel</span> → reward terms · sus = overseer T_M score&nbsp;</p>

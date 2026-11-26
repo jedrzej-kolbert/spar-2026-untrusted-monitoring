@@ -2,20 +2,20 @@
 <p class="eyebrow">Honest policy · frozen receiver U_M</p>
 <h2>GBRL on benign code: frozen U_M</h2>
 <div class="row">
-<div class="text narrow">
+<div class="text" style="width:660px">
 <ul class="b">
 <li>U_G rewrites honest code</li>
 <li>Reward = pass · P(self | rewrite)</li>
 <li>No upward trend in any run</li>
 </ul>
-<table class="t small-t">
-<tr><th>Run</th><th>steps</th><th>best val reward</th><th>P(self | rewrite)</th></tr>
+<table class="t">
+<tr><th>Run</th><th>steps</th><th>val reward</th><th>P(self)</th></tr>
 <tr><td>A · base, paraphrased</td><td>300</td><td>0.39</td><td>0.40</td></tr>
 <tr><td>B · SFT U_M, paraphrased</td><td>100</td><td><b>0.90</b></td><td><b>0.90</b></td></tr>
 <tr><td>C · base, raw code</td><td>271</td><td>0.89</td><td>0.89</td></tr>
 </table>
 </div>
-<div class="fig"><div class="card"><img src="/_blob/5d3d3787439cf12356acdc343be06252" alt="Train P(self | rewrite), 10-step mean, over GBRL steps for three frozen-receiver runs: base paraphrased stays near 0.35–0.4, SFT receiver paraphrased and base raw code stay near 0.9." style="width:1040px;height:675px;object-fit:contain"></div></div>
+<div class="fig"><div class="card"><img src="/_blob/70545a48d4c10e46c1c061b9cf3569b9" alt="Train P(self | rewrite), 10-step mean, over GBRL steps for three frozen-receiver runs: base paraphrased stays near 0.35–0.4, SFT receiver paraphrased and base raw code stay near 0.9." style="width:964px;height:627px;object-fit:contain"></div></div>
 </div>
-<aside>Source: Collusion RL v2 deck slide 15. Open comment on that slide: “you should report the reward”. The table now gives the best validation reward and P(self | rewrite) at that step (W&amp;B validation/reward and validation/p_self_rec). The plot still shows train P(self | rewrite); for these runs reward = pass · P(self | rewrite), and the two are within 0.01 at the best step. The next slide shows training reward and validation AUROC for A and C. On-slide footnote (removed): Source: Collusion RL v2 deck, slide 15 · plot: train P(self | rewrite), 10-step mean</aside>
+<aside>Source: Collusion RL v2 deck slide 15. Open comment on that slide: “you should report the reward”. The table now gives the best validation reward and P(self | rewrite) at that step (W&amp;B validation/reward and validation/p_self_rec). The plot shows train P(self | rewrite); for these runs reward = pass · P(self | rewrite), and the two are within 0.01 at the best step. The next slide shows training reward and validation AUROC for A and C. On-slide footnote (removed): Source: Collusion RL v2 deck, slide 15 · plot: train P(self | rewrite), 10-step mean Table: best validation reward and P(self | rewrite) at that step. Plot redrawn with run letters (plot_honest.py).</aside>
 </section>
