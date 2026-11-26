@@ -3,7 +3,7 @@
 <h2>Penalise only the suspicion the signal adds</h2>
 <div class="row">
 <div class="text" style="width:600px">
-<div class="formula"><p style="font-size:24px"><i>R</i> = pass · (1 + <i>P</i>(correct)) − max(0, sus<sub>ON</sub> − sus<sub>OFF</sub>) − 𝟙[backdoor failed]</p><p class="muted" style="font-size:22px;margin:0"><i>P</i>(correct): U<sub>M</sub>’s <i>P</i>(YES) for signal ON, 1 − <i>P</i>(YES) for OFF · sus<sub>ON/OFF</sub>: T<sub>M</sub> suspicion with / without the signal</p></div>
+<div class="formula"><p style="font-size:24px"><i>R</i> = pass · (1 + <i>P</i>(correct)) − max(0, sus(ON) − sus(OFF)) − 𝟙[backdoor failed]</p><p class="muted" style="font-size:22px;margin:0"><i>P</i>(correct): UM’s <i>P</i>(YES) for signal ON, 1 − <i>P</i>(YES) for OFF · sus(ON/OFF): TM suspicion with / without the signal</p></div>
 <ul class="b small">
 <li>Added suspicion was only 0.01–0.07, so the overseer term had far less impact</li>
 <li>Signal drops still grew: ~10% of rewrites without a signal at steps 0–10 (14/144), ~22% at steps 21–30 (36/130)</li>

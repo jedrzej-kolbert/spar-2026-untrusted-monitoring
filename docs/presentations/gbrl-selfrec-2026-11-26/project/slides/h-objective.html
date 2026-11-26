@@ -10,8 +10,8 @@
 <div class="formula" style="width:1012px;box-sizing:border-box">
 <p class="muted">Reward function components</p>
 <div data-text style="flex:0 0 auto; margin:0 0 12px 0; font-family:Inter, Arial, sans-serif; font-size:28px; line-height:1.45; color:#eeece6">
-          <p class="mathline" style="font-size:26px"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span>exp(log <i>p</i>(YES))</span><span>exp(log <i>p</i>(YES)) + exp(log <i>p</i>(NO))</span></span> = σ(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub>)</p>
-          <ul style="font-size:22px">
+          <p><i>P</i>(YES | UG rewrite) = exp(log <i>p</i>(YES)/(exp(log <i>p</i>(YES)) + exp(log <i>p</i>(NO)) = σ(<i>z</i>YES − <i>z</i>NO)</p>
+          <ul>
             <li>log <i>p</i>: teacher-forced log-probs of YES / NO after “&lt;answer&gt;”; <i>z</i>: logits. The softmax normaliser cancels, so both forms are equal (YES, NO are single tokens)</li>
           </ul>
         </div>

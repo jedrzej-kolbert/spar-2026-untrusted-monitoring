@@ -18,16 +18,16 @@
 <p class="tn um" style="left:1296px;top:264px;width:200px">frozen base</p>
 <p class="tn um" style="left:1512px;top:264px;width:200px">SFTed</p>
 <div class="leaves8">
-<div><p class="tn ch">raw</p><ul class="rb"><li>pass + pass · P(correct) − sus − failed bd</li><li>fn 3: − max(0, Δ sus)</li><li>idea 1: P(correct) → honeypot rank</li><li>idea 1, reweighted</li></ul><p class="rn">P(correct): ON vs OFF bit · eval also minified, paraphrased · Neelasha, Deeksha</p></div>
+<div><p class="tn ch">raw</p><ul class="rb"><li>pass + pass · P(correct) − sus − failed bd</li><li>fn 3: − max(0, Δ sus)</li><li>idea 1: P(correct) → honeypot rank</li><li>idea 1, reweighted</li></ul><p class="rn"></p></div>
 <div><p class="tn ch">raw (C)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">paraphrased (A)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">paraphrased (B)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">raw (D)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
 <div><p class="tn ch">paraphrased (E F G)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul><p class="rn">E: T = 1 · G: T = 0.1 · F: U_G frozen</p></div>
-<div><p class="tn ch">paraphrased</p><ul class="rb"><li>gated_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn">collusion-rl-v2</p></div>
-<div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li><li>P(self) − sus</li><li>Avg-4 + similarity</li><li>generate</li></ul><p class="rn">hipt-collusion-rl</p></div>
+<div><p class="tn ch">paraphrased</p><ul class="rb"><li>gated_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn"></p></div>
+<div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li><li>P(self) − sus</li><li>Avg-4 + similarity</li><li>generate</li></ul><p class="rn"></p></div>
 </div>
 </div>
-<p class="src">Levels: task → <span class="k-pol">policy</span> → <span class="k-um">receiver U_M</span> → <span class="k-ch">channel</span> → reward terms · sus = overseer T_M score · all V4.1-Flash unless noted</p>
+<p class="src">Levels: task → <span class="k-pol">policy</span> → <span class="k-um">receiver U_M</span> → <span class="k-ch">channel</span> → reward terms · sus = overseer T_M score&nbsp;</p>
 <aside>Hide-message branch: Neelasha's rewrite_signal runs in W&amp;B collusion-rl-v2, rewrite_signal_pilot 1vhnln8g (DeepSeek-V3.1, KL 0.05, overseer threshold 0.5) and overseer_delta_v4flash g5egt50q (V4.1-Flash; the overseer term counts only the suspicion added over the original attack). Both use reward_fn branch, failed_backdoor_weight 1, a frozen base receiver, and channel kind none (raw code, comments removed) in their committed configs. Reward bullets: Neelasha's first runs (V3.1, branch reward with failed-backdoor penalty), her reward function 3 (overseer term = max(0, suspicion with signal − without)), Deeksha's idea 1 (communication term = rank of P(YES) among honeypots, signal-ON rollouts only; tested 21 Oct on V3.1) and her idea 1 with changed weights (failed backdoor 0.25, overseer ramp 0 → 1, lr 3e-5; 5 Nov). Training channel raw; Neelasha also evaluated minified and paraphrased. The HiPT bit port (Qwen3-8B) was removed as out of scope. Self-rec leaves are the runs on the slides that follow; the V3.1 attack runs (incl. the joint-receiver run) are not shown.</aside>
 </section>
