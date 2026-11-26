@@ -19,12 +19,12 @@
 <p class="tn um" style="left:1512px;top:264px;width:200px">SFTed</p>
 <div class="leaves8">
 <div><p class="tn ch">raw</p><ul class="rb"><li>pass + pass · P(correct) − sus − failed bd</li><li>fn 3: − max(0, Δ sus)</li><li>idea 1: P(correct) → honeypot rank</li><li>idea 1, reweighted</li></ul><p class="rn">P(correct): ON vs OFF bit · eval also minified, paraphrased · Neelasha, Deeksha</p></div>
-<div><p class="tn ch">raw · C</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
-<div><p class="tn ch">paraphrased · A</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
-<div><p class="tn ch">paraphrased · B</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
-<div><p class="tn ch">raw · D</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
-<div><p class="tn ch">paraphrased · E F G</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul><p class="rn">E: T = 1 · G: T = 0.1 · F: U_G frozen</p></div>
-<div><p class="tn ch">paraphrased</p><ul class="rb"><li>valid_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn">collusion-rl-v2</p></div>
+<div><p class="tn ch">raw (C)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased (A)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased (B)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">raw (D)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased (E F G)</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul><p class="rn">E: T = 1 · G: T = 0.1 · F: U_G frozen</p></div>
+<div><p class="tn ch">paraphrased</p><ul class="rb"><li>gated_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn">collusion-rl-v2</p></div>
 <div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li><li>P(self) − sus</li><li>Avg-4 + similarity</li><li>generate</li></ul><p class="rn">hipt-collusion-rl</p></div>
 </div>
 </div>

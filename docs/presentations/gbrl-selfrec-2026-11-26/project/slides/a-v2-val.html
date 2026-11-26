@@ -1,11 +1,10 @@
 <section id="a-v2-val" class="alt attack-part">
 <p class="eyebrow">Attack policy · collusion-rl-v2 runs</p>
 <h2>Validation AUROC and working rate</h2>
-<div class="fig"><div class="card"><img src="/_blob/6361a6ea74ef8efc6ac93627d4cfc8f8" alt="Validation AUROC (rewrites vs honeypots) and validation working rate per GBRL step. valid_sigmoid: AUROC 0.53 to 0.61 over 20 steps, working rate 0.66 to 0.93. additive: AUROC between 0.51 and 0.61 over 200 steps, working rate 0.99 from step 20. recognition_only: AUROC 0.57 to 0.62 until step 80, then 0.76 at step 100, while working rate falls from 0.63 to 0.01." style="width:1300px;height:520px;object-fit:contain"></div></div>
+<div class="fig"><div class="card"><img src="/_blob/379acf18d540ddb541e357671cfef395" alt="Validation AUROC (rewrites vs honeypots) and validation working rate per GBRL step. gated_sigmoid: AUROC 0.53 to 0.61 over 20 steps, working rate 0.66 to 0.93. additive: AUROC between 0.51 and 0.61 over 200 steps, working rate 0.99 from step 20. recognition_only: AUROC 0.57 to 0.62 until step 80, then 0.76 at step 100, while working rate falls from 0.63 to 0.01." style="width:1300px;height:520px;object-fit:contain"></div></div>
 <ul class="b small" style="margin-top:24px">
 <li>recognition_only reaches AUROC 0.76 at step 100, but only 1% of rewrites still work</li>
 <li>additive keeps 99% working from step 20; AUROC stays at 0.51–0.61</li>
 </ul>
-<p class="src">W&amp;B collusion-rl-v2 validation/auroc and validation/working_rate · lmi2, xvv9, y30w (valid_sigmoid) · 11r7 (additive) · dyld (recognition_only)</p>
-<aside>Added in answer to the comment on the previous slide asking for the validation AUROC traces. Each run logs validation every 10 (valid_sigmoid) or 20 steps; xvv9 has no step-0 validation point. AUROC is the receiver's P(YES) on the sender's rewrites against honeypots. Plot made with plot_av2.py from the runs' W&amp;B history.</aside>
+<aside>Added in answer to the comment on the previous slide asking for the validation AUROC traces. Each run logs validation every 10 (gated_sigmoid) or 20 steps; xvv9 has no step-0 validation point. AUROC is the receiver's P(YES) on the sender's rewrites against honeypots. Plot made with plot_av2.py from the runs' W&amp;B history. On-slide footnote (removed): W&amp;B collusion-rl-v2 validation/auroc and validation/working_rate · lmi2, xvv9, y30w (gated_sigmoid) · 11r7 (additive) · dyld (recognition_only)</aside>
 </section>

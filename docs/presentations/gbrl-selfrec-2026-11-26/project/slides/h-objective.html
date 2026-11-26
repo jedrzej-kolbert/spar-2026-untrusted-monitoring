@@ -10,10 +10,9 @@
 <div class="formula" style="width:1012px;box-sizing:border-box">
 <p class="muted">Reward function components</p>
 <div data-text style="flex:0 0 auto; margin:0 0 12px 0; font-family:Inter, Arial, sans-serif; font-size:28px; line-height:1.45; color:#eeece6">
-          <p class="mathline"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span><i>e</i><sup>ℓ<sub>YES</sub></sup></span><span><i>e</i><sup>ℓ<sub>YES</sub></sup> + <i>e</i><sup>ℓ<sub>NO</sub></sup></span></span> = <span class="frac"><span><i>e</i><sup><i>z</i><sub>YES</sub></sup></span><span><i>e</i><sup><i>z</i><sub>YES</sub></sup> + <i>e</i><sup><i>z</i><sub>NO</sub></sup></span></span> = σ(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub>)</p>
-          <ul style="font-size:24px">
-            <li>We use log-probs ℓ (teacher-forced YES / NO after “&lt;answer&gt;”), not logits <i>z</i></li>
-            <li>ℓ = <i>z</i> − log Σ<sub>v</sub> <i>e</i><sup><i>z</i><sub>v</sub></sup>: the shared normaliser cancels, so both forms give the same P (YES and NO are single tokens for DeepSeek-V4.1)</li>
+          <p class="mathline" style="font-size:26px"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span>exp(log <i>p</i>(YES))</span><span>exp(log <i>p</i>(YES)) + exp(log <i>p</i>(NO))</span></span> = σ(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub>)</p>
+          <ul style="font-size:22px">
+            <li>log <i>p</i>: teacher-forced log-probs of YES / NO after “&lt;answer&gt;”; <i>z</i>: logits. The softmax normaliser cancels, so both forms are equal (YES, NO are single tokens)</li>
           </ul>
         </div>
 <p>Pass: does the rewrite pass the main task? Binary: 0 does not pass, 1 passes</p>
@@ -29,6 +28,5 @@
 </ul>
 </div>
 </div>
-<p class="src">Source: GBRL meeting, slide 37</p>
-<aside>Source: GBRL meeting slide 37.</aside>
+<aside>Source: GBRL meeting slide 37. On-slide footnote (removed): Source: GBRL meeting, slide 37</aside>
 </section>

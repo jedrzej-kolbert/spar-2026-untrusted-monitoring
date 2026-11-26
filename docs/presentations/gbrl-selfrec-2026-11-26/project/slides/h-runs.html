@@ -1,4 +1,4 @@
-<section id="h-runs" class="alt">
+<section id="h-runs" class="alt" hidden>
 <p class="eyebrow">Honest policy</p>
 <h2>The seven honest-policy runs</h2>
 <table class="t">
@@ -12,6 +12,5 @@
 <tr><td>G</td><td>paraphrased, T = 0.1</td><td>trained with U_G</td><td>100</td><td>0.53</td><td>0.54</td><td>$82.37</td><td>ik5a</td></tr>
 </table>
 <p class="lede" style="font-size:26px;margin-top:28px">Reward = pass · P(self | rewrite), on the validation split at the best step (@step); P(self | rewrite) is at the same step. Bold = highest. Trained U_M: 2 SFT updates every 5 U_G steps. Costs are logged estimates, not billing; total $678.02.</p>
-<p class="src">Sources: W&amp;B collusion-rl-v2 (validation/reward, validation/p_self_rec) · Benign GBRL Comparisons page (letters, costs)</p>
-<aside>Run letters A–G match the legends in the GBRL meeting plots. Best validation reward and P(self | rewrite) at that step come from each run's W&amp;B history (validation/reward and validation/p_self_rec); A's best is in the continuation suww at step 240 (dy74 alone peaked at 0.38 at step 100). The previous version of this table showed the best validation reward under the label "P(self)". Costs come from the Benign GBRL Comparisons cost table (logged estimates; A is $51.22 for steps 1–100 plus $103.36 for the continuation to 300).</aside>
+<aside>Run letters A–G match the legends in the GBRL meeting plots. Best validation reward and P(self | rewrite) at that step come from each run's W&amp;B history (validation/reward and validation/p_self_rec); A's best is in the continuation suww at step 240 (dy74 alone peaked at 0.38 at step 100). The previous version of this table showed the best validation reward under the label "P(self)". Costs come from the Benign GBRL Comparisons cost table (logged estimates; A is $51.22 for steps 1–100 plus $103.36 for the continuation to 300). On-slide footnote (removed): Sources: W&amp;B collusion-rl-v2 (validation/reward, validation/p_self_rec) · Benign GBRL Comparisons page (letters, costs)</aside>
 </section>

@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 H = json.load(open(sys.argv[1]))
 RUNS = {  # run id -> (label, colour)
-    "lmi2pue1": ("valid_sigmoid s0", "#2a78d6"),
-    "xvv9fm3a": ("valid_sigmoid s1", "#2a78d6"),
-    "y30wbe0h": ("valid_sigmoid s2", "#2a78d6"),
+    "lmi2pue1": ("gated_sigmoid s0", "#2a78d6"),
+    "xvv9fm3a": ("gated_sigmoid s1", "#2a78d6"),
+    "y30wbe0h": ("gated_sigmoid s2", "#2a78d6"),
     "11r71on7": ("additive", "#eb6834"),
     "dyldu3i5": ("recognition_only", "#1baf7a"),
 }

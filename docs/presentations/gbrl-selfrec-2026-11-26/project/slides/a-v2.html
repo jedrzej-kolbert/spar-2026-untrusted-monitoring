@@ -4,7 +4,7 @@
 <div class="row" style="gap:40px;flex:0 0 auto">
 <table class="t small-t" style="width:760px">
 <tr><th>Reward</th><th>steps</th><th>val AUROC</th><th>working</th><th>$</th></tr>
-<tr><td>valid_sigmoid ×3</td><td>20</td><td>0.53 · 0.59 · 0.61</td><td>0.90</td><td>43</td></tr>
+<tr><td>gated_sigmoid ×3</td><td>20</td><td>0.53 · 0.59 · 0.61</td><td>0.90</td><td>43</td></tr>
 <tr><td>additive</td><td>200</td><td>0.59</td><td>0.99</td><td>105</td></tr>
 <tr><td>recognition_only</td><td>100</td><td>0.76</td><td>0.01</td><td>50</td></tr>
 </table>
@@ -15,7 +15,6 @@
 <tr><td>recognition_only</td><td>P(self | rewrite)</td></tr>
 </table>
 </div>
-<div class="fig" style="margin-top:22px"><div class="card"><img src="/_blob/cd544a824a6b42f55dc45980f27ab36d" alt="Train reward per GBRL step. Left: 10-step mean over the whole run; additive rises from 1.7 to about 2.2 by step 15 and stays there to step 200, recognition_only rises from 0.2 to about 0.35, valid_sigmoid from 0.1 to 0.15 over 20 steps. Right: zoom on steps 0 to 25, per step." style="width:1180px;height:472px;object-fit:contain"></div></div>
-<p class="src">Plot redrawn from W&amp;B collusion-rl-v2 train/reward: lmi2, xvv9, y30w (valid_sigmoid) · 11r7 (additive) · dyld (recognition_only) · sender LoRA 32, PPO, lr 1.5e-4, 8 × 8 rewrites, base receiver U_M</p>
-<aside>Was Collusion RL v2 deck slide 14, which plotted train AUROC. Redrawn as train reward per the comment on this slide (plot_av2.py, from each run's W&amp;B history). Reward scales differ between the three functions (additive includes the task and backdoor terms), so compare shapes, not levels. Formulas from the reward_id table of the same project (rewards.py). Also in collusion-rl-v2 but not shown: GBRL-strategist runs (mq1o, 7wg3, gwk0) and three overseer-delta smoke runs.</aside>
+<div class="fig" style="margin-top:22px"><div class="card"><img src="/_blob/54808054000b817c61a19fd72afc4543" alt="Train reward per GBRL step. Left: 10-step mean over the whole run; additive rises from 1.7 to about 2.2 by step 15 and stays there to step 200, recognition_only rises from 0.2 to about 0.35, gated_sigmoid from 0.1 to 0.15 over 20 steps. Right: zoom on steps 0 to 25, per step." style="width:1180px;height:472px;object-fit:contain"></div></div>
+<aside>Was Collusion RL v2 deck slide 14, which plotted train AUROC. Redrawn as train reward per the comment on this slide (plot_av2.py, from each run's W&amp;B history). Reward scales differ between the three functions (additive includes the task and backdoor terms), so compare shapes, not levels. Formulas from the reward_id table of the same project (rewards.py). Also in collusion-rl-v2 but not shown: GBRL-strategist runs (mq1o, 7wg3, gwk0) and three overseer-delta smoke runs. On-slide footnote (removed): Plot redrawn from W&amp;B collusion-rl-v2 train/reward: lmi2, xvv9, y30w (gated_sigmoid) · 11r7 (additive) · dyld (recognition_only) · sender LoRA 32, PPO, lr 1.5e-4, 8 × 8 rewrites, base receiver U_M</aside>
 </section>
