@@ -25,7 +25,7 @@ from pathlib import Path
 
 import wandb
 
-path, out = sys.argv[1], Path(sys.argv[2])
+path, out = sys.argv[1], Path(sys.argv[2]).resolve()
 entity, project = path.split("/")
 api = wandb.Api(timeout=120)
 VIEWS = """
@@ -102,7 +102,7 @@ for r in api.runs(path, per_page=200):
             f.write(json.dumps(row, default=str) + "\n")
     for fl in r.files():
         fl.download(root=str(d / "files"), replace=True, exist_ok=True)
-    logged = []
+    logged, run_bad = [], len(bad)
     for a in r.logged_artifacts():
         info = describe(a)
         stored = {k: m for k, m in info["manifest"].items() if not m["ref"]}
@@ -117,7 +117,7 @@ for r in api.runs(path, per_page=200):
     (d / "logged.json").write_text(json.dumps(logged, indent=1, default=str))
     used = [dict(qualified=a.qualified_name, type=a.type) for a in r.used_artifacts()]
     (d / "used.json").write_text(json.dumps(used, indent=1))
-    if r.state != "running":
+    if r.state != "running" and len(bad) == run_bad:  # a mismatch is refetched on rerun
         (d / "DONE").write_text(
             f"{rows} history rows, {len(logged)} logged, {len(used)} used\n"
         )
@@ -125,4 +125,5 @@ for r in api.runs(path, per_page=200):
         r.id, r.name, rows, "rows", len(logged), "logged", len(used), "used", flush=True
     )
 print("MD5 mismatches:", bad or "none")
-print("ALL DONE", path)
+print("ALL DONE" if not bad else "INCOMPLETE (rerun to refetch)", path)
+sys.exit(1 if bad else 0)

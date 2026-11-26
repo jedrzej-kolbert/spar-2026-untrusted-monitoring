@@ -26,7 +26,11 @@ import wandb
 from lasr_labs_2025_control_project.tracking import download_artifact
 
 project = sys.argv[1]
-out = sys.argv[sys.argv.index("--json") + 1] if "--json" in sys.argv else None
+out = (
+    Path(sys.argv[sys.argv.index("--json") + 1]).resolve()
+    if "--json" in sys.argv
+    else None
+)
 api = wandb.Api(timeout=120)
 versions = [
     a
@@ -51,7 +55,9 @@ with tempfile.TemporaryDirectory() as scratch:
     for a in originals:
         problems = []
         copy = copies.get(a.qualified_name)
-        if copy is None:
+        if len(a.manifest.entries) != 1:
+            problems.append("multi-file artifact (migration handles single files only)")
+        elif copy is None:
             problems.append("not migrated")
         else:
             (entry,) = a.manifest.entries.values()
@@ -93,4 +99,4 @@ print(
     f"({sum(r['size'] for r in ready) / 1e6:.0f} MB of {sum(r['size'] for r in report) / 1e6:.0f} MB)"
 )
 if out:
-    Path(out).write_text(json.dumps(report, indent=1))
+    out.write_text(json.dumps(report, indent=1))

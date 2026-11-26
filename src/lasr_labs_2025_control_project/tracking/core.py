@@ -122,7 +122,8 @@ def download_artifact(artifact: Any) -> Path:
         return Path(artifact.download())
     from huggingface_hub import hf_hub_download
 
-    root = Path("artifacts") / artifact.name  # where artifact.download() puts it
+    # where artifact.download() puts it
+    root = Path(os.environ.get("WANDB_ARTIFACT_DIR", "artifacts")) / artifact.name
     for entry, match in zip(entries, matches):
         repo_id, revision, filename = match.groups()
         source = hf_hub_download(
@@ -154,7 +155,12 @@ def add_hf_references(
     from huggingface_hub import CommitOperationAdd, HfApi
     from wandb.sdk.artifacts.artifact_manifest_entry import ArtifactManifestEntry
 
-    commit = HfApi().create_commit(
+    hf = HfApi()
+    if not hf.repo_info(
+        repo_id, repo_type="dataset"
+    ).private:  # .eval holds transcripts
+        raise ValueError(f"{repo_id} is not private; refusing to upload .eval files")
+    commit = hf.create_commit(
         repo_id,
         repo_type="dataset",
         operations=[CommitOperationAdd(f"{folder}/{f.name}", str(f)) for f in files],

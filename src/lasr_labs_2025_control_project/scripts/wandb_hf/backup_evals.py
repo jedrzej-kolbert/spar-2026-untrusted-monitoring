@@ -12,11 +12,13 @@ from pathlib import Path
 
 import wandb
 
-root = Path(sys.argv[1])
+root = Path(sys.argv[1]).resolve()
 inv = json.load(open(root / "inventory.json"))
 api = wandb.Api(timeout=120)
 bad = 0
 for x in inv:
+    if x["n_files"] != 1:  # migration handles single-file artifacts only (relink.py)
+        continue
     folder = root / x["name"] / x["version"]
     entry = x["files"][0]
     path = folder / entry["path"]
@@ -27,4 +29,5 @@ for x in inv:
     x["md5_ok"] = md5 == entry["digest"]
     bad += not x["md5_ok"]
 json.dump(inv, open(root / "inventory.json", "w"), indent=1)
-print(len(inv), "downloaded;", bad, "MD5 mismatches")
+print(len(inv), "in inventory;", bad, "MD5 mismatches")
+sys.exit(1 if bad else 0)

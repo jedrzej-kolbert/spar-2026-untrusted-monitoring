@@ -14,10 +14,12 @@ from pathlib import Path
 
 from huggingface_hub import HfApi, hf_hub_download
 
-root, REPO = Path(sys.argv[1]), sys.argv[2]
+root, REPO = Path(sys.argv[1]).resolve(), sys.argv[2]
 inv = json.load(open(root / "inventory.json"))
 PREFIX = inv[0]["qualified"].split("/")[1]  # W&B project name
-chosen = set(sys.argv[3:]) or {x["qualified"] for x in inv}
+chosen = set(sys.argv[3:]) or {x["qualified"] for x in inv if x["n_files"] == 1}
+multi = [x["qualified"] for x in inv if x["qualified"] in chosen and x["n_files"] != 1]
+assert not multi, f"only single-file artifacts can be migrated: {multi}"
 todo = [x for x in inv if x["qualified"] in chosen and not x.get("hf_ok")]
 assert all(x["md5_ok"] for x in todo), "backup has MD5 mismatches"
 
@@ -37,7 +39,7 @@ if todo:
         folder_path=root,
         path_in_repo=PREFIX,
         allow_patterns=[x["local"] for x in todo],
-        commit_message=f"{len(todo)} untrusted-runs .eval artifacts copied from W&B",
+        commit_message=f"{len(todo)} {PREFIX} .eval artifacts copied from W&B",
     )
     print("commit", commit.oid)
     for x in todo:
@@ -54,6 +56,6 @@ if todo:
         md5 = base64.b64encode(hashlib.md5(Path(path).read_bytes()).digest()).decode()
         x["hf_ok"] = md5 == x["files"][0]["digest"]
     save()
-print(
-    f"{sum(bool(x.get('hf_ok')) for x in inv if x['qualified'] in chosen)}/{len(chosen)} on HF with matching MD5"
-)
+ok = sum(bool(x.get("hf_ok")) for x in inv if x["qualified"] in chosen)
+print(f"{ok}/{len(chosen)} on HF with matching MD5")
+sys.exit(0 if ok == len(chosen) else 1)

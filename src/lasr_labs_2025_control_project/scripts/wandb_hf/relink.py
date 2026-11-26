@@ -31,13 +31,16 @@ from wandb.sdk.artifacts.artifact_manifest_entry import ArtifactManifestEntry
 
 hf_session = requests.Session()
 hf_session.headers["Authorization"] = f"Bearer {get_token()}"
-root = Path(sys.argv[1])
+root = Path(sys.argv[1]).resolve()  # the resolve step changes directory
 inv = json.load(open(root / "inventory.json"))
 E, P = inv[0]["qualified"].split("/")[:2]
-chosen = set(sys.argv[2:]) or {x["qualified"] for x in inv}
+chosen = set(sys.argv[2:]) or {x["qualified"] for x in inv if x["n_files"] == 1}
 todo = sorted(
     (x for x in inv if x["qualified"] in chosen),
     key=lambda x: (x["name"], int(x["version"][1:])),
+)
+assert all(x["n_files"] == 1 for x in todo), (
+    "only single-file artifacts can be migrated"
 )
 assert all(x.get("hf_ok") for x in todo), (
     "every chosen file must pass the HF round trip"
@@ -57,6 +60,20 @@ def existing_copy(x):
             return a
     return None
 
+
+def live_holder(key):
+    """The version that should hold `latest`, read live (the inventory may be stale): the
+    current holder, or its original if a copy holds it, or else the newest original."""
+    versions = list(api.artifact_collection(key[0], f"{E}/{P}/{key[1]}").artifacts())
+    held = [a for a in versions if "latest" in a.aliases]
+    if held:
+        return held[0].metadata.get("migrated_from") or held[0].qualified_name
+    originals = [a for a in versions if not a.metadata.get("migrated_from")]
+    newest = max(originals, key=lambda a: int(a.version[1:]), default=None)
+    return newest.qualified_name if newest else None
+
+
+holder = {key: live_holder(key) for key in {(x["type"], x["name"]) for x in todo}}
 
 # 1. commit reference versions from one migration run
 pending = [x for x in todo if not x.get("new_qualified")]
@@ -123,11 +140,8 @@ for x in todo:
             x["relinked"].append(c)
     save()
 
-# 3. aliases: in every touched collection, `latest` back on the original that held it
-holder = {
-    (x["type"], x["name"]): x["qualified"] for x in inv if "latest" in x["aliases"]
-}
-for key in {(x["type"], x["name"]) for x in todo}:
+# 3. aliases: in every touched collection, `latest` back where it was before step 1
+for key in holder:
     for a in api.artifact_collection(key[0], f"{E}/{P}/{key[1]}").artifacts():
         holds = "latest" in a.aliases
         if a.qualified_name == holder.get(key) and not holds:
@@ -155,3 +169,4 @@ done = [x for x in todo if x.get("resolve_ok")]
 print(
     f"{len(done)}/{len(todo)} new versions resolve through the pipeline with matching MD5"
 )
+sys.exit(0 if len(done) == len(todo) else 1)

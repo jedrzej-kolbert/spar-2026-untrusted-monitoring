@@ -274,14 +274,21 @@ def test_add_hf_references_uploads_and_records_md5(
     import wandb
 
     commits: list[tuple[str, list[str]]] = []
+    private = {"org/repo": True, "org/public": False}
 
     class FakeApi:
+        def repo_info(self, repo_id: str, repo_type: str):
+            return SimpleNamespace(private=private[repo_id])
+
         def create_commit(self, repo_id: str, repo_type: str, operations, **_):  # type: ignore[no-untyped-def]
             commits.append((repo_id, [op.path_in_repo for op in operations]))
             return SimpleNamespace(oid="b" * 40)
 
     monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
     artifact = wandb.Artifact("gen", type="eval-log", metadata={"name": "gen"})
+    with pytest.raises(ValueError, match="not private"):  # transcripts stay private
+        core.add_hf_references(artifact, [eval_file], "org/public", "proj/gen/run1")
+    assert not commits and not artifact.manifest.entries
     core.add_hf_references(artifact, [eval_file], "org/repo", "proj/gen/run1")
     (entry,) = artifact.manifest.entries.values()
     md5 = core._md5_b64(eval_file)

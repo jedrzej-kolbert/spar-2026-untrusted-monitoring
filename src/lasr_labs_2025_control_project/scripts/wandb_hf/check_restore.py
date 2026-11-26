@@ -77,6 +77,22 @@ for rid in sys.argv[3:]:
         ]
         if bad:
             problems.append(f"history values differ: {bad[:5]}")
+        # every logged key, media included (a value restore couldn't rebuild is missing)
+        missing = [
+            (r1["_step"], k)
+            for r1, r2 in zip(ho, hn)
+            for k, v in r1.items()  # scan_history fills unlogged keys with None
+            if not k.startswith("_") and v is not None and r2.get(k) is None
+        ]
+        if missing:
+            problems.append(f"history keys missing: {missing[:5]}")
+        lost = [
+            k
+            for k in o.summary._json_dict
+            if not k.startswith("_") and k not in n.summary._json_dict
+        ]
+        if lost:
+            problems.append(f"summary keys missing: {lost[:5]}")
         tables = 0
         for r1, r2 in zip(ho, hn):
             for k, v in r1.items():

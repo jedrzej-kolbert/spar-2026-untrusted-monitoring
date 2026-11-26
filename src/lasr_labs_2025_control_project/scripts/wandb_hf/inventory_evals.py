@@ -6,6 +6,7 @@ usage: python inventory_evals.py ENTITY/PROJECT OUT_DIR/inventory.json
 
 import json
 import sys
+from pathlib import Path
 
 import wandb
 
@@ -19,7 +20,9 @@ for i, r in enumerate(runs):
             continue
         entries = a.manifest.entries
         evals = {k: v for k, v in entries.items() if k.endswith(".eval")}
-        if evals:
+        # stored originals only: migrated copies (and other references) are not re-migrated
+        is_ref = any(v.ref for v in entries.values())
+        if evals and not is_ref and not a.metadata.get("migrated_from"):
             arts[a.qualified_name] = dict(
                 qualified=a.qualified_name,
                 name=a.name.split(":")[0],
@@ -29,7 +32,6 @@ for i, r in enumerate(runs):
                 metadata=a.metadata,
                 n_files=len(entries),
                 size=a.size,
-                is_ref=any(v.ref for v in entries.values()),
                 producer=r.id,
                 files=[
                     dict(path=k, digest=v.digest, size=v.size) for k, v in evals.items()
@@ -41,6 +43,11 @@ for i, r in enumerate(runs):
         print(i, len(arts), flush=True)
 for q, a in arts.items():
     a["consumers"] = consumers.get(q, [])
-json.dump(list(arts.values()), open(sys.argv[2], "w"), indent=1)
+out = Path(sys.argv[2])
+if out.exists():  # keep earlier progress (local, hf_url, hf_ok, new_qualified, ...)
+    for old in json.load(open(out)):
+        if old["qualified"] in arts:
+            arts[old["qualified"]] = {**old, **arts[old["qualified"]]}
+json.dump(list(arts.values()), open(out, "w"), indent=1)
 total = sum(x["size"] for x in arts.values())
 print(len(arts), "eval artifact versions,", round(total / 1e6), "MB")
