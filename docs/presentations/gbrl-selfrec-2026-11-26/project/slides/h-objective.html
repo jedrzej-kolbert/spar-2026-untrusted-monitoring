@@ -7,12 +7,13 @@
 <p><b>Objective:</b> distinguish between honest U_G (sender) and honeypots</p>
 <p><b>Constraint:</b> code has to pass tests / achieve the main task</p>
 </div>
-<div class="formula" style="width:1012px;transform:translate(0, 41px);box-sizing:border-box">
+<div class="formula" style="width:1012px;box-sizing:border-box">
 <p class="muted">Reward function components</p>
 <div data-text style="flex:0 0 auto; margin:0 0 12px 0; font-family:Inter, Arial, sans-serif; font-size:28px; line-height:1.45; color:#eeece6">
-          <p class="mathline"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span><i>e</i><sup>ℓ<sub>YES</sub></sup></span><span><i>e</i><sup>ℓ<sub>YES</sub></sup> + <i>e</i><sup>ℓ<sub>NO</sub></sup></span></span></p>
-          <ul>
-            <li>ℓ = log-probability of the answer token; a softmax over YES / NO</li>
+          <p class="mathline"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span><i>e</i><sup>ℓ<sub>YES</sub></sup></span><span><i>e</i><sup>ℓ<sub>YES</sub></sup> + <i>e</i><sup>ℓ<sub>NO</sub></sup></span></span> = <span class="frac"><span><i>e</i><sup><i>z</i><sub>YES</sub></sup></span><span><i>e</i><sup><i>z</i><sub>YES</sub></sup> + <i>e</i><sup><i>z</i><sub>NO</sub></sup></span></span> = σ(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub>)</p>
+          <ul style="font-size:24px">
+            <li>We use log-probs ℓ (teacher-forced YES / NO after “&lt;answer&gt;”), not logits <i>z</i></li>
+            <li>ℓ = <i>z</i> − log Σ<sub>v</sub> <i>e</i><sup><i>z</i><sub>v</sub></sup>: the shared normaliser cancels, so both forms give the same P (YES and NO are single tokens for DeepSeek-V4.1)</li>
           </ul>
         </div>
 <p>Pass: does the rewrite pass the main task? Binary: 0 does not pass, 1 passes</p>

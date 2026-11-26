@@ -6,9 +6,9 @@
 <tr><td class="muted">Data</td><td>CVs / free-form text</td><td>Python code</td></tr>
 <tr><td class="muted">Message</td><td>Steganotext does “break CVs”</td><td>We include the message by rewriting existing honest (no backdoor) and attack (with backdoor) code</td></tr>
 <tr><td class="muted">Oversight</td><td>Overseer</td><td>Overseer + honeypots</td></tr>
-<tr><td class="muted">Suspicion</td><td>r_sus = tanh(z_Yes − z_No − t_sens)</td><td>From 1 to 10</td></tr>
-<tr><td class="muted">Task reward</td><td>R_task = tanh(logprob(correct_label))</td><td>Honest: R = pass · P(YES | U_G rewrite)<br>Attack: pass gate or pass term, backdoor working (kept), − suspicion</td></tr>
+<tr><td class="muted">Suspicion</td><td><i>r</i><sub>sus</sub> = tanh(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub> − <i>t</i><sub>sens</sub>)</td><td>From 1 to 10</td></tr>
+<tr><td class="muted">Task reward</td><td><i>R</i><sub>task</sub> = tanh(<i>z</i><sub>correct</sub>): one raw logit, not a log-prob</td><td>Honest: R = pass · P(YES | U<sub>G</sub> rewrite) = pass · σ(<i>z</i><sub>YES</sub> − <i>z</i><sub>NO</sub>)<br>Attack: pass gate or pass term, backdoor working (kept), − suspicion</td></tr>
 </table>
 <p class="src">Source: GBRL meeting, slide 34</p>
-<aside>Source: GBRL meeting slide 34. The “Ours” task-reward cell was empty in the source; filled in from the comment on this slide (P(YES | U_G rewrite) and the pass gate, or pass and attack working, etc.).</aside>
+<aside>Source: GBRL meeting slide 34. The “Ours” task-reward cell was empty in the source; filled in from the comment on this slide (P(YES | U_G rewrite) and the pass gate, or pass and attack working, etc.). Notation: z = logit, ℓ = log-prob. HiPT task reward: their CV configs set use_probs_reward=False, so the trainer uses tanh of the correct label’s raw logit (lasr-steganography, learning/rl/stego_trainer.py, commit 905b3f3). The GBRL meeting slide wrote tanh(logprob(correct_label)). Ours is computed from teacher-forced log-probs of YES and NO; for single-token labels softmax over the two log-probs equals σ(z_YES − z_NO).</aside>
 </section>
