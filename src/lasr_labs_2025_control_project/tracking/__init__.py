@@ -37,7 +37,7 @@ Model
   if the upload fails they are stored in W&B as before. Downloads go through
   :func:`download_artifact`, which uses the HF login (``hf auth login`` or
   ``HF_TOKEN``) for those references. Stored versions moved there by
-  the one-off migration get a copy whose metadata names ``migrated_from``; an
+  ``scripts/wandb_hf/`` get a copy whose metadata names ``migrated_from``; an
   exact ref to a deleted original resolves to that copy.
 
 Failure modes
