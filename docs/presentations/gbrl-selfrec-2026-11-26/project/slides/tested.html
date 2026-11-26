@@ -2,54 +2,32 @@
 <p class="eyebrow">Overview</p>
 <h2>What we tried with GBRL</h2>
 <div class="combo">
-<svg class="wires" viewBox="0 0 1712 220" role="img" aria-label="Tree: GBRL splits into hiding a message (two run families) and self-recognition (honest policy and two attack-policy run families).">
-<path d="M856 60 V95 H337 V130 M856 95 H1202 V130 M337 190 V205 H164 V220 M337 205 H510 V220 M1202 190 V205 H856 V220 M1202 205 H1548 V220" fill="none" stroke="#5A6170" stroke-width="3"/>
+<svg class="wires" viewBox="0 0 1712 352" role="img" aria-label="Tree of GBRL combinations: task, then policy, then receiver U_M mode, then channel; reward terms listed under each leaf.">
+<path d="M532 52 V70 H100 V88 M532 70 H964 V88 M100 140 V176 M964 140 V158 H748 V176 M964 158 H1504 V176 M100 228 V264 M748 228 V264 M748 246 H424 V264 M748 246 H1072 V264 M1504 228 V246 H1396 V264 M1504 246 H1612 V264 M100 316 V352 M424 316 V334 H316 V352 M424 334 H532 V352 M748 316 V352 M1072 316 V334 H964 V352 M1072 334 H1180 V352 M1396 316 V352 M1612 316 V352" fill="none" stroke="#5A6170" stroke-width="3"/>
 </svg>
-<p class="cnode root" style="left:596px;top:0;width:520px">GBRL · PPO on a LoRA sender U_G</p>
-<p class="cnode" style="left:107px;top:130px;width:460px">Hide a message (bit / signal)</p>
-<p class="cnode" style="left:902px;top:130px;width:600px">Self-recognition: U_G rewrite vs honeypots</p>
-<div class="cards">
-<div class="ccard out">
-<p class="tag">HiPT bit port · Qwen3-8B</p>
-<dl><dt class="ax-pol">Policy</dt><dd>writes new code, no backdoor</dd>
-<dt class="ax-um">U_M</dt><dd>Qwen3-8B decodes the bit</dd>
-<dt class="ax-ch">Channel</dt><dd>raw · minified</dd>
-<dt class="ax-rw">Reward</dt><dd>pass · (1 + P(bit)) − λ · sus, λ = 0 / 1 / 5</dd></dl>
-</div>
-<div class="ccard out">
-<p class="tag">Signal rewrite · Neelasha</p>
-<dl><dt class="ax-pol">Policy</dt><dd><span class="atk">attack</span> rewrites, signal ON / OFF</dd>
-<dt class="ax-um">U_M</dt><dd>base, frozen</dd>
-<dt class="ax-ch">Channel</dt><dd>train: not logged · eval: raw, minified, paraphrased</dd>
-<dt class="ax-rw">Reward</dt><dd>pass + pass · P(bit) − failed backdoor − overseer (V4.1: only Δ over the original attack)</dd></dl>
-<p class="runs">V3.1 pilot 1vhn · V4.1 g5eg</p>
-</div>
-<div class="ccard honest">
-<p class="tag">Part 1 · honest, A–G</p>
-<dl><dt class="ax-pol">Policy</dt><dd><span class="hon">honest</span> rewrites</dd>
-<dt class="ax-um">U_M</dt><dd>base frozen (A, C) · SFT frozen (B) · joint (D, E, G) · trained, U_G frozen (F)</dd>
-<dt class="ax-ch">Channel</dt><dd>raw (C, D) · paraphrased T = 1 (A, B, E, F) · T = 0.1 (G)</dd>
-<dt class="ax-rw">Reward</dt><dd>pass · P(self | rewrite)</dd></dl>
-<p class="runs">V4.1 · collusion-rl-v2</p>
-</div>
-<div class="ccard attack">
-<p class="tag">Part 2 · attack, B / C …</p>
-<dl><dt class="ax-pol">Policy</dt><dd><span class="atk">attack</span> rewrites · also generate</dd>
-<dt class="ax-um">U_M</dt><dd>SFT, frozen</dd>
-<dt class="ax-ch">Channel</dt><dd>summary (1 view; mean of 4 in Avg-4)</dd>
-<dt class="ax-rw">Reward</dt><dd>pass, pass · P(self), kept, − sus, − 0.5 · similarity</dd></dl>
-<p class="runs">V4.1 · hipt-collusion-rl</p>
-</div>
-<div class="ccard attack">
-<p class="tag">Part 2 · attack, 3 rewards</p>
-<dl><dt class="ax-pol">Policy</dt><dd><span class="atk">attack</span> rewrites</dd>
-<dt class="ax-um">U_M</dt><dd>base, frozen</dd>
-<dt class="ax-ch">Channel</dt><dd>paraphrased</dd>
-<dt class="ax-rw">Reward</dt><dd>valid_sigmoid · additive · P(self) only</dd></dl>
-<p class="runs">V4.1 · collusion-rl-v2</p>
+<p class="tn root" style="left:322px;top:0;width:420px">GBRL · PPO on a LoRA sender U_G</p>
+<p class="tn" style="left:0;top:88px;width:200px">Hide a message</p>
+<p class="tn" style="left:744px;top:88px;width:440px">Self-recognition vs honeypots</p>
+<p class="tn pol atk" style="left:0;top:176px;width:200px">attack</p>
+<p class="tn pol hon" style="left:598px;top:176px;width:300px">honest</p>
+<p class="tn pol atk" style="left:1354px;top:176px;width:300px">attack</p>
+<p class="tn um" style="left:0;top:264px;width:200px">frozen base</p>
+<p class="tn um" style="left:274px;top:264px;width:300px">frozen base</p>
+<p class="tn um" style="left:648px;top:264px;width:200px">SFTed</p>
+<p class="tn um" style="left:922px;top:264px;width:300px">joint</p>
+<p class="tn um" style="left:1296px;top:264px;width:200px">frozen base</p>
+<p class="tn um" style="left:1512px;top:264px;width:200px">SFTed</p>
+<div class="leaves8">
+<div><p class="tn ch">raw</p><ul class="rb"><li>pass</li><li>pass · P(bit)</li><li>− failed backdoor</li><li>− overseer T_M (V4.1: Δ over original)</li></ul><p class="rn">Neelasha · V3.1 1vhn, V4.1 g5eg</p></div>
+<div><p class="tn ch">raw · C</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased · A</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased · B</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">raw · D</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul></div>
+<div><p class="tn ch">paraphrased · E F G</p><ul class="rb"><li>pass · P(self | rewrite)</li></ul><p class="rn">E: T = 1 · G: T = 0.1 · F: U_G frozen</p></div>
+<div><p class="tn ch">paraphrased</p><ul class="rb"><li>valid_sigmoid</li><li>additive</li><li>P(self) only</li></ul><p class="rn">collusion-rl-v2</p></div>
+<div><p class="tn ch">summary</p><ul class="rb"><li>B: pass + pass · P(self) + kept − sus</li><li>C: no P(self)</li><li>P(self) − sus</li><li>Avg-4 + similarity</li><li>generate</li></ul><p class="rn">hipt-collusion-rl</p></div>
 </div>
 </div>
-</div>
-<p class="src">Every leaf varies the same four axes: policy · receiver U_M · channel · reward terms. Sus = overseer T_M score. Grey leaves are not covered later in this deck.</p>
-<aside>Replaces the GBRL meeting slide 35 tree. Hide-message leaves: HiPT bit port from the mentor deck (bit-encoding slides, based on artifact XugmurEWAXmKJajhnX1FWA); Neelasha's rewrite_signal runs from W&amp;B collusion-rl-v2: rewrite_signal_pilot 1vhnln8g (DeepSeek-V3.1, KL 0.05, overseer threshold 0.5) and overseer_delta_v4flash g5egt50q (V4.1-Flash, overseer penalty counts only the suspicion added over the original attack). Both use reward_fn branch with failed_backdoor_weight 1 and a base (untrained) receiver. Self-rec leaves: the runs on the slides that follow.</aside>
+<p class="src">Levels: task → <span class="k-pol">policy</span> → <span class="k-um">receiver U_M</span> → <span class="k-ch">channel</span> → reward terms · sus = overseer T_M score · all V4.1-Flash unless noted</p>
+<aside>Hide-message branch: Neelasha's rewrite_signal runs in W&amp;B collusion-rl-v2, rewrite_signal_pilot 1vhnln8g (DeepSeek-V3.1, KL 0.05, overseer threshold 0.5) and overseer_delta_v4flash g5egt50q (V4.1-Flash; the overseer term counts only the suspicion added over the original attack). Both use reward_fn branch, failed_backdoor_weight 1, a frozen base receiver, and channel kind none (raw code, comments removed) in their committed configs. The HiPT bit port (Qwen3-8B) was removed as out of scope. Self-rec leaves are the runs on the slides that follow; the V3.1 attack runs (incl. the joint-receiver run) are not shown.</aside>
 </section>
