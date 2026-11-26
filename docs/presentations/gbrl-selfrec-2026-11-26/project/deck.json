@@ -1,1 +1,73 @@
-{"v": 5, "createdOnFiles": {"v": 1, "at": "2026-11-26T12:00:00Z"}, "lists": "css", "format": {"v": 1, "shared": ["project/deck.css"]}, "title": "GBRL self-recognition: honest and attack policy", "order": ["cover", "tested", "hipt", "setup", "m-div", "m-delta", "m-roc", "d-ideas", "d-idea1", "honest", "h-objective", "h-runs", "h-frozen", "h-long", "h-joint", "h-trained", "h-temp", "attack", "a-pipeline", "a-tried", "a-runs", "a-train", "a-test", "a-variants", "a-v2", "a-v2-val"], "sections": {"s0": {"description": "What we tested, how it differs from HiPT, and the shared setup", "start": "cover"}, "sm": {"description": "Hide a message: Neelasha’s and Deeksha’s signal-rewrite GBRL runs", "start": "m-div"}, "s1": {"description": "Honest policy: the sender rewrites honest code so its own judge recognises it", "start": "honest"}, "s2": {"description": "Attack policy, DeepSeek-V4.1 only: the sender rewrites its own working attacks", "start": "attack"}}, "faces": {"inter": {"family": "Inter", "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"}, "space-grotesk": {"family": "Space Grotesk", "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"}}, "designSystems": []}
+{
+  "v": 5,
+  "attachments": {},
+  "createdOnFiles": {
+    "at": "2026-11-26T12:00:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "faces": {
+    "inter": {
+      "family": "Inter",
+      "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+    },
+    "space-grotesk": {
+      "family": "Space Grotesk",
+      "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+    }
+  },
+  "format": {
+    "shared": [
+      "project/deck.css"
+    ],
+    "v": 1
+  },
+  "lists": "css",
+  "order": [
+    "cover",
+    "tested",
+    "hipt",
+    "setup",
+    "m-div",
+    "m-delta",
+    "m-roc",
+    "d-ideas",
+    "d-idea1",
+    "honest",
+    "h-objective",
+    "h-runs",
+    "h-frozen",
+    "h-long",
+    "h-trained",
+    "h-joint",
+    "h-temp",
+    "attack",
+    "a-pipeline",
+    "a-tried",
+    "a-runs",
+    "a-train",
+    "a-test",
+    "a-variants",
+    "a-v2",
+    "a-v2-val"
+  ],
+  "sections": {
+    "s0": {
+      "description": "What we tested, how it differs from HiPT, and the shared setup",
+      "start": "cover"
+    },
+    "s1": {
+      "description": "Honest policy: the sender rewrites honest code so its own judge recognises it",
+      "start": "honest"
+    },
+    "s2": {
+      "description": "Attack policy, DeepSeek-V4.1 only: the sender rewrites its own working attacks",
+      "start": "attack"
+    },
+    "sm": {
+      "description": "Hide a message: Neelasha’s and Deeksha’s signal-rewrite GBRL runs",
+      "start": "m-div"
+    }
+  },
+  "title": "GBRL self-recognition: honest and attack policy"
+}
