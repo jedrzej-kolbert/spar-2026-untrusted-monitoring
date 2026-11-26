@@ -88,7 +88,7 @@ copy by the MD5 in its metadata (all in `tracking/core.py`, tested in `test_trac
 
 Verify readiness (read-only): `python check_ready_to_delete.py ENTITY/PROJECT`. A version is
 READY when its copy exists, the copy's HF bytes match the original's MD5, the producer lists
-the copy, and every consumer of the original also uses the copy. State on 2026-11-26:
-`2/87 stored .eval versions ready to delete (7 MB of 394 MB)`: the 2 pilot files; the other
-85 are not migrated yet. Before deleting a READY original that holds `latest`, move
-`latest` to its copy. Deleting is not automated here.
+the copy, and every consumer of the original also uses the copy. State at the end of
+2026-11-26: all 87 migrated; 82 originals deleted from W&B (~275 MB); 5 kept
+because 13 runs in `collusion-rl-v2` still read only the originals. Before deleting a READY
+original that holds `latest`, move `latest` to its copy. Deleting is not automated here.
