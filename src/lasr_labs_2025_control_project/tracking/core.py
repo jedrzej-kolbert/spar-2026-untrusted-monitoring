@@ -14,11 +14,13 @@ import math
 import os
 import re
 import secrets
+import shutil
 import string
 from collections import defaultdict
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence
+from urllib.parse import unquote
 
 from lasr_labs_2025_control_project.tracking import names
 
@@ -98,6 +100,44 @@ def _md5_b64(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return base64.b64encode(digest.digest()).decode("ascii")
+
+
+_HF_RESOLVE = re.compile(
+    r"^https://huggingface\.co/datasets/([^/]+/[^/]+)/resolve/([0-9a-f]{40})/(.+)$"
+)
+
+
+def download_artifact(artifact: Any) -> Path:
+    """Download an artifact's files; returns their folder.
+
+    Files moved to a Hugging Face dataset repo are kept as references to
+    commit-pinned ``resolve`` URLs. Those go through ``huggingface_hub``, which
+    sends the HF login (``hf auth login`` or ``HF_TOKEN``) that W&B's own
+    downloader can't, so private repos work; the bytes are checked against the
+    MD5 the migration recorded in the artifact's metadata.
+    """
+    entries = list(artifact.manifest.entries.values())
+    matches = [m for e in entries if (m := _HF_RESOLVE.match(e.ref or ""))]
+    if not entries or len(matches) != len(entries):
+        return Path(artifact.download())
+    from huggingface_hub import hf_hub_download
+
+    root = Path("artifacts") / artifact.name  # where artifact.download() puts it
+    for entry, match in zip(entries, matches):
+        repo_id, revision, filename = match.groups()
+        source = hf_hub_download(
+            repo_id, unquote(filename), repo_type="dataset", revision=revision
+        )
+        target = root / entry.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        expected = artifact.metadata.get("md5") if len(entries) == 1 else None
+        if expected and _md5_b64(target) != expected:
+            raise ValueError(
+                f"{artifact.qualified_name}: {entry.path} from Hugging Face does "
+                "not match the MD5 recorded in the artifact's metadata"
+            )
+    return root
 
 
 def _has_api_key() -> bool:
@@ -215,7 +255,7 @@ def resolve_input(path_or_ref: str | Path) -> ResolvedInput:
         if api is None:
             raise RuntimeError(f"cannot download {source}: W&B is unavailable")
         artifact = api.artifact(ref)
-        files = sorted(p for p in Path(artifact.download()).rglob("*") if p.is_file())
+        files = sorted(p for p in download_artifact(artifact).rglob("*") if p.is_file())
         if len(files) != 1:
             raise ValueError(f"{source}: expected exactly one file, found {len(files)}")
         return ResolvedInput(

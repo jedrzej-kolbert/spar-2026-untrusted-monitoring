@@ -26,6 +26,7 @@ from typing import Any, Optional
 from lasr_labs_2025_control_project.pipeline.graph import Node, canonical
 from lasr_labs_2025_control_project.tracking import (
     PIPELINE_KEY,
+    download_artifact,
     find_pipeline_run,
     header_complete,
 )
@@ -182,7 +183,7 @@ class Store:
         matches = [a for a in artifacts if a.type == wanted]
         if not matches:
             return None
-        downloaded = Path(matches[0].download())
+        downloaded = download_artifact(matches[0])
         folder.mkdir(parents=True, exist_ok=True)
         if node.stage in EVAL_STAGES:
             (source,) = [p for p in downloaded.rglob("*") if p.is_file()]

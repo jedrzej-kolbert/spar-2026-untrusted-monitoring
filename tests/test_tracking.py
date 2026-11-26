@@ -221,6 +221,52 @@ def test_refs_must_be_exact_versions():
     assert core.is_ref("wandb:me/proj/apps-x:v3")
 
 
+def _hf_artifact(md5: str) -> SimpleNamespace:
+    url = (
+        "https://huggingface.co/datasets/org/repo/resolve/"
+        + "a" * 40
+        + "/untrusted-runs/x/v0/attacks.eval"
+    )
+    entry = SimpleNamespace(path="attacks.eval", ref=url)
+    return SimpleNamespace(
+        name="x:v1",
+        qualified_name="e/p/x:v1",
+        metadata={"md5": md5},
+        manifest=SimpleNamespace(entries={"attacks.eval": entry}),
+    )
+
+
+def test_hf_references_download_through_huggingface_hub(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, eval_file: Path
+):
+    import huggingface_hub
+
+    calls: list[tuple[str, str, str, str]] = []
+
+    def fake_download(repo_id: str, filename: str, repo_type: str, revision: str):
+        calls.append((repo_id, filename, repo_type, revision))
+        return str(eval_file)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    monkeypatch.chdir(tmp_path)
+    folder = core.download_artifact(_hf_artifact(core._md5_b64(eval_file)))
+    assert (folder / "attacks.eval").read_bytes() == eval_file.read_bytes()
+    assert calls == [
+        ("org/repo", "untrusted-runs/x/v0/attacks.eval", "dataset", "a" * 40)
+    ]
+    with pytest.raises(ValueError, match="MD5"):
+        core.download_artifact(_hf_artifact("not-the-md5"))
+
+
+def test_stored_artifacts_download_through_wandb(tmp_path: Path):
+    entry = SimpleNamespace(path="attacks.eval", ref=None)
+    artifact = SimpleNamespace(
+        manifest=SimpleNamespace(entries={"attacks.eval": entry}),
+        download=lambda: str(tmp_path),
+    )
+    assert core.download_artifact(artifact) == tmp_path
+
+
 def test_unlinked_input_blocks_unless_allowed(monkeypatch):
     monkeypatch.setenv("WANDB_MODE", "online")
     unlinked = core.ResolvedInput(
