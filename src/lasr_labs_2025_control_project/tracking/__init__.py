@@ -31,6 +31,15 @@ Model
   limit, samples, errored, valid, plus upstream samples dropped by the
   validity filter for transform/monitor), and per-scorer means/C-rates.
 
+* ``.eval`` files on Hugging Face (to save W&B storage): with ``HF_EVAL_REPO``
+  set (an HF dataset repo id), ``eval-log`` artifacts are uploaded there and
+  logged as references to commit-pinned URLs (see :func:`add_hf_references`);
+  if the upload fails they are stored in W&B as before. Downloads go through
+  :func:`download_artifact`, which uses the HF login (``hf auth login`` or
+  ``HF_TOKEN``) for those references. Stored versions moved there by
+  ``scripts/wandb_hf/`` get a copy whose metadata names ``migrated_from``; an
+  exact ref to a deleted original resolves to that copy.
+
 Failure modes
 -------------
 * ``WANDB_MODE=disabled``: no W&B calls; output headers still carry the name.
@@ -57,6 +66,7 @@ from lasr_labs_2025_control_project.tracking.core import (
     StageFailed,
     StageRun,
     UnlinkedInputError,
+    add_hf_references,
     artifact_input,
     download_artifact,
     available,
@@ -78,6 +88,7 @@ __all__ = [
     "StageFailed",
     "StageRun",
     "UnlinkedInputError",
+    "add_hf_references",
     "artifact_input",
     "download_artifact",
     "available",
