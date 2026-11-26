@@ -14,11 +14,13 @@ import math
 import os
 import re
 import secrets
+import shutil
 import string
 from collections import defaultdict
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence
+from urllib.parse import quote, unquote
 
 from lasr_labs_2025_control_project.tracking import names
 
@@ -98,6 +100,102 @@ def _md5_b64(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
     return base64.b64encode(digest.digest()).decode("ascii")
+
+
+_HF_RESOLVE = re.compile(
+    r"^https://huggingface\.co/datasets/([^/]+/[^/]+)/resolve/([0-9a-f]{40})/(.+)$"
+)
+
+
+def download_artifact(artifact: Any) -> Path:
+    """Download an artifact's files; returns their folder.
+
+    Files moved to a Hugging Face dataset repo are kept as references to
+    commit-pinned ``resolve`` URLs. Those go through ``huggingface_hub``, which
+    sends the HF login (``hf auth login`` or ``HF_TOKEN``) that W&B's own
+    downloader can't, so private repos work; the bytes are checked against the
+    MD5 the migration recorded in the artifact's metadata.
+    """
+    entries = list(artifact.manifest.entries.values())
+    matches = [m for e in entries if (m := _HF_RESOLVE.match(e.ref or ""))]
+    if not entries or len(matches) != len(entries):
+        return Path(artifact.download())
+    from huggingface_hub import hf_hub_download
+
+    # where artifact.download() puts it
+    root = Path(os.environ.get("WANDB_ARTIFACT_DIR", "artifacts")) / artifact.name
+    for entry, match in zip(entries, matches):
+        repo_id, revision, filename = match.groups()
+        source = hf_hub_download(
+            repo_id, unquote(filename), repo_type="dataset", revision=revision
+        )
+        target = root / entry.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        expected = artifact.metadata.get("md5") if len(entries) == 1 else None
+        if expected and _md5_b64(target) != expected:
+            raise ValueError(
+                f"{artifact.qualified_name}: {entry.path} from Hugging Face does "
+                "not match the MD5 recorded in the artifact's metadata"
+            )
+    return root
+
+
+def add_hf_references(
+    artifact: Any, files: Sequence[Path], repo_id: str, folder: str
+) -> None:
+    """Upload ``files`` to the HF dataset repo in one commit and add them to the
+    artifact as references to the commit-pinned URLs, instead of storing them in W&B.
+
+    Each entry's digest is the file's SHA-256, not its MD5: W&B's version digest
+    ignores where a file lives, so an MD5 entry would merge into a stored version
+    of the same file. A single file's MD5 goes into the metadata, which
+    ``download_artifact`` checks and ``resolve_input`` matches local .eval files by.
+    """
+    from huggingface_hub import CommitOperationAdd, HfApi
+    from wandb.sdk.artifacts.artifact_manifest_entry import ArtifactManifestEntry
+
+    hf = HfApi()
+    if not hf.repo_info(
+        repo_id, repo_type="dataset"
+    ).private:  # .eval holds transcripts
+        raise ValueError(f"{repo_id} is not private; refusing to upload .eval files")
+    commit = hf.create_commit(
+        repo_id,
+        repo_type="dataset",
+        operations=[CommitOperationAdd(f"{folder}/{f.name}", str(f)) for f in files],
+        commit_message=f"{artifact.name}: {len(files)} file(s) from W&B",
+    )
+    for f in files:
+        url = (
+            f"https://huggingface.co/datasets/{repo_id}/resolve/{commit.oid}/"
+            + quote(f"{folder}/{f.name}")
+        )
+        sha256 = hashlib.sha256(f.read_bytes()).hexdigest()
+        artifact.manifest.add_entry(
+            ArtifactManifestEntry(
+                path=f.name, ref=url, digest=sha256, size=f.stat().st_size
+            )
+        )
+    if len(files) == 1:
+        artifact.metadata = {**artifact.metadata, "md5": _md5_b64(files[0])}
+
+
+def _migrated_copy(api: Any, ref: str) -> Any:
+    """The version that replaced a deleted one (``metadata.migrated_from == ref``)."""
+    collection = ref.rsplit(":", 1)[0]
+    project = collection.rsplit("/", 1)[0]
+    for artifact_type in api.artifact_types(project):
+        try:
+            versions = list(
+                api.artifact_collection(artifact_type.name, collection).artifacts()
+            )
+        except Exception:  # no collection of that name for this type
+            continue
+        for artifact in versions:
+            if artifact.metadata.get("migrated_from") == ref:
+                return artifact
+    return None
 
 
 def _has_api_key() -> bool:
@@ -214,8 +312,16 @@ def resolve_input(path_or_ref: str | Path) -> ResolvedInput:
         api = _api()
         if api is None:
             raise RuntimeError(f"cannot download {source}: W&B is unavailable")
-        artifact = api.artifact(ref)
-        files = sorted(p for p in Path(artifact.download()).rglob("*") if p.is_file())
+        from wandb.errors import CommError
+
+        try:
+            artifact = api.artifact(ref)
+        except CommError:
+            # A stored version moved to Hugging Face and then deleted: use its copy.
+            artifact = _migrated_copy(api, ref)
+            if artifact is None:
+                raise
+        files = sorted(p for p in download_artifact(artifact).rglob("*") if p.is_file())
         if len(files) != 1:
             raise ValueError(f"{source}: expected exactly one file, found {len(files)}")
         return ResolvedInput(
@@ -253,10 +359,12 @@ def resolve_input(path_or_ref: str | Path) -> ResolvedInput:
         )
         return resolved
     for artifact in candidates:
-        entry_digests = {e.digest for e in artifact.manifest.entries.values()}
+        # Versions moved to Hugging Face keep the file's MD5 in their metadata.
+        digests = {e.digest for e in artifact.manifest.entries.values()}
+        digests.add(artifact.metadata.get("md5"))
         if (
             artifact.name.split(":")[0] == header.get("name")
-            and resolved.md5 in entry_digests
+            and resolved.md5 in digests
         ):
             resolved.artifact = artifact
             return resolved
@@ -681,7 +789,19 @@ class StageRun:
                 {"name": artifact_name, **pipeline_hash, **(metadata or {})}
             ),
         )
-        for file in [path] if isinstance(path, (str, Path)) else path:
+        files = [Path(f) for f in ([path] if isinstance(path, (str, Path)) else path)]
+        stored = files
+        hf_repo = os.environ.get("HF_EVAL_REPO")
+        if type == "eval-log" and hf_repo and not self.offline:
+            folder = f"{self.run.project}/{artifact_name}/{self.run.id}"
+            try:
+                add_hf_references(artifact, files, hf_repo, folder)
+                stored = []
+            except Exception as exc:  # the .eval must still be recorded somewhere
+                logger.warning(
+                    "HF upload to %s failed (%s); storing in W&B", hf_repo, exc
+                )
+        for file in stored:
             artifact.add_file(str(file))
         logged = self.run.log_artifact(artifact)
         if wait and not self.offline:

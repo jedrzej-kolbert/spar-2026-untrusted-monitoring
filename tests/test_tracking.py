@@ -221,6 +221,162 @@ def test_refs_must_be_exact_versions():
     assert core.is_ref("wandb:me/proj/apps-x:v3")
 
 
+def _hf_artifact(md5: str) -> SimpleNamespace:
+    url = (
+        "https://huggingface.co/datasets/org/repo/resolve/"
+        + "a" * 40
+        + "/untrusted-runs/x/v0/attacks.eval"
+    )
+    entry = SimpleNamespace(path="attacks.eval", ref=url)
+    return SimpleNamespace(
+        name="x:v1",
+        qualified_name="e/p/x:v1",
+        metadata={"md5": md5},
+        manifest=SimpleNamespace(entries={"attacks.eval": entry}),
+    )
+
+
+def test_hf_references_download_through_huggingface_hub(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, eval_file: Path
+):
+    import huggingface_hub
+
+    calls: list[tuple[str, str, str, str]] = []
+
+    def fake_download(repo_id: str, filename: str, repo_type: str, revision: str):
+        calls.append((repo_id, filename, repo_type, revision))
+        return str(eval_file)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    monkeypatch.chdir(tmp_path)
+    folder = core.download_artifact(_hf_artifact(core._md5_b64(eval_file)))
+    assert (folder / "attacks.eval").read_bytes() == eval_file.read_bytes()
+    assert calls == [
+        ("org/repo", "untrusted-runs/x/v0/attacks.eval", "dataset", "a" * 40)
+    ]
+    with pytest.raises(ValueError, match="MD5"):
+        core.download_artifact(_hf_artifact("not-the-md5"))
+
+
+def test_stored_artifacts_download_through_wandb(tmp_path: Path):
+    entry = SimpleNamespace(path="attacks.eval", ref=None)
+    artifact = SimpleNamespace(
+        manifest=SimpleNamespace(entries={"attacks.eval": entry}),
+        download=lambda: str(tmp_path),
+    )
+    assert core.download_artifact(artifact) == tmp_path
+
+
+def test_add_hf_references_uploads_and_records_md5(
+    monkeypatch: pytest.MonkeyPatch, eval_file: Path
+):
+    import huggingface_hub
+    import wandb
+
+    commits: list[tuple[str, list[str]]] = []
+    private = {"org/repo": True, "org/public": False}
+
+    class FakeApi:
+        def repo_info(self, repo_id: str, repo_type: str):
+            return SimpleNamespace(private=private[repo_id])
+
+        def create_commit(self, repo_id: str, repo_type: str, operations, **_):  # type: ignore[no-untyped-def]
+            commits.append((repo_id, [op.path_in_repo for op in operations]))
+            return SimpleNamespace(oid="b" * 40)
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
+    artifact = wandb.Artifact("gen", type="eval-log", metadata={"name": "gen"})
+    with pytest.raises(ValueError, match="not private"):  # transcripts stay private
+        core.add_hf_references(artifact, [eval_file], "org/public", "proj/gen/run1")
+    assert not commits and not artifact.manifest.entries
+    core.add_hf_references(artifact, [eval_file], "org/repo", "proj/gen/run1")
+    (entry,) = artifact.manifest.entries.values()
+    md5 = core._md5_b64(eval_file)
+    assert commits == [("org/repo", ["proj/gen/run1/attacks.eval"])]
+    assert entry.ref == (
+        "https://huggingface.co/datasets/org/repo/resolve/"
+        + "b" * 40
+        + "/proj/gen/run1/attacks.eval"
+    )
+    assert artifact.metadata["md5"] == md5
+    assert core._HF_RESOLVE.match(entry.ref)  # download_artifact will route it to HF
+    # a stored version of the same file must not share the version digest (W&B dedup)
+    stored = wandb.Artifact("gen", type="eval-log")
+    stored.add_file(str(eval_file))
+    assert stored.manifest.digest() != artifact.manifest.digest()
+
+
+@pytest.mark.parametrize("upload_fails", [False, True])
+def test_eval_logs_go_to_hf_when_configured(
+    monkeypatch: pytest.MonkeyPatch, eval_file: Path, upload_fails: bool
+):
+    def fake_add(artifact, files, repo_id, folder):  # type: ignore[no-untyped-def]
+        if upload_fails:
+            raise RuntimeError("HF down")
+        assert (repo_id, folder) == ("org/repo", "proj/gen/run1")
+        artifact.metadata = {**artifact.metadata, "md5": "m"}
+
+    logged = []
+    stage = core.StageRun("generate", "gen", config={})
+    stage.run = SimpleNamespace(
+        project="proj", id="run1", log_artifact=lambda a: logged.append(a) or a
+    )
+    monkeypatch.setenv("HF_EVAL_REPO", "org/repo")
+    monkeypatch.setattr(core, "add_hf_references", fake_add)
+    stage.log_artifact(eval_file, type="eval-log")
+    (artifact,) = logged
+    stored = list(artifact.manifest.entries)
+    assert stored == (["attacks.eval"] if upload_fails else [])
+
+
+def test_deleted_version_resolves_to_its_migrated_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from wandb.errors import CommError
+
+    ref = "e/p/apps-x:v0"
+    copy = SimpleNamespace(
+        name="apps-x:v1", metadata={"migrated_from": ref, "name": "apps-x"}
+    )
+    other = SimpleNamespace(name="apps-x:v2", metadata={})
+
+    def deleted(path: str):
+        raise CommError(f"artifact {path} not found")
+
+    api = SimpleNamespace(
+        artifact=deleted,
+        artifact_types=lambda project: [SimpleNamespace(name="eval-log")],
+        artifact_collection=lambda type_name, path: SimpleNamespace(
+            artifacts=lambda: [other, copy]
+        ),
+    )
+    (tmp_path / "attacks.eval").write_bytes(b"x")
+    monkeypatch.setattr(core, "_api", lambda: api)
+    monkeypatch.setattr(core, "download_artifact", lambda artifact: tmp_path)
+    resolved = core.resolve_input(f"wandb:{ref}")
+    assert resolved.artifact is copy and resolved.source == f"wandb:{ref}"
+
+
+def test_local_eval_matches_a_reference_version_by_metadata_md5(
+    monkeypatch: pytest.MonkeyPatch, eval_file: Path
+):
+    md5 = core._md5_b64(eval_file)
+    copy = SimpleNamespace(
+        name="gen:v1",
+        metadata={"md5": md5},
+        manifest=SimpleNamespace(entries={"a.eval": SimpleNamespace(digest="etag")}),
+    )
+    run = SimpleNamespace(logged_artifacts=lambda: [copy])
+    monkeypatch.setenv("WANDB_MODE", "online")
+    monkeypatch.setattr(core, "_api", lambda: SimpleNamespace(run=lambda path: run))
+    monkeypatch.setattr(
+        core,
+        "read_header",
+        lambda path: {"name": "gen", "run_id": "abc", "project": "p", "entity": "e"},
+    )
+    assert core.resolve_input(eval_file).artifact is copy
+
+
 def test_unlinked_input_blocks_unless_allowed(monkeypatch):
     monkeypatch.setenv("WANDB_MODE", "online")
     unlinked = core.ResolvedInput(
