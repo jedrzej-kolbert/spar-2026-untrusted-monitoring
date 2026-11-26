@@ -170,6 +170,19 @@ class IcrlConfig(_Strict):
     # The learner writes the judge's instructions too (HiPT's centralized learner).
     # A shared strategy is causal collusion, a different question from self-recognition.
     centralized: bool = False
+    # Prime the centralized learner with known successes; resumed runs reuse saved state.
+    learner_context: Literal["none", "best"] = "none"
+    # Draw a fresh search_problems-sized sample of the training problems every round
+    # (HiPT runs many small rounds); otherwise one sample is reused for every round.
+    resample_search: bool = False
+    # HiPT's try_improve_last_strategy: after each new strategy, ask whether that
+    # exact strategy can be improved and, on YES, run the improvement next.
+    try_improve: bool = False
+    # HiPT-style success: a round whose train AUROC (working rewrites vs honeypots)
+    # and working rate reach these is announced to the learner and saved; new
+    # strategies must then differ from it. None keeps the reward-only feedback.
+    success_auroc: float | None = Field(default=None, gt=0.5, le=1)
+    success_working: float = Field(default=0.8, ge=0, le=1)
 
 
 class RLRunConfig(_Strict):
@@ -258,6 +271,10 @@ class RLRunConfig(_Strict):
             self.method != "in_context" or reward.reward_fn != "valid_sigmoid"
         ):
             raise ValueError("centralized needs method in_context and valid_sigmoid")
+        if self.icrl.learner_context != "none" and not self.icrl.centralized:
+            raise ValueError("learner_context needs icrl.centralized")
+        if self.icrl.success_auroc is not None and not self.icrl.centralized:
+            raise ValueError("success_auroc needs icrl.centralized (paired honeypots)")
         if reward.overseer_baseline != "none":
             if reward.reward_fn != "branch":
                 raise ValueError(

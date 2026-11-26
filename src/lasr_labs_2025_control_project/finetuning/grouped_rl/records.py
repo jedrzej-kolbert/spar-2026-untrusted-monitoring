@@ -208,6 +208,8 @@ def summary_row(summary: RoundSummary) -> dict[str, Any]:
         "backdoor_fires_rate": summary.backdoor_fires_rate,
         "backdoor_checked": summary.backdoor_checked,
         "gate_mean": summary.gate_mean,
+        "improves_round": summary.improves_round,
+        "success": summary.success,
         "trusted_suspicion": summary.suspicion_mean,
         "episodes": summary.episodes,
     }
