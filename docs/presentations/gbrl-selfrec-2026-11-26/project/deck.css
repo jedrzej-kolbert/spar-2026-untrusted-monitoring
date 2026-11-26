@@ -10,7 +10,7 @@
 }
 body { font-family: 'Inter', Arial, sans-serif; color: #EEECE6; }
 section { background: #15171C; color: #EEECE6; padding: 80px 104px 120px; box-sizing: border-box; display: flex; flex-direction: column; counter-increment: page; }
-section.alt { background: #1D2027; }
+section.alt { background: #15171C; }
 
 .eyebrow { font-size: 24px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #5CC8D7; margin-bottom: 14px; }
 .attack-part .eyebrow { color: #F0A04B; }
