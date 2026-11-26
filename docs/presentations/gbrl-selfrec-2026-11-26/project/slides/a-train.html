@@ -1,6 +1,7 @@
 <section id="a-train" class="alt attack-part">
 <p class="eyebrow">Attack policy · B vs C</p>
 <h2>Self-rec: Keeping self rec (B) vs removing it (C)&nbsp;</h2>
+<div class="formula" style="display:flex;gap:64px;padding:14px 28px;margin:-12px 0 24px"><p style="margin:0"><b class="hl">B</b>: pass + pass · P(self) + kept − suspicion</p><p style="margin:0"><b class="hl">C</b>: pass + kept − suspicion</p></div>
 <div class="row">
 <div class="text" style="width:440px">
 <ul class="b">
@@ -9,7 +10,7 @@
 </ul>
 <p class="lede" style="font-size:24px"></p>
 </div>
-<div class="fig"><div class="card"><img src="/_blob/7879d4ce08b9aff8fa5d6c917a014e26" alt="Training-split means per update for V4.1 B and C: reward, pass, pass × P(self), kept and minus suspicion. Reward and kept rise; pass fluctuates; pass × P(self) stays around 0.6–0.8 for B and 0 for C." style="width:1134px;height:690px;object-fit:contain"></div></div>
+<div class="fig"><div class="card"><img src="/_blob/7879d4ce08b9aff8fa5d6c917a014e26" alt="Training-split means per update for V4.1 B and C: reward, pass, pass × P(self), kept and minus suspicion. Reward and kept rise; pass fluctuates; pass × P(self) stays around 0.6–0.8 for B and 0 for C." style="width:1134px;height:600px;object-fit:contain"></div></div>
 </div>
 <aside>Source: mentor deck slide 26. The plot is redrawn from the mentor deck's data CSV (gbrl_plot_points.csv) with the V3.1 lines dropped; the V4.1 numbers are unchanged. On-slide footnote (removed): Source: mentor deck, slide 26, redrawn with V4.1 only · mean over training samples at each update · receiver U_M reads summaries</aside>
 </section>
