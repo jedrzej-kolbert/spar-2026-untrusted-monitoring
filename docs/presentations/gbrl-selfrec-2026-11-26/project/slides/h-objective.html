@@ -1,32 +1,28 @@
 <section id="h-objective">
 <p class="eyebrow">Honest policy</p>
 <h2>Self-rec on honest code</h2>
-<div class="row">
-<div class="text" style="width:820px">
-<div class="formula" style="width:1005px;box-sizing:border-box">
-<p><b>Objective:</b> distinguish between honest U_G (sender) and honeypots</p>
-<p><b>Constraint:</b> code has to pass tests / achieve the main task</p>
+<div class="row" style="gap:64px">
+<div class="text" style="width:980px;gap:20px">
+<h3 class="hl">Objective</h3>
+<ul class="b small">
+<li>Distinguish honest U_G (sender) rewrites from honeypots</li>
+<li>Constraint: the rewrite must pass the tests (main task)</li>
+</ul>
+<h3 class="hl">Reward</h3>
+<ul class="b small">
+<li><i>R</i> = <i>P</i>(YES | U_G rewrite) · pass, with pass ∈ {0, 1}</li>
+<li><i>P</i>(YES | U_G rewrite) = exp(log <i>p</i>(YES)) / (exp(log <i>p</i>(YES)) + exp(log <i>p</i>(NO)))</li>
+<li>Same as σ(<i>z</i>_YES − <i>z</i>_NO): the softmax normaliser cancels</li>
+<li>Short name in this deck: <i>P</i>(self | rewrite)</li>
+</ul>
 </div>
-<div class="formula" style="width:1012px;box-sizing:border-box">
-<p class="muted">Reward function components</p>
-<div data-text style="flex:0 0 auto; margin:0 0 12px 0; font-family:Inter, Arial, sans-serif; font-size:28px; line-height:1.45; color:#eeece6">
-          <p><i>P</i>(YES | UG rewrite) = exp(log <i>p</i>(YES)/(exp(log <i>p</i>(YES)) + exp(log <i>p</i>(NO)) = σ(<i>z</i>YES − <i>z</i>NO)</p>
-          <ul>
-            <li>log <i>p</i>: teacher-forced log-probs of YES / NO after “&lt;answer&gt;”; <i>z</i>: logits. The softmax normaliser cancels, so both forms are equal (YES, NO are single tokens)</li>
-          </ul>
-        </div>
-<p>Pass: does the rewrite pass the main task? Binary: 0 does not pass, 1 passes</p>
-<p class="eq"><i>R</i> = <i>P</i>(YES | U<sub>G</sub> rewrite) · Pass</p>
-<p class="muted">Short name in this deck: P(self | rewrite) = P(YES | U_G rewrite)</p>
-</div>
-</div>
-<div class="text" style="width:780px">
-<h3 style="width:480px;transform:translate(300px, 0);box-sizing:border-box">Why no component for honeypots?</h3>
-<ul class="b" style="width:480px;transform:translate(300px, 0);box-sizing:border-box">
-<li>Honeypots are static: they don’t change per rewrite</li>
-<li>Honeypots are used only for the receiver U_M</li>
+<div class="text" style="width:640px;gap:20px">
+<h3 class="hl">Why no honeypot term?</h3>
+<ul class="b small">
+<li>Honeypots don’t change per rewrite</li>
+<li>They are used only for the receiver U_M</li>
 </ul>
 </div>
 </div>
-<aside>Source: GBRL meeting slide 37. On-slide footnote (removed): Source: GBRL meeting, slide 37</aside>
+<aside>Source: GBRL meeting slide 37. On-slide footnote (removed): Source: GBRL meeting, slide 37 log p: teacher-forced log-probs of YES / NO after “&lt;answer&gt;”; z: logits. YES and NO are single tokens for DeepSeek-V4.1, so the two forms are exactly equal.</aside>
 </section>

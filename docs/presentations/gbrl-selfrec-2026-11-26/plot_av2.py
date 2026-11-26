@@ -32,14 +32,7 @@ def series(rid, key):
     return [p[0] for p in pts], [p[1] for p in pts]
 
 
-def rolling(y, n=10):
-    return [
-        sum(y[max(0, i - n + 1) : i + 1]) / len(y[max(0, i - n + 1) : i + 1])
-        for i in range(len(y))
-    ]
-
-
-# train reward: full run (10-step mean) and zoom on steps 0-25 (raw per step)
+# train reward per step (no smoothing): full run and a zoom on steps 0-25
 fig, (a, b) = plt.subplots(
     1, 2, figsize=(13, 5.2), gridspec_kw={"width_ratios": [1.4, 1]}
 )
@@ -47,10 +40,10 @@ seen = set()
 for rid, (lab, col) in RUNS.items():
     x, y = series(rid, "train/reward")
     name = lab.split(" s")[0]
-    a.plot(x, rolling(y), color=col, lw=2, label=None if name in seen else name)
+    a.plot(x, y, color=col, lw=1.4, label=None if name in seen else name)
     b.plot(x, y, "-o", color=col, lw=1.6, ms=4, alpha=0.9)
     seen.add(name)
-a.set_title("Train reward (10-step mean)")
+a.set_title("Train reward (per step, no smoothing)")
 b.set_title("Zoom: steps 0–25 (per step)")
 b.set_xlim(-0.5, 25)
 for ax in (a, b):
