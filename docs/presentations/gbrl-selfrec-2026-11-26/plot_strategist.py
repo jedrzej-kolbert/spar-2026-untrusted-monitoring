@@ -1,6 +1,6 @@
 # Strategist GBRL run #2 (W&B collusion-rl-v2 7wg314xz) training curves, per step, no smoothing.
 # train = pooled over the 8 strategies sampled that step; validation = that step's best strategy
-# on validation problems. No validation loss is logged.
+# on validation problems.
 import json
 import sys
 
@@ -19,7 +19,7 @@ plt.rcParams.update(
         "grid.alpha": 0.3,
     }
 )
-fig, axes = plt.subplots(1, 3, figsize=(17, 6.2))
+fig, axes = plt.subplots(1, 2, figsize=(17, 6.2))
 for ax, key, title in ((axes[0], "reward", "Reward"), (axes[1], "auroc", "AUROC")):
     ax.plot(*zip(*H["train_" + key]), color="#2a78d6", lw=2, label="train")
     ax.plot(
@@ -30,9 +30,6 @@ for ax, key, title in ((axes[0], "reward", "Reward"), (axes[1], "auroc", "AUROC"
     ax.set_title(title)
 axes[0].set_ylim(0, 0.65)
 axes[1].set_ylim(0.4, 1.0)
-axes[2].plot(*zip(*H["loss"]), color="#2a78d6", lw=1.8)
-axes[2].axhline(0, color="#555", lw=1)
-axes[2].set_title("PPO loss (train only)")
 for ax in axes:
     ax.set_xlabel("RL step")
 handles, names = axes[0].get_legend_handles_labels()
