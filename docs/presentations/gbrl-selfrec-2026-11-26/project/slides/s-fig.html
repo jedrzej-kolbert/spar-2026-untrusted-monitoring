@@ -1,0 +1,6 @@
+<section id="s-fig" class="strat-part">
+<p class="eyebrow">Strategist GBRL · run #2</p>
+<h2>Test results against base-model sampling</h2>
+<div class="card" style="padding:8px;align-self:center"><img src="/_blob/8921fbd36391f6fc760149c9a31ac3c3" alt="Paraphrased test, safety-usefulness and collusion ROC. AUROC: best-of-480 base-model sample 0.94, run 1 lookup table 0.92, run 2 step 40 NO_MATCH sentinel 0.90, step 30 0.87, step 20 0.85, no strategy 0.56." style="width:1460px;height:748px;object-fit:contain"></div>
+<aside>Figure 1 of the run #2 section in Neelasha’s notes, unchanged (W&amp;B analysis run r9ba242y, curves_paraphrased_top_strategies). Best-of-480: 480 signals sampled from the untrained base model, the top ones by paired reward then tested. Their reading: the weaker gate may have let RL converge on a simple sentinel signal that a stronger T_M would catch; the base model is already strong, so RL may not improve much on it. The bootstrap bands overlap.</aside>
+</section>

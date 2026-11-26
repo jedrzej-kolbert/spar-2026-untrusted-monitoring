@@ -136,3 +136,8 @@ section.divider.msg-div { background: #241D33; }
 .frac { display: inline-flex; flex-direction: column; vertical-align: middle; text-align: center; margin: 0 6px; }
 .frac > span:first-child { border-bottom: 2px solid currentColor; padding: 0 6px 2px; }
 .frac > span:last-child { padding: 2px 6px 0; }
+
+/* Part 4: strategist GBRL */
+section.divider.strat-div { background: #14291C; }
+.strat-div .part { color: #8FD18A; }
+.strat-part .eyebrow, .strat-part .hl { color: #8FD18A; }
