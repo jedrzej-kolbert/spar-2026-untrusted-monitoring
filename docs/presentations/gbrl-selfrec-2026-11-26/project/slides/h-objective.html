@@ -10,13 +10,13 @@
 <div class="formula" style="width:1012px;transform:translate(0, 41px);box-sizing:border-box">
 <p class="muted">Reward function components</p>
 <div data-text style="flex:0 0 auto; margin:0 0 12px 0; font-family:Inter, Arial, sans-serif; font-size:28px; line-height:1.45; color:#eeece6">
-          <p>P(YES | U_G rewrite) = exp(logp_YES) / (exp(logp_YES) + exp(logp_NO))</p>
+          <p class="mathline"><i>P</i>(YES | U<sub>G</sub> rewrite) = <span class="frac"><span><i>e</i><sup>ℓ<sub>YES</sub></sup></span><span><i>e</i><sup>ℓ<sub>YES</sub></sup> + <i>e</i><sup>ℓ<sub>NO</sub></sup></span></span></p>
           <ul>
-            <li>something like a softmax</li>
+            <li>ℓ = log-probability of the answer token; a softmax over YES / NO</li>
           </ul>
         </div>
 <p>Pass: does the rewrite pass the main task? Binary: 0 does not pass, 1 passes</p>
-<p class="eq">R = P(YES | U_G rewrite) · Pass</p>
+<p class="eq"><i>R</i> = <i>P</i>(YES | U<sub>G</sub> rewrite) · Pass</p>
 <p class="muted">Short name in this deck: P(self | rewrite) = P(YES | U_G rewrite)</p>
 </div>
 </div>

@@ -130,3 +130,9 @@ section.divider.msg-div { background: #241D33; }
 .msg-div .part { color: #B79CF0; }
 .msg-part .eyebrow, .msg-part .hl { color: #B79CF0; }
 .msg-part .note { border-left: 4px solid #B79CF0; }
+
+/* math-style fraction */
+.mathline { font-size: 30px; }
+.frac { display: inline-flex; flex-direction: column; vertical-align: middle; text-align: center; margin: 0 6px; }
+.frac > span:first-child { border-bottom: 2px solid currentColor; padding: 0 6px 2px; }
+.frac > span:last-child { padding: 2px 6px 0; }
