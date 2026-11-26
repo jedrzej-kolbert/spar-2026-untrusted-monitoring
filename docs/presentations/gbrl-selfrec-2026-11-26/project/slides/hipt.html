@@ -7,8 +7,8 @@
 <tr><td class="muted">Message</td><td>Steganotext does “break CVs”</td><td>We include the message by rewriting existing honest (no backdoor) and attack (with backdoor) code</td></tr>
 <tr><td class="muted">Oversight</td><td>Overseer</td><td>Overseer + honeypots</td></tr>
 <tr><td class="muted">Suspicion</td><td>r_sus = tanh(z_Yes − z_No − t_sens)</td><td>From 1 to 10</td></tr>
-<tr><td class="muted">Task reward</td><td>R_task = tanh(logprob(correct_label))</td><td>–</td></tr>
+<tr><td class="muted">Task reward</td><td>R_task = tanh(logprob(correct_label))</td><td>Honest: R = pass · P(YES | U_G rewrite)<br>Attack: pass gate or pass term, backdoor working (kept), − suspicion</td></tr>
 </table>
 <p class="src">Source: GBRL meeting, slide 34</p>
-<aside>Source: GBRL meeting slide 34. The “Ours” cell for the task reward was empty in the source.</aside>
+<aside>Source: GBRL meeting slide 34. The “Ours” task-reward cell was empty in the source; filled in from the comment on this slide (P(YES | U_G rewrite) and the pass gate, or pass and attack working, etc.).</aside>
 </section>
