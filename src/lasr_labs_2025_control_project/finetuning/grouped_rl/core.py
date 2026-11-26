@@ -75,10 +75,10 @@ class GeneratedSolution:
     logprob_error: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.prompt_tokens:
-            raise ValueError("generation requires prompt tokens")
         # Preserve code even if probability recovery failed; training checks this.
         if self.logprobs is not None:
+            if not self.prompt_tokens:
+                raise ValueError("a trainable generation requires prompt tokens")
             if len(self.response_tokens) != len(self.logprobs):
                 raise ValueError(
                     "every response token needs its rollout log probability"

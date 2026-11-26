@@ -47,6 +47,8 @@ TINKER_PRICES: dict[str, tuple[float, float, float]] = {
     "openai/gpt-oss-120b": (0.33, 0.84, 0.737),
     "openai/gpt-oss-20b": (0.18, 0.45, 0.396),
     "moonshotai/Kimi-K2.6": (2.205, 5.49, 4.84),
+    # Not Tinker: OpenRouter coreweave/fp8 list price, 2026-11-26.
+    "pinned/deepseek/deepseek-v4.1-flash": (0.13, 0.59, 0.0),
 }
 
 PREFILL, SAMPLE, TRAIN = "prefill", "sample", "train"
