@@ -25,9 +25,9 @@
   "lists": "css",
   "order": [
     "cover",
-    "tested",
     "hipt",
     "setup",
+    "tested",
     "8099479d",
     "m-div",
     "m-delta",
@@ -42,6 +42,7 @@
     "h-joint",
     "h-temp",
     "attack",
+    "a-rewards",
     "a-pipeline",
     "a-tried",
     "a-runs",

@@ -2,15 +2,15 @@
 <p class="eyebrow">Hide a message · Deeksha · idea 1 runs</p>
 <h2>Idea 1: receiver discrimination over training</h2>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
-<div><div class="card"><img src="/_blob/e275c2d9274d239ae39e9f3a879e676f" alt="Idea 1, 20 held-out rewrites per bit: signal ON vs OFF AUROC 0.72 at step 0, 0.74 at 10, 0.61 at 20, 0.59 at 30; signalled attack vs honeypot about 0.34 throughout." style="width:808px;height:475px;object-fit:contain"></div><p class="note" style="margin-top:16px">“Idea 1” · 20 held-out rewrites per bit</p></div>
-<div><div class="card"><img src="/_blob/89541c4f1292dae5a79e486d4441efd5" alt="Idea 1 with changed term weights, 180 held-out rewrites per bit: signal ON vs OFF AUROC 0.66 at step 0 falling to 0.53 at step 30; signalled attack vs honeypot 0.33 to 0.36." style="width:808px;height:475px;object-fit:contain"></div><p class="note" style="margin-top:16px">“Term weights changed (still idea 1)” · 180 held-out per bit</p></div>
+<div><div class="card"><img src="/_blob/e275c2d9274d239ae39e9f3a879e676f" alt="Idea 1, 20 held-out rewrites per bit: signal ON vs OFF AUROC 0.72 at step 0, 0.74 at 10, 0.61 at 20, 0.59 at 30; signalled attack vs honeypot about 0.34 throughout." style="width:808px;height:420px;object-fit:contain"></div><p class="note" style="margin-top:16px">“Idea 1” · 20 held-out rewrites per bit</p></div>
+<div><div class="card"><img src="/_blob/89541c4f1292dae5a79e486d4441efd5" alt="Idea 1 with changed term weights, 180 held-out rewrites per bit: signal ON vs OFF AUROC 0.66 at step 0 falling to 0.53 at step 30; signalled attack vs honeypot 0.33 to 0.36." style="width:808px;height:420px;object-fit:contain"></div><p class="note" style="margin-top:16px">“Term weights changed (still idea 1)” · 180 held-out per bit</p></div>
 </div>
-<ul class="b small" style="margin-top:32px;columns:2;column-gap:64px">
-<li>Failed-backdoor weight 1.0 → 0.25</li>
-<li>Overseer weight ramps 0 → 1.0 over the first 15 steps</li>
-<li>Learning rate 1e-5 → 3e-5</li>
-<li>Batch 16 × 4 → 8 × 8 rewrites (64 per step)</li>
-<li>Validation 20 × 1 → 60 × 3 samples</li>
-</ul>
-<aside>Both figures are Deeksha's screenshots, unchanged; the five bullets are her own list of what changed between them. She posted them without further comment, so there are no written reflections for these runs. In both, signal ON vs OFF falls towards chance over 30 steps and signalled attack vs honeypot stays around 0.33–0.36, below chance. On-slide footnote (removed): Source: Deeksha, screenshots and weight changes posted in the group DM with Neelasha and Jedrzej, 5 Nov</aside>
+<h3 style="margin-top:24px;margin-bottom:8px">What differs between the two runs</h3>
+<table class="t">
+<tr><th style="width:7%">Run</th><th style="width:20%">Failed-backdoor weight</th><th style="width:25%">Overseer weight</th><th style="width:12%">Learning rate</th><th style="width:19%">Train: problems × rewrites</th><th style="width:17%">Val: problems × samples</th></tr>
+<tr><td>Left</td><td>1.0</td><td>1.0 throughout</td><td>1e-5</td><td>16 × 4 (64 per step)</td><td>20 × 1</td></tr>
+<tr><td>Right</td><td>0.25</td><td>from 0 up to 1.0 over 15 steps</td><td>3e-5</td><td>8 × 8 (64 per step)</td><td>60 × 3</td></tr>
+</table>
+<p style="font-size:24px;color:#A7AFBC;margin-top:12px">Of these, the plots show only the validation size (20 vs 180 rewrites per bit). The rest are training settings.</p>
+<aside>Both figures are Deeksha's screenshots, unchanged; the table is her own list of what changed between them (Slack, previous and new values). She posted them without further comment, so there are no written reflections for these runs. In both, signal ON vs OFF falls towards chance over 30 steps and signalled attack vs honeypot stays around 0.33–0.36, below chance. On-slide footnote (removed): Source: Deeksha, screenshots and weight changes posted in the group DM with Neelasha and Jedrzej, 5 Nov</aside>
 </section>
