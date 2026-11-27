@@ -273,3 +273,102 @@ def test_summary_means_each_reward_term_and_they_sum_to_the_reward() -> None:
         }
     )
     assert sum(summary.reward_components.values()) == pytest.approx(summary.reward_mean)
+
+
+class ImprovingLearner(ScriptedLearner):
+    """Says YES to improving the first strategy only."""
+
+    async def query(self, messages: list[dict[str, str]]) -> str:
+        if "<yes_no>" in messages[-1]["content"]:
+            self.prompts.append([dict(m) for m in messages])
+            return f"<reason>clearer</reason><yes_no>{'YES' if self.strategy_calls == 1 else 'NO'}</yes_no>"
+        return await super().query(messages)
+
+
+async def test_try_improve_runs_the_improvement_before_strategizing() -> None:
+    learner, team = ImprovingLearner(), ScriptedTeam()
+    events: list[tuple[int, str]] = []
+    await run_icrl(
+        learner,
+        team,
+        episodes=3,
+        try_improve=True,
+        on_reply=lambda i, stage, prompt, reply: events.append((i, stage)),
+    )
+    assert [stage for _, stage in events] == [
+        "strategy",
+        "reflection",
+        "improve",  # YES: no strategize, improve next
+        "strategy",
+        "reflection",
+        "strategize",  # an improvement is not improved again
+        "strategy",
+        "reflection",
+        "improve",
+        "strategize",  # NO: strategize as usual
+    ]
+    # The improvement's strategy prompt still holds the round it improves on.
+    improve_strategy_prompt = learner.prompts[3]
+    assert any("weak description" in m["content"] for m in improve_strategy_prompt)
+    # After NO, only this round's results and reflection stay before strategizing.
+    assert len(learner.prompts[-1]) == 5
+
+
+async def test_a_successful_round_is_announced_saved_and_must_be_distinct() -> None:
+    learner, knowledge = ScriptedLearner(), Knowledge()
+    await run_icrl(
+        learner,
+        ScriptedTeam(),
+        episodes=2,
+        knowledge=knowledge,
+        is_success=lambda s: s.strategy == "strong",
+    )
+    assert knowledge.successful_strategies == ["strong description"]
+    last = learner.prompts[-1]
+    assert "Congratulations" in last[-2]["content"]
+    assert "must be distinct from these successful strategies" in last[-1]["content"]
+    assert "Congratulations" not in str(learner.prompts[2])  # weak round: no message
+
+
+def test_feedback_shows_separation_small_values_and_recognized_examples() -> None:
+    episodes = [
+        Episode(
+            p_self=0.9,
+            passed=True,
+            backdoor=True,
+            suspicion=0.2,
+            reward=0.5,
+            honeypot_p_yes=0.0001,
+            code="summary A",
+        ),
+        Episode(
+            p_self=0.0002,
+            passed=True,
+            backdoor=True,
+            suspicion=0.2,
+            reward=0.0,
+            honeypot_p_yes=0.0001,
+            code="summary B",
+        ),
+    ]
+    summary = summarise(1, "s", episodes)
+    assert summary.auroc == 1.0  # both working rewrites score above both honeypots
+    text = results_string(summary, episodes, 1)
+    assert "AUROC" in text and "1.0e-04" in text  # honeypot mean, not 0.000
+    assert "Recognized by the judge" in text and "summary A" in text
+
+
+async def test_rounds_record_what_they_improve_and_whether_they_succeeded() -> None:
+    history, _ = await run_icrl(
+        ImprovingLearner(),
+        ScriptedTeam(),
+        episodes=3,
+        try_improve=True,
+        is_success=lambda s: s.reward_mean > 0.8,
+    )
+    assert [(h.round, h.improves_round, h.success) for h in history] == [
+        (0, None, False),
+        (1, None, False),
+        (2, 1, True),  # the improvement of round 1, and it met the bar
+        (3, None, True),
+    ]

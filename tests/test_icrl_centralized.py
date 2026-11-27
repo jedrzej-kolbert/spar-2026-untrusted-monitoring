@@ -308,3 +308,19 @@ async def test_no_winner_is_published_when_no_strategy_can_be_validated(
             [(task, HONEYPOT) for task in tasks],
         )
     assert not (tmp_path / "icrl_result.json").exists()
+
+
+def test_learner_context_extends_only_the_central_system_prompt():
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
+        CENTRAL,
+        LEARNER_CONTEXTS,
+        SENDER_ONLY,
+        learner_prompts,
+    )
+
+    assert learner_prompts(False) is SENDER_ONLY
+    assert learner_prompts(True) is CENTRAL
+    for name, text in LEARNER_CONTEXTS.items():
+        prompts = learner_prompts(True, name)
+        assert prompts.system == f"{CENTRAL.system}\n\n{text}"
+        assert prompts.strategy == CENTRAL.strategy and prompts.centralized
