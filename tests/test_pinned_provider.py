@@ -106,3 +106,13 @@ def test_pinned_sender_is_in_context_only(tmp_path: Path) -> None:
     assert config.models.sender == PINNED  # same base model as the Tinker judge
     with pytest.raises(ValueError, match="can't be trained"):
         icrl_config(tmp_path, models={"sender": PINNED}, method="gradient")
+
+
+def test_openrouter_roles_are_tagged_and_tinker_runs_are_not(tmp_path: Path) -> None:
+    assert not any(k.endswith("_backend") for k in icrl_config(tmp_path).identity)
+    sender = icrl_config(tmp_path, models={"sender": PINNED}).identity
+    assert sender["sender_backend"] == "openrouter" and "learner_backend" not in sender
+    both = icrl_config(
+        tmp_path, models={"sender": PINNED}, icrl={"episodes": 1, "learner": PINNED}
+    ).identity
+    assert both["sender_backend"] == both["learner_backend"] == "openrouter"

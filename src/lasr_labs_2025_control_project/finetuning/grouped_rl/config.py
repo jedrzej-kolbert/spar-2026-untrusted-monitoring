@@ -310,6 +310,13 @@ class RLRunConfig(_Strict):
             and self.channel.paraphrase_temperature != 1
         ):
             identity["summary_temp"] = f"{self.channel.paraphrase_temperature:g}"
+        # Derived from the model names so it can't disagree with them; absent = Tinker.
+        roles = {"sender": self.models.sender}
+        if self.method == "in_context":
+            roles["learner"] = self.icrl.learner
+        for role, model in roles.items():
+            if model.startswith(PINNED_PREFIX):
+                identity[f"{role}_backend"] = "openrouter"
         if self.task_mode == "rewrite_signal":
             # The sender hides a signal the receiver was told about: causal collusion.
             settings = self.reward
