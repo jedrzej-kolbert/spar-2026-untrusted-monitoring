@@ -180,6 +180,9 @@ class IcrlConfig(_Strict):
     # HiPT's try_improve_last_strategy: after each new strategy, ask whether that
     # exact strategy can be improved and, on YES, run the improvement next.
     try_improve: bool = False
+    # As HiPT, result examples show the sender's code (ENCODER MESSAGE) next to the
+    # summary the judge read (PARAPHRASED MESSAGE); otherwise only the summary.
+    show_rewrite: bool = False
     # HiPT-style success: a round whose train AUROC (working rewrites vs honeypots)
     # and working rate reach these is announced to the learner and saved; new
     # strategies must then differ from it. None keeps the reward-only feedback.

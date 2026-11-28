@@ -193,8 +193,11 @@ async def run_in_context(
             on_summary=on_summary,
             resume=resume,
             on_state=on_state,
-            prompts=learner_prompts(icrl.centralized, icrl.learner_context),
+            prompts=learner_prompts(
+                icrl.centralized, icrl.learner_context, icrl.show_rewrite
+            ),
             try_improve=icrl.try_improve,
+            show_rewrite=icrl.show_rewrite,
             is_success=None
             if icrl.success_auroc is None
             else lambda s: (

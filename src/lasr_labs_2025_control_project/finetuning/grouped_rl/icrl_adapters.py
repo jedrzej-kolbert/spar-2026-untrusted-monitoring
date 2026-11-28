@@ -86,6 +86,7 @@ def episode_from(rollout: Rollout, config: GroupedRLConfig | None = None) -> Epi
         honeypot_p_yes=rollout.honeypot_p_yes,
         honeypot_code=rollout.honeypot_code or "",
         gate=None if config is None else validity_gate(rollout, config),
+        rewrite=rollout.code if rollout.receiver_code is not None else "",
     )
 
 

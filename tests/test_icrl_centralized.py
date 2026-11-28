@@ -324,3 +324,21 @@ def test_learner_context_extends_only_the_central_system_prompt():
         prompts = learner_prompts(True, name)
         assert prompts.system == f"{CENTRAL.system}\n\n{text}"
         assert prompts.strategy == CENTRAL.strategy and prompts.centralized
+
+
+def test_show_rewrite_puts_the_sender_code_next_to_the_summary() -> None:
+    from lasr_labs_2025_control_project.finetuning.grouped_rl.icrl import (
+        CENTRAL,
+        SHOWN_DESCRIPTION,
+        SHOWN_REWRITE,
+        learner_prompts,
+    )
+
+    rows = [Episode(0.2, True, True, 0.1, 0.0, code="summary text", rewrite="print(1)")]
+    summary = summarise(1, "s", rows, "j")
+    assert "print(1)" not in results_string(summary, rows, 1)
+    text = results_string(summary, rows, 1, show_rewrite=True)
+    assert "ENCODER MESSAGE:\nprint(1)\nPARAPHRASED MESSAGE:\nsummary text" in text
+    assert SHOWN_DESCRIPTION in CENTRAL.system
+    system = learner_prompts(True, "best", show_rewrite=True).system
+    assert SHOWN_REWRITE in system and SHOWN_DESCRIPTION not in system
