@@ -104,13 +104,14 @@ PINNED_PREFIX = "pinned/"
 # ``pinned/<OpenRouter id>`` samples a Tinker base model on one OpenRouter endpoint
 # (no fallbacks), for plain sampling at a fraction of Tinker's price. LoRA
 # checkpoints, training and forced-decoding logprobs stay on Tinker.
-# coreweave/fp8: same revision and FP8 precision as the released checkpoint, and it
-# supports top_k, seed and logprobs (OpenRouter endpoint list, 2026-11-26).
+# novita/fp8: same revision and FP8 precision as the released checkpoint, takes top_k
+# and seed, and really returns logprobs. coreweave/fp8 is ~7% cheaper but declares
+# logprobs and returns none; streamlake/fp8 refuses top_k (tested 2026-11-28, PR #140).
 OPENROUTER_PINS: dict[str, tuple[str, dict[str, Any]]] = {
     "deepseek/deepseek-v4.1-flash": (
         "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
         {
-            "only": ["coreweave/fp8"],
+            "only": ["novita/fp8"],
             "quantizations": ["fp8"],
             "allow_fallbacks": False,
             "require_parameters": True,
