@@ -1,4 +1,4 @@
-"""Connect the ICRL loop to the grouped-RL trainer and to Tinker sampling.
+"""Connect the ICRL loop to the grouped-RL trainer and to Tinker or Inspect sampling.
 
 The team reuses the trainer's own evaluation, so grading, the frozen judge, the
 backdoor check, the trusted monitor and the reward are the same as in the gradient
@@ -7,6 +7,7 @@ runs. The only difference is that the sender's prompt carries the current strate
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -15,6 +16,7 @@ from .core import (
     AppsProblem,
     BatchInfrastructureError,
     BatchResult,
+    GeneratedSolution,
     GroupedRLConfig,
     GroupedRLTrainer,
     HoneypotEvalResult,
@@ -267,3 +269,103 @@ class TinkerLearner(_TinkerRole):
             list(response.sequences[0].tokens), skip_special_tokens=True
         )
         return text
+
+
+def _chat(messages: list[dict[str, str]]) -> list[Any]:
+    from inspect_ai.model import (
+        ChatMessageAssistant,
+        ChatMessageSystem,
+        ChatMessageUser,
+    )
+
+    kinds = {
+        "system": ChatMessageSystem,
+        "user": ChatMessageUser,
+        "assistant": ChatMessageAssistant,
+    }
+    return [kinds[message["role"]](content=message["content"]) for message in messages]
+
+
+class InspectLearner:
+    """Samples strategies from an Inspect model, e.g. a ``pinned/`` OpenRouter base."""
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        allow_paid: bool = False,
+        max_tokens: int = 4096,
+        temperature: float = 1.0,
+    ) -> None:
+        self.model = model
+        self.allow_paid = allow_paid
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+    async def query(self, messages: list[dict[str, str]]) -> str:
+        if not self.allow_paid:
+            raise PermissionError("model calls disabled; pass allow_paid=True")
+        from inspect_ai.model import GenerateConfig, get_model
+
+        from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401
+
+        output = await get_model(self.model).generate(
+            _chat(messages),
+            config=GenerateConfig(
+                max_tokens=self.max_tokens, temperature=self.temperature
+            ),
+        )
+        return output.completion
+
+
+class InspectSender:
+    """ICRL sender sampled through Inspect. It never trains, so it keeps no tokens."""
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        messages_fn: Callable[[AppsProblem, int], list[dict[str, str]]],
+        allow_paid: bool = False,
+        max_tokens: int = 2048,
+        temperature: float = 1.0,
+    ) -> None:
+        self.model = model
+        self.messages_fn = messages_fn
+        self.allow_paid = allow_paid
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+    async def generate(
+        self, problem: AppsProblem, payload: int, num_samples: int
+    ) -> list[GeneratedSolution]:
+        if not self.allow_paid:
+            raise PermissionError("model calls disabled; pass allow_paid=True")
+        if num_samples < 1:
+            raise ValueError("num_samples must be positive")
+        from inspect_ai.model import GenerateConfig, get_model
+
+        from lasr_labs_2025_control_project.utils import tinker_provider  # noqa: F401
+
+        model = get_model(self.model)
+        messages = _chat(self.messages_fn(problem, payload))
+        config = GenerateConfig(
+            max_tokens=self.max_tokens, temperature=self.temperature
+        )
+        # One request per sample: OpenRouter endpoints don't reliably support n > 1.
+        outputs = await asyncio.gather(
+            *(model.generate(messages, config=config) for _ in range(num_samples))
+        )
+        return [
+            GeneratedSolution(
+                text=output.completion,
+                prompt_tokens=(),
+                response_tokens=(),
+                logprobs=None,
+                logprob_error=f"{self.model} is sampled through Inspect: no logprobs",
+            )
+            for output in outputs
+        ]
+
+    async def update(self, examples: Any) -> Any:
+        raise PermissionError("InspectSender cannot train; use a Tinker sender")

@@ -25,6 +25,10 @@ import click
 
 from lasr_labs_2025_control_project import tracking
 from lasr_labs_2025_control_project.utils.config_loader import get_prompt_by_name
+from lasr_labs_2025_control_project.utils.tinker_provider import (
+    PINNED_PREFIX,
+    tinker_base,
+)
 
 from .channels import MonitorViewChannel
 from .config import RLRunConfig, load_rl_config
@@ -108,9 +112,9 @@ def load_tasks(config: RLRunConfig) -> Tasks:
         )
         assert data.honeypots_eval is not None
         negatives = read_generator_eval(data.honeypots_eval)
-        sender_model = config.models.sender.removeprefix("tinker/")
+        sender_model = tinker_base(config.models.sender)
         if any(
-            not sample.model or sample.model.removeprefix("tinker/") == sender_model
+            not sample.model or tinker_base(sample.model) == sender_model
             for sample in negatives
         ):
             raise ValueError(
@@ -260,7 +264,18 @@ async def build_trainer(
             signal_labels=labels,
         )
 
-    if strategy is not None:
+    if strategy is not None and config.models.sender.startswith(PINNED_PREFIX):
+        from .icrl_adapters import InspectSender
+
+        sender = InspectSender(
+            config.models.sender,
+            allow_paid=True,
+            messages_fn=with_strategy(messages_fn, strategy),
+            temperature=training.temperature,
+            max_tokens=training.max_tokens,
+        )
+        reference = None
+    elif strategy is not None:
         import tinker
 
         from .tinker_backend import TinkerSender
@@ -412,19 +427,27 @@ async def train(
     if box is not None:
         import tinker
 
-        from .icrl_adapters import TinkerLearner
+        from .icrl_adapters import InspectLearner, TinkerLearner
 
-        sampler = tinker.ServiceClient().create_sampling_client(
-            base_model=config.icrl.learner
-        )
-        learner = TinkerLearner(
-            sampler,
-            sampler.get_tokenizer(),
-            allow_paid=True,
-            max_tokens=config.icrl.learner_max_tokens,
-            temperature=config.icrl.learner_temperature,
-            max_context_tokens=config.training.max_context_tokens,
-        )
+        if config.icrl.learner.startswith(PINNED_PREFIX):
+            learner: InspectLearner | TinkerLearner = InspectLearner(
+                config.icrl.learner,
+                allow_paid=True,
+                max_tokens=config.icrl.learner_max_tokens,
+                temperature=config.icrl.learner_temperature,
+            )
+        else:
+            sampler = tinker.ServiceClient().create_sampling_client(
+                base_model=config.icrl.learner
+            )
+            learner = TinkerLearner(
+                sampler,
+                sampler.get_tokenizer(),
+                allow_paid=True,
+                max_tokens=config.icrl.learner_max_tokens,
+                temperature=config.icrl.learner_temperature,
+                max_context_tokens=config.training.max_context_tokens,
+            )
         recorder = open_recorder(
             config, code, parity, allow_unlinked, manifest.get("resumed_from")
         )

@@ -1,4 +1,4 @@
-"""Running token and cost totals for every Tinker request in this process.
+"""Running token and cost totals for every Tinker and pinned/ request in this process.
 
 ``install()`` wraps the SDK's sample, compute_logprobs and forward_backward calls,
 so requests made through the inspect provider (the trusted monitor) are counted
@@ -20,6 +20,8 @@ PRICES: dict[str, tuple[float, float, float]] = {
     "deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144": (0.60, 3.60, 4.98),
     "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144": (0.60, 3.60, 4.98),
     "Qwen/Qwen3.5-4B": (0.33, 1.005, 0.737),
+    # OpenRouter novita/fp8 list price, 2026-11-28; counted by the pinned/ provider.
+    "pinned/deepseek/deepseek-v4.1-flash": (0.15, 0.60, 0.0),
 }
 # Unknown models get an indicative estimate only; capped runs reject them.
 FALLBACK_PRICE = tuple(max(price[i] for price in PRICES.values()) for i in range(3))

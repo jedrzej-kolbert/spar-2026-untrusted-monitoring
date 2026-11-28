@@ -99,6 +99,42 @@ def is_tinker_model(model_name: str) -> bool:
     return model_name.startswith(TINKER_PREFIX)
 
 
+PINNED_PREFIX = "pinned/"
+
+# ``pinned/<OpenRouter id>`` samples a Tinker base model on one OpenRouter endpoint
+# (no fallbacks), for plain sampling at a fraction of Tinker's price. LoRA
+# checkpoints, training and forced-decoding logprobs stay on Tinker.
+# novita/fp8: same revision and FP8 precision as the released checkpoint, takes top_k
+# and seed, and really returns logprobs. coreweave/fp8 is ~7% cheaper but declares
+# logprobs and returns none; streamlake/fp8 refuses top_k (tested 2026-11-28, PR #140).
+OPENROUTER_PINS: dict[str, tuple[str, dict[str, Any]]] = {
+    "deepseek/deepseek-v4.1-flash": (
+        "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144",
+        {
+            "only": ["novita/fp8"],
+            "quantizations": ["fp8"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        },
+    ),
+}
+
+
+def tinker_base(model_name: str) -> str:
+    """The Tinker base-model id a ``tinker/``, ``pinned/`` or raw model name samples."""
+    if not model_name.startswith(PINNED_PREFIX):
+        return strip_prefix(model_name)
+    return _pin(model_name[len(PINNED_PREFIX) :])[0]
+
+
+def _pin(openrouter_id: str) -> tuple[str, dict[str, Any]]:
+    if openrouter_id not in OPENROUTER_PINS:
+        raise ValueError(
+            f"no OpenRouter pin for {openrouter_id!r}; add it to OPENROUTER_PINS"
+        )
+    return OPENROUTER_PINS[openrouter_id]
+
+
 # --------------------------------------------------------------------------- #
 # Client / tokenizer caches (creating a SamplingClient is near-instant, but a
 # process-wide cache keeps us from rebuilding one per request).
@@ -612,6 +648,70 @@ class TinkerAPI(ModelAPI):
 
     def connection_key(self) -> str:
         return f"tinker/{self.base_model}"
+
+
+@_modelapi(name="pinned")
+def pinned() -> type[ModelAPI]:
+    from inspect_ai.model._providers.openrouter import OpenRouterAPI
+
+    class PinnedOpenRouterAPI(OpenRouterAPI):
+        def __init__(
+            self,
+            model_name: str,
+            base_url: str | None = None,
+            api_key: str | None = None,
+            config: GenerateConfig = GenerateConfig(),
+            **model_args: Any,
+        ) -> None:
+            super().__init__(
+                model_name=model_name,
+                base_url=base_url,
+                api_key=api_key,
+                config=config,
+                provider=_pin(model_name)[1],
+                **model_args,
+            )
+
+        def completion_params(
+            self, config: GenerateConfig, tools: bool
+        ) -> dict[str, Any]:
+            # TinkerAPI's defaults, so switching backend doesn't also switch settings.
+            config = GenerateConfig(
+                temperature=1.0, top_p=1.0, max_tokens=_DEFAULT_MAX_TOKENS
+            ).merge(config)
+            params = super().completion_params(config, tools)
+            extra = params.setdefault("extra_body", {})
+            extra["top_k"] = 0 if config.top_k is None else config.top_k  # 0 = off
+            # TinkerAPI always renders the chat template with enable_thinking=False.
+            extra["reasoning"] = {"enabled": False}
+            return params
+
+        async def generate(
+            self,
+            input: list[ChatMessage],
+            tools: list[ToolInfo],
+            tool_choice: ToolChoice,
+            config: GenerateConfig,
+        ) -> Any:
+            from lasr_labs_2025_control_project.finetuning.grouped_rl.usage import (
+                USAGE,
+            )
+
+            # Counted with the Tinker requests, so RL budget caps cover these too.
+            # Characters bound the prompt's tokens until the response reports them.
+            with USAGE.request(
+                PINNED_PREFIX + self.model_name,
+                prefill=sum(len(message.text) for message in input),
+                sample=config.max_tokens or _DEFAULT_MAX_TOKENS,
+            ) as counts:
+                result = await super().generate(input, tools, tool_choice, config)
+                output = result[0] if isinstance(result, tuple) else result
+                if isinstance(output, ModelOutput) and output.usage is not None:
+                    counts["prefill"] = output.usage.input_tokens
+                    counts["sample"] = output.usage.output_tokens
+                return result
+
+    return PinnedOpenRouterAPI
 
 
 # --------------------------------------------------------------------------- #

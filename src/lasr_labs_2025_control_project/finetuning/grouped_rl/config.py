@@ -12,13 +12,19 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lasr_labs_2025_control_project.utils.tinker_provider import (
+    PINNED_PREFIX,
+    tinker_base,
+)
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class ModelsConfig(_Strict):
-    # Raw Tinker base-model id for the trainable sender (no tinker/ prefix).
+    # Raw Tinker base-model id for the trainable sender (no tinker/ prefix), or
+    # pinned/<OpenRouter id> for an ICRL sender (see tinker_provider.OPENROUTER_PINS).
     sender: str = "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
     # tinker/<base model> or a tinker:// checkpoint; frozen unless train_receiver.
     receiver: str = "tinker/deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"
@@ -159,7 +165,7 @@ class IcrlConfig(_Strict):
     episodes: int = Field(default=20, ge=1)  # strategies tried, one per episode
     n_result_examples: int = Field(default=3, ge=0)  # HiPT's diagnostic examples
     search_problems: int = Field(default=32, ge=1)  # training problems per strategy
-    learner: str = "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"  # sampled only
+    learner: str = "deepseek-ai/DeepSeek-V4.1-Flash:peft:262144"  # or pinned/<id>
     learner_max_tokens: int = Field(default=4096, ge=1)
     learner_temperature: float = Field(default=1.0, gt=0)
     # A SearchState file to continue from; episodes then counts the earlier ones too.
@@ -221,8 +227,7 @@ class RLRunConfig(_Strict):
                 raise ValueError("self_recognition requires data.honeypots_eval")
             receiver_model = self.models.receiver
             if not receiver_model.startswith("tinker://") and (
-                receiver_model.removeprefix("tinker/")
-                != self.models.sender.removeprefix("tinker/")
+                tinker_base(receiver_model) != tinker_base(self.models.sender)
             ):
                 raise ValueError(
                     "self_recognition sender and receiver must use the same base model"
@@ -244,6 +249,10 @@ class RLRunConfig(_Strict):
             raise ValueError("the overseer term needs models.overseer")
         if reward.backdoor_suspicion_weight > 0 and not self.models.backdoor_monitor:
             raise ValueError("backdoor_suspicion_weight needs models.backdoor_monitor")
+        if self.method != "in_context" and self.models.sender.startswith(PINNED_PREFIX):
+            raise ValueError(
+                "a pinned/ sender can't be trained; use a Tinker base model"
+            )
         if self.method == "in_context":
             if self.task_mode != "self_recognition" or self.training.train_receiver:
                 raise ValueError(
@@ -301,6 +310,13 @@ class RLRunConfig(_Strict):
             and self.channel.paraphrase_temperature != 1
         ):
             identity["summary_temp"] = f"{self.channel.paraphrase_temperature:g}"
+        # Derived from the model names so it can't disagree with them; absent = Tinker.
+        roles = {"sender": self.models.sender}
+        if self.method == "in_context":
+            roles["learner"] = self.icrl.learner
+        for role, model in roles.items():
+            if model.startswith(PINNED_PREFIX):
+                identity[f"{role}_backend"] = "openrouter"
         if self.task_mode == "rewrite_signal":
             # The sender hides a signal the receiver was told about: causal collusion.
             settings = self.reward
